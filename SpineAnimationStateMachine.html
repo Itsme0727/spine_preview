@@ -71,7 +71,14 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);overflow:h
 #ctxMenu{position:fixed;z-index:400;background:var(--panel-bg);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow);display:none;min-width:160px;padding:4px}
 #ctxMenu .ctx-item{padding:8px 14px;cursor:pointer;border-radius:6px;font-size:13px;transition:all .15s}
 #ctxMenu .ctx-item:hover{background:var(--accent);color:#fff}
-#zoomIndicator{position:fixed;bottom:40px;right:16px;z-index:100;background:var(--panel-bg);padding:6px 12px;border-radius:8px;font-size:12px;border:1px solid var(--border);color:var(--text2)}
+#zoomControl{position:fixed;bottom:32px;right:16px;z-index:100;background:var(--panel-bg);padding:12px 6px 8px;border-radius:12px;border:1px solid var(--border);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;box-shadow:var(--shadow);width:40px;min-height:170px}
+#zoomSlider{-webkit-appearance:none;appearance:none;width:140px;height:6px;background:var(--border);border-radius:3px;outline:none;cursor:pointer;transform:rotate(-90deg);flex-shrink:0}
+#zoomSlider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:20px;height:20px;background:var(--accent);border-radius:50%;cursor:pointer;border:2px solid #fff;box-shadow:0 0 8px rgba(74,144,217,.5);transition:box-shadow .2s}
+#zoomSlider::-webkit-slider-thumb:hover{box-shadow:0 0 14px rgba(74,144,217,.8)}
+#zoomSlider::-moz-range-thumb{width:20px;height:20px;background:var(--accent);border-radius:50%;cursor:pointer;border:2px solid #fff}
+#zoomLabel{font-size:12px;color:var(--text2);font-variant-numeric:tabular-nums;min-width:42px;text-align:center}
+#zoomSlider::-webkit-slider-runnable-track{height:6px;background:var(--border);border-radius:3px}
+#zoomSlider::-moz-range-track{height:6px;background:var(--border);border-radius:3px}
 
 ::-webkit-scrollbar{width:6px}
 ::-webkit-scrollbar-track{background:transparent}
@@ -122,7 +129,10 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);overflow:h
     <span id="sbFPS">FPS: --</span>
     <span id="sbStatus"></span>
 </div>
-<div id="zoomIndicator">100%</div>
+<div id="zoomControl">
+    <input type="range" id="zoomSlider" min="10" max="500" value="100" />
+    <span id="zoomLabel">100%</span>
+</div>
 
 <!-- Spine WebGL 3.8.99 single bundle (includes core + webgl) -->
 <!-- 3.8 runtime matches Spine 3.8.xx export format -->
@@ -221,11 +231,16 @@ const SMTool = {
         this.resize();
         window.addEventListener('resize', () => this.resize());
 
-        this.gridCanvas.addEventListener('mousedown', e => this._onMD(e));
+        document.addEventListener('mousedown', e => {
+            if (e.target.closest('#toolbar, #ctxMenu, #conditionEditor, #zoomControl, #statusBar')) return;
+            if (e.target.closest('input, textarea, select, button')) return;
+            this._onMD(e);
+        });
         window.addEventListener('mousemove', e => this._onMM(e));
         window.addEventListener('mouseup', e => this._onMU(e));
-        this.gridCanvas.addEventListener('wheel', e => { if (e.ctrlKey) { e.preventDefault(); this._onWheel(e); } });
+        window.addEventListener('wheel', e => { if (!e.target.closest('.state-list') && !e.target.closest('.ip-body') && !e.target.closest('#conditionEditor')) { e.preventDefault(); this._onWheel(e); } }, { passive: false });
         this.gridCanvas.addEventListener('contextmenu', e => e.preventDefault());
+        document.getElementById('zoomSlider').addEventListener('input', e => this._onZoomSlider(e));
 
         const dz = document.getElementById('dropZone');
         document.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('show'); });
@@ -356,17 +371,11 @@ const SMTool = {
     },
 
     _onMD(e) {
-        // Right-click: start panning (drag to pan, click to deselect)
+        // Right-click: always start panning (drag anywhere to pan, click empty to deselect)
         if (e.button === 2) {
-            const wp = this.canvasToWorld(e.clientX, e.clientY);
-            let found = false;
-            for (const [, n] of SMData.nodes) { if (this._hitTest(n, wp.x, wp.y)) { found = true; break; } }
-            if (!found) {
-                SMData.isPanning = true; SMData.panStart = { x: e.clientX, y: e.clientY };
-                SMData.viewStart = { x: SMData.view.x, y: SMData.view.y };
-                this.gridCanvas.style.cursor = 'grabbing';
-            }
-            return;
+            SMData.isPanning = true; SMData.panStart = { x: e.clientX, y: e.clientY };
+            SMData.viewStart = { x: SMData.view.x, y: SMData.view.y };
+            this.gridCanvas.style.cursor = 'grabbing'; return;
         }
         if (e.button === 1 || (e.button === 0 && e.altKey)) {
             SMData.isPanning = true; SMData.panStart = { x: e.clientX, y: e.clientY };
@@ -421,8 +430,10 @@ const SMTool = {
             const dx = e.clientX - SMData.panStart.x;
             const dy = e.clientY - SMData.panStart.y;
             if (Math.sqrt(dx * dx + dy * dy) < 5) {
-                SMData.selectedNode = null;
-                this._updateSel();
+                const wp = this.canvasToWorld(e.clientX, e.clientY);
+                let found = false;
+                for (const [, n] of SMData.nodes) { if (this._hitTest(n, wp.x, wp.y)) { found = true; break; } }
+                if (!found) { SMData.selectedNode = null; this._updateSel(); }
             }
         }
         SMData.isPanning = false; SMData.draggedNode = null;
@@ -430,11 +441,30 @@ const SMTool = {
     },
 
     _onWheel(e) {
-        const oz = SMData.view.zoom; SMData.view.zoom = Math.max(0.1, Math.min(5, SMData.view.zoom * (e.deltaY > 0 ? 0.9 : 1.1)));
+        const oz = SMData.view.zoom;
+        const factor = e.deltaY > 0 ? 0.95 : 1.05;
+        SMData.view.zoom = Math.max(0.1, Math.min(5, SMData.view.zoom * factor));
         const mx = e.clientX - window.innerWidth / 2, my = e.clientY - window.innerHeight / 2;
         SMData.view.x += mx * (1 / SMData.view.zoom - 1 / oz);
         SMData.view.y += my * (1 / SMData.view.zoom - 1 / oz);
-        this._updateAllPos(); document.getElementById('zoomIndicator').textContent = Math.round(SMData.view.zoom * 100) + '%';
+        this._updateAllPos(); this._syncZoomUI();
+    },
+
+    _onZoomSlider(e) {
+        const pct = parseInt(e.target.value) / 100;
+        const oz = SMData.view.zoom;
+        SMData.view.zoom = pct;
+        const cx = window.innerWidth / 2, cy = window.innerHeight / 2;
+        SMData.view.x += cx * (1 / SMData.view.zoom - 1 / oz);
+        SMData.view.y += cy * (1 / SMData.view.zoom - 1 / oz);
+        this._updateAllPos(); this._syncZoomUI();
+    },
+
+    _syncZoomUI() {
+        const pct = Math.round(SMData.view.zoom * 100);
+        document.getElementById('zoomLabel').textContent = pct + '%';
+        const slider = document.getElementById('zoomSlider');
+        if (Math.abs(parseInt(slider.value) - pct) > 1) slider.value = pct;
     },
 
     _onKD(e) { if (e.target.tagName === 'INPUT') return; if (e.key === 'Delete' && SMData.selectedNode) this.deleteNode(SMData.selectedNode); if (e.key === 'Escape') { SMData.connecting = null; SMData.connectMode = false; document.getElementById('btnConnect').classList.remove('active'); document.getElementById('conditionEditor').classList.remove('show'); this._updateSel(); } },
@@ -480,26 +510,63 @@ const SMTool = {
 
         let atlasText = '', pngUrl = '', skelBin = null, skelJson = null;
         for (const r of results) {
-            if (r.t === 'txt') { try { const j = JSON.parse(r.d); if (j.skeleton || j.bones) skelJson = j; else atlasText = r.d; } catch (_) { atlasText = r.d; } }
+            if (r.t === 'txt') {
+                // Strip BOM if present (some editors add it)
+                let s = r.d;
+                if (s.charCodeAt(0) === 0xFEFF) s = s.slice(1);
+                try {
+                    const j = JSON.parse(s);
+                    // Spine skeleton indicators: bones/slots/skins/animations/events are very Spine-specific
+                    if (j.bones || j.slots || j.skins || j.animations || j.events
+                        || (j.skeleton && (typeof j.skeleton === 'object')
+                            && (j.bones !== undefined || j.slots !== undefined || j.skins !== undefined || j.animations !== undefined))) {
+                        skelJson = j;
+                        console.log('[Spine] ✓ Detected JSON skeleton: bones=' + (j.bones ? j.bones.length : 0) + ', anims=' + (j.animations ? Object.keys(j.animations).length : 0));
+                    } else {
+                        // Valid JSON but not a Spine skeleton → log keys for debugging
+                        console.warn('[Spine] ⚠ JSON parsed but NOT a Spine skeleton. Top-level keys:', Object.keys(j).join(', '), '| Sample:', JSON.stringify(j).slice(0, 200));
+                    }
+                } catch (e) {
+                    // Not valid JSON → likely atlas text
+                    console.log('[Spine]   txt not JSON (' + r.n + '), treating as atlas');
+                    if (!atlasText) atlasText = r.d;
+                }
+            }
             else if (r.t === 'img') pngUrl = r.d;
             else if (r.t === 'bin') skelBin = r.d;
         }
         if (!pngUrl) throw new Error('No PNG found'); if (!atlasText) throw new Error('No .atlas found');
         if (!skelJson && !skelBin) throw new Error('No skeleton (.json/.skel) found');
 
-        // --- Detect version EARLY to pick correct runtime ---
+        // --- Detect version from binary .skel header ---
+        // .skel format: hash(varint+utf8) + version(varint+utf8) + ...
         let detectedVersion = '';
         if (skelJson) {
             detectedVersion = (skelJson.skeleton && skelJson.skeleton.spine) || '';
         } else if (skelBin) {
-            // Peek at binary header: first 4 bytes hash, then version string
             try {
-                const dv = new DataView(skelBin.buffer, skelBin.byteOffset, skelBin.byteLength);
-                const verLen = dv.getUint8(8); // version string length at offset 8
-                if (verLen > 0 && verLen < 50) {
-                    let ver = '';
-                    for (let i = 0; i < verLen; i++) ver += String.fromCharCode(dv.getUint8(9 + i));
-                    detectedVersion = ver;
+                const bytes = skelBin;
+                // Helper: read a varint from binary (same as BinaryInput.readInt)
+                function readVarint(arr, pos) {
+                    let b = arr[pos]; let result = b & 0x7F; pos++;
+                    if ((b & 0x80) !== 0) { b = arr[pos]; result |= (b & 0x7F) << 7; pos++;
+                    if ((b & 0x80) !== 0) { b = arr[pos]; result |= (b & 0x7F) << 14; pos++;
+                    if ((b & 0x80) !== 0) { b = arr[pos]; result |= (b & 0x7F) << 21; pos++;
+                    if ((b & 0x80) !== 0) { b = arr[pos]; result |= (b & 0x7F) << 28; pos++; } } } }
+                    return { value: result >>> 1 ^ -(result & 1), pos: pos };
+                }
+                // Skip hash string
+                let pos = 0;
+                let r = readVarint(bytes, pos); pos = r.pos;
+                let byteCount = r.value;
+                if (byteCount > 1) pos += byteCount - 1; // skip hash chars
+                // Read version string
+                r = readVarint(bytes, pos); pos = r.pos;
+                byteCount = r.value;
+                if (byteCount > 0 && byteCount < 50) {
+                    detectedVersion = '';
+                    for (let i = 0; i < byteCount - 1 && pos + i < bytes.length; i++)
+                        detectedVersion += String.fromCharCode(bytes[pos + i]);
                 }
             } catch (e) { /* ignore */ }
         }
@@ -533,15 +600,24 @@ const SMTool = {
         let sd;
         try {
             if (skelBin) {
-                const bl = new SP.SkeletonBinary(al); bl.scale = 1; sd = bl.readSkeletonData(skelBin);
+                console.log('[Spine] Parsing .skel (' + skelBin.length + ' bytes, version: ' + (detectedVersion || '?') + ')');
+                const bl = new SP.SkeletonBinary(al); bl.scale = 1;
+                sd = bl.readSkeletonData(skelBin);
             } else {
                 const jl = new SP.SkeletonJson(al); jl.scale = 1; sd = jl.readSkeletonData(skelJson);
             }
         } catch (e) {
-            throw new Error(`Skeleton parse failed: ${e.message}. ` +
-                (detectedVersion.startsWith('4.2') ? 'Spine 4.2 .skel files are NOT compatible with available runtimes. Please export as .json format from Spine editor instead.' :
-                 detectedVersion.startsWith('3.') ? '3.x skeleton parsing failed with 3.8 runtime.' :
-                 'Unknown format error.'));
+            // Give clear error for .skel version mismatches
+            if (skelBin) {
+                throw new Error(
+                    '.skel 解析失败' + (detectedVersion ? ' (版本: ' + detectedVersion + ')' : '') + '\n' +
+                    '3.8 runtime 只支持 Spine 3.8.x 的 .skel 二进制格式。\n' +
+                    '注意：Spine 3.8.75 版本的 .skel 也不被支持。\n' +
+                    '解决方法：使用 .json 格式替代（推荐），或在 Spine 编辑器中导出为非 3.8.75 版本。\n' +
+                    '原始错误: ' + e.message
+                );
+            }
+            throw new Error('Skeleton parse failed: ' + e.message);
         }
         node.skeletonData = sd;
         node.version = sd.version || detectedVersion;
@@ -719,7 +795,7 @@ const SMTool = {
     _esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; },
     _hitTest(node, wx, wy) { const el = this._getEl(node.id); if (!el) return false; const r = el.getBoundingClientRect(); return wx >= node.x && wx <= node.x + r.width / SMData.view.zoom && wy >= node.y && wy <= node.y + r.height / SMData.view.zoom; },
 
-    _onHD(e, nid) { if (e.button !== 0) return; const n = SMData.nodes.get(nid); if (!n) return; SMData.selectedNode = nid; SMData.draggedNode = n; const wp = this.canvasToWorld(e.clientX, e.clientY); SMData.dragOffset = { x: wp.x - n.x, y: wp.y - n.y }; this._updateSel(); },
+    _onHD(e, nid) { if (e.button === 1 || e.button === 2) { this._onMD(e); return; } if (e.button !== 0) return; const n = SMData.nodes.get(nid); if (!n) return; SMData.selectedNode = nid; SMData.draggedNode = n; const wp = this.canvasToWorld(e.clientX, e.clientY); SMData.dragOffset = { x: wp.x - n.x, y: wp.y - n.y }; this._updateSel(); },
     _onND(e, nid) { e.preventDefault(); e.stopPropagation(); const files = Array.from(e.dataTransfer.files); if (!files.length) return; const groups = {}; for (const f of files) { let base = f.name; for (const ext of ['.json', '.skel', '.atlas', '.png', '.jpg', '.jpeg']) { if (base.toLowerCase().endsWith(ext)) { base = base.slice(0, -ext.length); break; } } if (!groups[base]) groups[base] = {}; groups[base][f.name.split('.').pop().toLowerCase()] = f; } const node = SMData.nodes.get(nid); if (!node) return; for (const [, g] of Object.entries(groups)) { this._loadSpine(node, g).then(() => this._updateEl(node)).catch(err => console.error('[NodeDrop] Failed:', err)); break; } },
     _onStateClick(nid, name) { const node = SMData.nodes.get(nid); if (!node || !node.state || SMData.connectMode) return; node.state.setAnimation(0, name, true); node.currentAnim = name; this._updateEl(node); },
     _onDot(nid, name, type) {
@@ -759,8 +835,8 @@ const SMTool = {
     toggleConnectMode() { SMData.connectMode = !SMData.connectMode; document.getElementById('btnConnect').classList.toggle('active', SMData.connectMode); SMData.connecting = null; this.gridCanvas.style.cursor = SMData.connectMode ? 'crosshair' : 'default'; this._updateSel(); },
     saveCondition() { const ed = document.getElementById('conditionEditor'); const c = SMData.connections.find(x => x.id === ed._cid); if (c) c.condition = document.getElementById('condInput').value.trim(); ed.classList.remove('show'); },
     deleteConnection() { const ed = document.getElementById('conditionEditor'); SMData.connections = SMData.connections.filter(x => x.id !== ed._cid); ed.classList.remove('show'); this._updateSB(); },
-    fitAll() { if (!SMData.nodes.size) return; let mx = Infinity, my = Infinity, Mx = -Infinity, My = -Infinity; for (const [, n] of SMData.nodes) { mx = Math.min(mx, n.x); my = Math.min(my, n.y); Mx = Math.max(Mx, n.x + n.width); My = Math.max(My, n.y + 400); } SMData.view.zoom = Math.min(window.innerWidth / (Mx - mx + 200), window.innerHeight / (My - my + 200), 2); SMData.view.x = -(mx + Mx) / 2; SMData.view.y = -(my + My) / 2; this._updateAllPos(); document.getElementById('zoomIndicator').textContent = Math.round(SMData.view.zoom * 100) + '%'; },
-    resetView() { SMData.view = { x: 0, y: 0, zoom: 1 }; this._updateAllPos(); document.getElementById('zoomIndicator').textContent = '100%'; },
+    fitAll() { if (!SMData.nodes.size) return; let mx = Infinity, my = Infinity, Mx = -Infinity, My = -Infinity; for (const [, n] of SMData.nodes) { mx = Math.min(mx, n.x); my = Math.min(my, n.y); Mx = Math.max(Mx, n.x + n.width); My = Math.max(My, n.y + 400); } SMData.view.zoom = Math.min(window.innerWidth / (Mx - mx + 200), window.innerHeight / (My - my + 200), 2); SMData.view.x = -(mx + Mx) / 2; SMData.view.y = -(my + My) / 2; this._updateAllPos(); this._syncZoomUI(); },
+    resetView() { SMData.view = { x: 0, y: 0, zoom: 1 }; this._updateAllPos(); this._syncZoomUI(); },
     toggleGrid() { SMData.showGrid = !SMData.showGrid; document.getElementById('btnGrid').classList.toggle('active', SMData.showGrid); },
     ctxDeleteNode() { if (SMData.selectedNode) this.deleteNode(SMData.selectedNode); document.getElementById('ctxMenu').style.display = 'none'; },
     ctxDuplicateNode() { if (!SMData.selectedNode) return; const orig = SMData.nodes.get(SMData.selectedNode); if (!orig) return; const id = SMData.nextId++; const node = new SpineNodeData(id); node.name = orig.name + ' (副本)'; node.x = orig.x + 50; node.y = orig.y + 50; SMData.nodes.set(id, node); this._createEl(node); this._updatePos(node); this._updateSB(); document.getElementById('ctxMenu').style.display = 'none'; },
