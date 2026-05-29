@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="zh-cn">
+<head>
+<meta charset="utf-8" />
+<title>Spine Animation State Machine</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<style>
+:root{--bg:#1a1a2e;--panel-bg:#16213e;--node-bg:#0f3460;--accent:#e94560;--accent2:#53d8fb;--text:#ccc;--text2:#999;--border:#2a2a4a;--input-bg:#1a1a3e;--success:#00e676;--warn:#ffab40;--connector:#ff6b9d;--shadow:0 8px 32px rgba(0,0,0,.4)}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);overflow:hidden;height:100vh;width:100vw;color:var(--text)}
+#app{position:relative;width:100%;height:100%}
+#gridCanvas{position:absolute;top:0;left:0;z-index:1}
+#connCanvas{position:absolute;top:0;left:0;z-index:2;pointer-events:none}
+#connCanvas.active{pointer-events:all}
+#nodesLayer{position:absolute;top:0;left:0;z-index:3;pointer-events:none}
+#nodesLayer>*{pointer-events:all}
+
+#toolbar{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:100;display:flex;gap:8px;padding:8px 16px;background:var(--panel-bg);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow)}
+#toolbar button{background:var(--node-bg);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 16px;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:6px;transition:all .2s;white-space:nowrap}
+#toolbar button:hover{background:var(--accent);border-color:var(--accent);color:#fff}
+#toolbar button.active{background:var(--accent2);border-color:var(--accent2);color:#111}
+#toolbar .sep{width:1px;background:var(--border);margin:0 4px}
+
+#dropZone{position:fixed;inset:0;z-index:200;background:rgba(233,69,96,.15);backdrop-filter:blur(2px);display:none;align-items:center;justify-content:center;pointer-events:none}
+#dropZone.show{display:flex;pointer-events:all}
+#dropZone .inner{border:3px dashed var(--accent);border-radius:24px;padding:60px 80px;text-align:center;color:var(--accent);font-size:1.4em;background:rgba(26,26,46,.9)}
+#dropZone .inner .icon{font-size:3em;margin-bottom:16px}
+#dropZone .inner .sub{font-size:.6em;color:var(--text2);margin-top:8px}
+
+.spine-node{position:absolute;background:var(--panel-bg);border:2px solid var(--border);border-radius:16px;box-shadow:var(--shadow);min-width:260px;transition:border-color .3s}
+.spine-node:hover{border-color:var(--accent2)}
+.spine-node.selected{border-color:var(--accent);box-shadow:0 0 24px rgba(233,69,96,.3)}
+.spine-node .header{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--node-bg);border-radius:14px 14px 0 0;cursor:grab;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;user-select:none}
+.spine-node .header .name{max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.spine-node .header .btns{display:flex;gap:4px}
+.spine-node .header .btns button{background:none;border:none;color:var(--text2);cursor:pointer;font-size:14px;padding:2px 6px;border-radius:4px;transition:all .2s}
+.spine-node .header .btns button:hover{color:#fff;background:var(--accent)}
+.spine-node .spine-canvas-wrap{position:relative;display:flex;align-items:center;justify-content:center;background:var(--bg);min-height:200px;cursor:pointer;overflow:hidden}
+.spine-node .spine-canvas-wrap canvas{display:block}
+.spine-node .footer{display:flex;align-items:center;gap:6px;padding:6px 12px;border-top:1px solid var(--border);font-size:11px;color:var(--text2);flex-wrap:wrap}
+.spine-node .footer .badge{background:var(--node-bg);padding:2px 8px;border-radius:10px;font-size:10px}
+
+.spine-node .state-list{padding:4px 8px;max-height:200px;overflow-y:auto;border-top:1px solid var(--border)}
+.spine-node .state-row{display:flex;align-items:center;justify-content:space-between;padding:5px 8px;margin:2px 0;border-radius:6px;cursor:pointer;font-size:12px;transition:all .15s;position:relative}
+.spine-node .state-row:hover{background:rgba(255,255,255,.06)}
+.spine-node .state-row.active{background:var(--accent);color:#fff}
+.spine-node .state-row .state-dur{font-size:10px;color:var(--text2);margin-left:8px}
+.spine-node .state-row.active .state-dur{color:rgba(255,255,255,.7)}
+.spine-node .state-row .conn-dot{width:10px;height:10px;border-radius:50%;background:var(--connector);border:2px solid #fff;cursor:crosshair;opacity:0;transition:opacity .2s;flex-shrink:0}
+.spine-node .state-row:hover .conn-dot{opacity:1}
+
+.info-panel{position:absolute;left:calc(100% + 16px);top:0;width:280px;background:var(--panel-bg);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow);z-index:10;font-size:12px;overflow:hidden;display:none}
+.info-panel.show{display:block}
+.info-panel .ip-header{padding:8px 12px;background:var(--node-bg);font-weight:600;display:flex;justify-content:space-between;align-items:center;cursor:pointer}
+.info-panel .ip-body{padding:8px 12px;max-height:400px;overflow-y:auto}
+.info-panel .ip-section{margin-bottom:10px}
+.info-panel .ip-section .ip-title{color:var(--accent2);font-weight:600;margin-bottom:4px;font-size:11px;text-transform:uppercase}
+.info-panel .ip-row{display:flex;justify-content:space-between;padding:2px 0;color:var(--text2)}
+.info-panel .checkbox-row{display:flex;align-items:center;gap:8px;padding:4px 0}
+
+#conditionEditor{position:fixed;z-index:300;background:var(--panel-bg);border:1px solid var(--accent2);border-radius:10px;padding:12px;box-shadow:var(--shadow);display:none;min-width:200px}
+#conditionEditor.show{display:block}
+#conditionEditor input{width:100%;background:var(--input-bg);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:6px;font-size:13px;outline:none}
+#conditionEditor input:focus{border-color:var(--accent2)}
+#conditionEditor .actions{display:flex;gap:6px;margin-top:8px;justify-content:flex-end}
+#conditionEditor .actions button{padding:6px 14px;border-radius:6px;border:none;cursor:pointer;font-size:12px}
+#conditionEditor .actions .ok{background:var(--accent2);color:#111}
+#conditionEditor .actions .del{background:var(--accent);color:#fff}
+
+#statusBar{position:fixed;bottom:0;left:0;right:0;z-index:100;padding:6px 16px;background:var(--panel-bg);border-top:1px solid var(--border);font-size:11px;color:var(--text2);display:flex;gap:20px}
+#ctxMenu{position:fixed;z-index:400;background:var(--panel-bg);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow);display:none;min-width:160px;padding:4px}
+#ctxMenu .ctx-item{padding:8px 14px;cursor:pointer;border-radius:6px;font-size:13px;transition:all .15s}
+#ctxMenu .ctx-item:hover{background:var(--accent);color:#fff}
+#zoomIndicator{position:fixed;bottom:40px;right:16px;z-index:100;background:var(--panel-bg);padding:6px 12px;border-radius:8px;font-size:12px;border:1px solid var(--border);color:var(--text2)}
+
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+@keyframes pulse{0%,100%{box-shadow:0 0 8px rgba(233,69,96,.3)}50%{box-shadow:0 0 20px rgba(233,69,96,.6)}}
+.connecting{animation:pulse .8s infinite}
+</style>
+</head>
+<body>
+<div id="app">
+    <canvas id="gridCanvas"></canvas>
+    <canvas id="connCanvas" class="active"></canvas>
+    <div id="nodesLayer"></div>
+</div>
+
+<div id="toolbar">
+    <button onclick="SMTool.addSpineNode()">➕ 添加节点</button>
+    <span class="sep"></span>
+    <button id="btnConnect" onclick="SMTool.toggleConnectMode()">🔗 连线模式</button>
+    <span class="sep"></span>
+    <button onclick="SMTool.fitAll()">📐 适合视图</button>
+    <button onclick="SMTool.resetView()">🏠 重置视图</button>
+    <span class="sep"></span>
+    <button id="btnGrid" onclick="SMTool.toggleGrid()">📏 网格</button>
+    <button onclick="SMTool.exportData()">💾 导出</button>
+    <button onclick="SMTool.importData()">📥 导入</button>
+</div>
+
+<div id="dropZone"><div class="inner"><div class="icon">📂</div>拖拽 Spine 文件到此处<br/><span class="sub">需要 .json/.skel + .atlas + .png</span></div></div>
+
+<div id="conditionEditor">
+    <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:6px">过渡条件：</label>
+    <input type="text" id="condInput" placeholder="例如：isDead == true" />
+    <div class="actions">
+        <button class="del" onclick="SMTool.deleteConnection()">删除连线</button>
+        <button class="ok" onclick="SMTool.saveCondition()">确定</button>
+    </div>
+</div>
+
+<div id="ctxMenu">
+    <div class="ctx-item" onclick="SMTool.ctxDeleteNode()">🗑️ 删除节点</div>
+    <div class="ctx-item" onclick="SMTool.ctxDuplicateNode()">📋 复制节点</div>
+</div>
+
+<div id="statusBar">
+    <span id="sbNodes">节点: 0</span>
+    <span id="sbConns">连线: 0</span>
+    <span id="sbFPS">FPS: --</span>
+    <span id="sbStatus"></span>
+</div>
+<div id="zoomIndicator">100%</div>
+
+<!-- Multi-version spine runtime loading -->
+<script>
+// Strategy: load 4.1 first (primary), save as spine41, then load 3.8 as spine38
+// auto-detect skeleton version and route to correct runtime
+(function() {
+    const CDN_41 = 'https://unpkg.com/@esotericsoftware/spine-core@4.1.24/dist/iife/spine-core.js';
+    const CDN_38_LIST = [
+        'https://unpkg.com/@esotericsoftware/spine-core@3.8.99/dist/iife/spine-core.js',
+        'https://unpkg.com/@esotericsoftware/spine-core@3.8.91/dist/iife/spine-core.js',
+    ];
+    var _readyCb = null;
+
+    window._getSpine = function(version) {
+        // version like "4.2.43" → major 4 → use spine41
+        // version like "3.8.99" → major 3 → use spine38
+        // version like "v3.8-from-4.0.64" → contains "3.8" → use spine38
+        if (!version) return window.spine41 || window.spine;
+        var v = String(version);
+        if (v.indexOf('3.') === 0 || v.indexOf('v3.') >= 0 || (parseInt(v) || 0) < 4) {
+            return window.spine38 || window.spine41 || window.spine;
+        }
+        return window.spine41 || window.spine;
+    };
+
+    function loadScript(url, onOk, onErr) {
+        var s = document.createElement('script');
+        s.src = url;
+        s.onload = onOk;
+        s.onerror = onErr;
+        document.head.appendChild(s);
+    }
+
+    function load41(next) {
+        loadScript(CDN_41,
+            function() {
+                console.log('[Spine] 4.1 runtime loaded');
+                window.spine41 = window.spine;
+                next();
+            },
+            function() {
+                console.warn('[Spine] 4.1 CDN failed, trying to continue...');
+                next();
+            }
+        );
+    }
+
+    function load38(done) {
+        var idx = 0;
+        function tryNext() {
+            if (idx >= CDN_38_LIST.length) {
+                console.warn('[Spine] 3.8 CDN not available (will only support 4.x files)');
+                done();
+                return;
+            }
+            var url = CDN_38_LIST[idx++];
+            loadScript(url,
+                function() {
+                    console.log('[Spine] 3.8 runtime loaded');
+                    window.spine38 = window.spine;
+                    if (window.spine41) window.spine = window.spine41;
+                    done();
+                },
+                function() { console.warn('[Spine] 3.8 CDN failed:', url); tryNext(); }
+            );
+        }
+        tryNext();
+    }
+
+    function finish() {
+        var sb = document.getElementById('sbStatus');
+        if (window.spine41) {
+            sb.textContent = 'Spine: 4.1 ✓';
+        } else if (window.spine) {
+            sb.textContent = 'Spine: loaded';
+        } else {
+            sb.textContent = '⚠️ Spine not loaded';
+        }
+        if (window.spine38) sb.textContent += ' | 3.8 ✓';
+        if (window._onSpineReady) window._onSpineReady();
+    }
+
+    load41(function() { load38(finish); });
+})();
+</script>
+
+<script>
+// ===================== Custom Canvas2D Spine Renderer =====================
+// Runtime-agnostic: uses duck-typing instead of instanceof for cross-version compat
+const SpineRenderer = {
+    _worldVertices: [],
+
+    /** Draw a spine.Skeleton to CanvasRenderingContext2D */
+    draw(ctx, skeleton, atlasImage) {
+        if (!atlasImage || !atlasImage.complete || atlasImage.naturalWidth === 0) return;
+        const imgW = atlasImage.naturalWidth, imgH = atlasImage.naturalHeight;
+        if (!imgW || !imgH) return;
+        ctx.globalCompositeOperation = 'source-over';
+
+        for (let i = 0, n = skeleton.drawOrder.length; i < n; i++) {
+            const slot = skeleton.drawOrder[i];
+            if (!slot.bone.active) continue;
+            const attachment = slot.attachment;
+            if (!attachment) continue;
+
+            // Duck-typing: RegionAttachment has uvs + computeWorldVertices
+            if (attachment.uvs && attachment.region && attachment.computeWorldVertices && !attachment.triangles) {
+                this._ensureArr(8);
+                const v = this._worldVertices;
+                attachment.computeWorldVertices(slot, v, 0, 2);
+                const reg = attachment.region;
+                if (!reg) continue;
+
+                const sx = reg.u * imgW, sy = reg.v * imgH;
+                const sw = (reg.u2 - reg.u) * imgW, sh = (reg.v2 - reg.v) * imgH;
+                const dx = Math.min(v[0], v[2], v[4], v[6]);
+                const dy = Math.min(v[1], v[3], v[5], v[7]);
+                const dw = Math.max(v[0], v[2], v[4], v[6]) - dx;
+                const dh = Math.max(v[1], v[3], v[5], v[7]) - dy;
+                if (dw > 0 && dh > 0) {
+                    ctx.drawImage(atlasImage, sx, sy, sw, sh, dx, dy, dw, dh);
+                }
+            }
+            // Duck-typing: MeshAttachment has triangles + worldVerticesLength
+            else if (attachment.triangles && attachment.worldVerticesLength) {
+                const vc = attachment.worldVerticesLength;
+                this._ensureArr(vc);
+                const v = this._worldVertices;
+                attachment.computeWorldVertices(slot, 0, vc, v, 0, 2);
+                const reg = attachment.region;
+                const tris = attachment.triangles;
+                if (!reg || !tris) continue;
+
+                for (let t = 0; t < tris.length; t += 3) {
+                    const i0 = tris[t] * 2, i1 = tris[t + 1] * 2, i2 = tris[t + 2] * 2;
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.moveTo(v[i0], v[i0 + 1]);
+                    ctx.lineTo(v[i1], v[i1 + 1]);
+                    ctx.lineTo(v[i2], v[i2 + 1]);
+                    ctx.closePath();
+                    ctx.clip();
+                    const cx = (v[i0] + v[i1] + v[i2]) / 3, cy = (v[i0 + 1] + v[i1 + 1] + v[i2 + 1]) / 3;
+                    const rw = Math.max(Math.abs(v[i1] - v[i0]), Math.abs(v[i2] - v[i0])) + 4;
+                    const rh = Math.max(Math.abs(v[i1 + 1] - v[i0 + 1]), Math.abs(v[i2 + 1] - v[i0 + 1])) + 4;
+                    ctx.drawImage(atlasImage, reg.u * imgW, reg.v * imgH, (reg.u2 - reg.u) * imgW, (reg.v2 - reg.v) * imgH, cx - rw / 2, cy - rh / 2, rw, rh);
+                    ctx.restore();
+                }
+            }
+        }
+    },
+
+    _ensureArr(n) { if (this._worldVertices.length < n) this._worldVertices.length = n; }
+};
+
+// ===================== DATA MODEL =====================
+const SMData = {
+    nodes: new Map(), connections: [],
+    nextId: 1, nextConnId: 1,
+    view: { x: 0, y: 0, zoom: 1 },
+    connectMode: false, connecting: null,
+    selectedNode: null, showGrid: true,
+    draggedNode: null, dragOffset: { x: 0, y: 0 },
+    isPanning: false, panStart: { x: 0, y: 0 }, viewStart: { x: 0, y: 0 },
+};
+
+class SpineNodeData {
+    constructor(id) {
+        this.id = id; this.name = `Node_${id}`;
+        this.x = Math.random() * 200 - 100 + window.innerWidth / 2;
+        this.y = Math.random() * 200 - 100 + window.innerHeight / 2;
+        this.width = 300;
+        this.skeletonData = null; this.atlasData = null; this.textureImg = null;
+        this.skeleton = null; this.state = null;
+        this.animations = []; this.skins = []; this.slots = [];
+        this.version = ''; this.currentAnim = '';
+        this.premultipliedAlpha = false;
+        this.canvas = null; this.ctx = null;
+        this.infoCollapsed = true;
+    }
+}
+
+// ===================== CORE TOOL =====================
+const SMTool = {
+    init() {
+        this.gridCanvas = document.getElementById('gridCanvas');
+        this.gridCtx = this.gridCanvas.getContext('2d');
+        this.connCanvas = document.getElementById('connCanvas');
+        this.connCtx = this.connCanvas.getContext('2d');
+        this.nodesLayer = document.getElementById('nodesLayer');
+        this.resize();
+        window.addEventListener('resize', () => this.resize());
+
+        this.gridCanvas.addEventListener('mousedown', e => this._onMD(e));
+        window.addEventListener('mousemove', e => this._onMM(e));
+        window.addEventListener('mouseup', e => this._onMU(e));
+        this.gridCanvas.addEventListener('wheel', e => { e.preventDefault(); this._onWheel(e); });
+        this.gridCanvas.addEventListener('contextmenu', e => e.preventDefault());
+
+        const dz = document.getElementById('dropZone');
+        document.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('show'); });
+        dz.addEventListener('dragover', e => e.preventDefault());
+        dz.addEventListener('dragleave', () => dz.classList.remove('show'));
+        dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('show'); this._onDrop(e); });
+
+        window.addEventListener('keydown', e => this._onKD(e));
+        window.addEventListener('click', () => { document.getElementById('ctxMenu').style.display = 'none'; });
+
+        this._lt = performance.now(); this._fc = 0; this._ft = performance.now();
+        requestAnimationFrame(t => this._loop(t));
+    },
+
+    resize() {
+        this.gridCanvas.width = window.innerWidth;
+        this.gridCanvas.height = window.innerHeight;
+        this.connCanvas.width = window.innerWidth;
+        this.connCanvas.height = window.innerHeight;
+    },
+
+    worldToCanvas(wx, wy) { const z = SMData.view.zoom; return { x: (wx + SMData.view.x) * z + window.innerWidth / 2, y: (wy + SMData.view.y) * z + window.innerHeight / 2 }; },
+    canvasToWorld(sx, sy) { const z = SMData.view.zoom; return { x: (sx - window.innerWidth / 2) / z - SMData.view.x, y: (sy - window.innerHeight / 2) / z - SMData.view.y }; },
+    worldToDOM(wx, wy) { const z = SMData.view.zoom; return { x: wx + SMData.view.x + window.innerWidth / 2 / z, y: wy + SMData.view.y + window.innerHeight / 2 / z }; },
+
+    _loop(now) {
+        requestAnimationFrame(t => this._loop(t));
+        const dt = Math.min((now - this._lt) / 1000, 0.1);
+        this._lt = now;
+        this._fc++;
+        if (now - this._ft >= 1000) {
+            document.getElementById('sbFPS').textContent = `FPS: ${Math.round(this._fc * 1000 / (now - this._ft))}`;
+            this._fc = 0; this._ft = now;
+        }
+        for (const [, node] of SMData.nodes) {
+            if (node.state && node.skeleton && node.ctx && node.canvas) {
+                node.state.update(dt);
+                node.state.apply(node.skeleton);
+                node.skeleton.updateWorldTransform();
+                node.ctx.clearRect(0, 0, node.canvas.width, node.canvas.height);
+                SpineRenderer.draw(node.ctx, node.skeleton, node.textureImg);
+            }
+        }
+        this._renderGrid();
+        this._renderConnections();
+    },
+
+    _renderGrid() {
+        const ctx = this.gridCtx, w = this.gridCanvas.width, h = this.gridCanvas.height;
+        ctx.clearRect(0, 0, w, h);
+        if (!SMData.showGrid) return;
+        const z = SMData.view.zoom, vx = SMData.view.x, vy = SMData.view.y;
+        let base = 50; while (base * z < 30) base *= 2; while (base * z > 200) base /= 2;
+        const s = base * z, ox = ((w / 2 + vx * z) % s + s) % s, oy = ((h / 2 + vy * z) % s + s) % s;
+        ctx.strokeStyle = base >= 200 ? '#ffffff10' : '#ffffff06'; ctx.lineWidth = 1; ctx.beginPath();
+        for (let x = ox; x < w; x += s) { ctx.moveTo(x, 0); ctx.lineTo(x, h); }
+        for (let y = oy; y < h; y += s) { ctx.moveTo(0, y); ctx.lineTo(w, y); }
+        ctx.stroke();
+        const cx = w / 2 + vx * z, cy = h / 2 + vy * z;
+        ctx.strokeStyle = '#ffffff20'; ctx.lineWidth = 2; ctx.beginPath();
+        ctx.moveTo(cx, 0); ctx.lineTo(cx, h); ctx.moveTo(0, cy); ctx.lineTo(w, cy); ctx.stroke();
+    },
+
+    _renderConnections() {
+        const ctx = this.connCtx; ctx.clearRect(0, 0, this.connCanvas.width, this.connCanvas.height);
+        for (const conn of SMData.connections) {
+            const fn = SMData.nodes.get(conn.fromNode), tn = SMData.nodes.get(conn.toNode);
+            if (!fn || !tn) continue;
+            const fp = this._getStateConnectorPos(fn, conn.fromState, 'output');
+            const tp = this._getStateConnectorPos(tn, conn.toState, 'input');
+            if (!fp || !tp) continue;
+            const fs = this.worldToCanvas(fp.x, fp.y), ts = this.worldToCanvas(tp.x, tp.y);
+            const dx = Math.abs(ts.x - fs.x), cp = Math.max(dx * 0.5, 50) * (fs.x < ts.x ? 1 : -1);
+            ctx.strokeStyle = conn.condition ? '#53d8fb' : '#ff6b9d'; ctx.lineWidth = 2.5; ctx.beginPath();
+            ctx.moveTo(fs.x, fs.y); ctx.bezierCurveTo(fs.x + Math.abs(cp), fs.y, ts.x - Math.abs(cp), ts.y, ts.x, ts.y); ctx.stroke();
+            const mt = 0.5, mx = Math.pow(1 - mt, 3) * fs.x + 3 * Math.pow(1 - mt, 2) * mt * (fs.x + Math.abs(cp)) + 3 * (1 - mt) * mt * mt * (ts.x - Math.abs(cp)) + mt * mt * mt * ts.x;
+            const my = Math.pow(1 - mt, 3) * fs.y + 3 * Math.pow(1 - mt, 2) * mt * fs.y + 3 * (1 - mt) * mt * mt * ts.y + mt * mt * mt * ts.y;
+            const label = conn.condition || '点击编辑条件';
+            ctx.font = '12px "Segoe UI",system-ui,sans-serif'; const tw = ctx.measureText(label).width + 16;
+            ctx.fillStyle = conn.condition ? 'rgba(83,216,251,.9)' : 'rgba(255,107,157,.7)';
+            this._roundRect(ctx, mx - tw / 2, my - 12, tw, 24, 12); ctx.fill();
+            ctx.fillStyle = conn.condition ? '#111' : '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(label, mx, my);
+        }
+        if (SMData.connecting) {
+            const c = SMData.connecting, sp = this.worldToCanvas(c.sx, c.sy);
+            ctx.strokeStyle = '#ff6b9d'; ctx.lineWidth = 2; ctx.setLineDash([6, 4]); ctx.beginPath();
+            ctx.moveTo(sp.x, sp.y); const dx = Math.abs(c.mx - sp.x), cpo = Math.max(dx * 0.5, 50);
+            ctx.bezierCurveTo(sp.x + cpo, sp.y, c.mx - cpo, c.my, c.mx, c.my); ctx.stroke(); ctx.setLineDash([]);
+        }
+    },
+
+    _roundRect(ctx, x, y, w, h, r) {
+        ctx.beginPath(); ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y);
+        ctx.quadraticCurveTo(x + w, y, x + w, y + r); ctx.lineTo(x + w, y + h - r);
+        ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h); ctx.lineTo(x + r, y + h);
+        ctx.quadraticCurveTo(x, y + h, x, y + h - r); ctx.lineTo(x, y + r);
+        ctx.quadraticCurveTo(x, y, x + r, y); ctx.closePath();
+    },
+
+    _getStateConnectorPos(node, stateName, type) {
+        const el = this._getEl(node.id); if (!el) return null;
+        const stateEl = el.querySelector(`.state-row[data-state="${CSS.escape(stateName)}"]`);
+        const dot = stateEl ? stateEl.querySelector(`.conn-dot.${type === 'output' ? 'output' : 'input'}`) : null;
+        if (dot) { const r = dot.getBoundingClientRect(); return this.canvasToWorld(r.left + r.width / 2, r.top + r.height / 2); }
+        const rect = el.getBoundingClientRect();
+        return this.canvasToWorld(type === 'output' ? rect.right : rect.left, rect.top + rect.height / 2);
+    },
+
+    _onMD(e) {
+        if (e.button === 2) return;
+        if (e.button === 1 || (e.button === 0 && e.altKey)) {
+            SMData.isPanning = true; SMData.panStart = { x: e.clientX, y: e.clientY };
+            SMData.viewStart = { x: SMData.view.x, y: SMData.view.y };
+            this.gridCanvas.style.cursor = 'grabbing'; return;
+        }
+        if (e.button === 0) {
+            if (this._checkConditionClick(e.clientX, e.clientY)) return;
+            const wp = this.canvasToWorld(e.clientX, e.clientY);
+            let found = null;
+            for (const [, n] of SMData.nodes) { if (this._hitTest(n, wp.x, wp.y)) { found = n; break; } }
+            if (found) {
+                SMData.selectedNode = found.id; SMData.draggedNode = found;
+                SMData.dragOffset = { x: wp.x - found.x, y: wp.y - found.y };
+                this._updateSel();
+            } else {
+                SMData.selectedNode = null; SMData.draggedNode = null;
+                SMData.isPanning = true; SMData.panStart = { x: e.clientX, y: e.clientY };
+                SMData.viewStart = { x: SMData.view.x, y: SMData.view.y };
+                this._updateSel();
+            }
+        }
+    },
+
+    _onMM(e) {
+        SMData._mx = e.clientX; SMData._my = e.clientY;
+        if (SMData.connecting) { SMData.connecting.mx = e.clientX; SMData.connecting.my = e.clientY; this._highlightTarget(e.clientX, e.clientY); }
+        if (SMData.isPanning) {
+            SMData.view.x = SMData.viewStart.x + (e.clientX - SMData.panStart.x) / SMData.view.zoom;
+            SMData.view.y = SMData.viewStart.y + (e.clientY - SMData.panStart.y) / SMData.view.zoom;
+            this._updateAllPos();
+        }
+        if (SMData.draggedNode) {
+            const wp = this.canvasToWorld(e.clientX, e.clientY);
+            SMData.draggedNode.x = wp.x - SMData.dragOffset.x;
+            SMData.draggedNode.y = wp.y - SMData.dragOffset.y;
+            this._updatePos(SMData.draggedNode);
+        }
+    },
+
+    _onMU(e) {
+        if (SMData.connecting) {
+            const target = this._findTarget(e.clientX, e.clientY);
+            if (target && target.type === 'input' && target.nodeId !== SMData.connecting.nodeId &&
+                !SMData.connections.some(c => c.fromNode === SMData.connecting.nodeId && c.fromState === SMData.connecting.stateName && c.toNode === target.nodeId && c.toState === target.stateName)) {
+                SMData.connections.push({ id: SMData.nextConnId++, fromNode: SMData.connecting.nodeId, fromState: SMData.connecting.stateName, toNode: target.nodeId, toState: target.stateName, condition: '' });
+                this._updateSB();
+            }
+            SMData.connecting = null; this._updateSel();
+        }
+        SMData.isPanning = false; SMData.draggedNode = null;
+        this.gridCanvas.style.cursor = SMData.connectMode ? 'crosshair' : 'default';
+    },
+
+    _onWheel(e) {
+        const oz = SMData.view.zoom; SMData.view.zoom = Math.max(0.1, Math.min(5, SMData.view.zoom * (e.deltaY > 0 ? 0.9 : 1.1)));
+        const mx = e.clientX - window.innerWidth / 2, my = e.clientY - window.innerHeight / 2;
+        SMData.view.x += mx * (1 / SMData.view.zoom - 1 / oz);
+        SMData.view.y += my * (1 / SMData.view.zoom - 1 / oz);
+        this._updateAllPos(); document.getElementById('zoomIndicator').textContent = Math.round(SMData.view.zoom * 100) + '%';
+    },
+
+    _onKD(e) { if (e.target.tagName === 'INPUT') return; if (e.key === 'Delete' && SMData.selectedNode) this.deleteNode(SMData.selectedNode); if (e.key === 'Escape') { SMData.connecting = null; SMData.connectMode = false; document.getElementById('btnConnect').classList.remove('active'); document.getElementById('conditionEditor').classList.remove('show'); this._updateSel(); } },
+
+    _onDrop(e) {
+        const files = Array.from(e.dataTransfer.files);
+        console.log('[Drop] Files:', files.map(f => f.name).join(', '));
+        const groups = {};
+        for (const f of files) {
+            let base = f.name; for (const ext of ['.json', '.skel', '.atlas', '.png', '.jpg', '.jpeg']) { if (base.toLowerCase().endsWith(ext)) { base = base.slice(0, -ext.length); break; } }
+            if (!groups[base]) groups[base] = {};
+            groups[base][f.name.split('.').pop().toLowerCase()] = f;
+        }
+        for (const [base, group] of Object.entries(groups)) {
+            if (group.json || group.skel) this._createNode(group, base);
+        }
+    },
+
+    async _createNode(fileGroup, baseName) {
+        const id = SMData.nextId++; const node = new SpineNodeData(id); node.name = baseName;
+        const wp = this.canvasToWorld(SMData._mx || window.innerWidth / 2, SMData._my || window.innerHeight / 2);
+        node.x = wp.x; node.y = wp.y; SMData.nodes.set(id, node);
+        this._createEl(node); this._updatePos(node);
+        try { await this._loadSpine(node, fileGroup); }
+        catch (err) { console.error('[Spine] Load failed:', err); node.name = baseName + ' (加载失败)'; this._updateEl(node); }
+        this._updateSB(); this._updateSel();
+    },
+
+    // === SPINE LOADING (multi-version: auto-detects 3.x vs 4.x) ===
+    async _loadSpine(node, fileGroup) {
+        console.log(`[Spine] Loading "${node.name}"...`, Object.keys(fileGroup));
+
+        const readFile = (file) => new Promise((resolve, reject) => {
+            const r = new FileReader(); r.onerror = () => reject(new Error(`Cannot read ${file.name}`));
+            const ext = file.name.split('.').pop().toLowerCase();
+            if (ext === 'png' || ext === 'jpg' || ext === 'jpeg') { r.onload = () => resolve({ t: 'img', d: r.result, n: file.name }); r.readAsDataURL(file); }
+            else if (ext === 'skel') { r.onload = () => resolve({ t: 'bin', d: new Uint8Array(r.result), n: file.name }); r.readAsArrayBuffer(file); }
+            else { r.onload = () => resolve({ t: 'txt', d: r.result, n: file.name }); r.readAsText(file); }
+        });
+
+        const results = []; for (const k of Object.keys(fileGroup)) { const r = await readFile(fileGroup[k]); if (r) results.push(r); }
+        console.log('[Spine] Read:', results.map(r => `${r.t}:${r.n}`).join(', '));
+
+        let atlasText = '', pngUrl = '', skelBin = null, skelJson = null;
+        for (const r of results) {
+            if (r.t === 'txt') { try { const j = JSON.parse(r.d); if (j.skeleton || j.bones) skelJson = j; else atlasText = r.d; } catch (_) { atlasText = r.d; } }
+            else if (r.t === 'img') pngUrl = r.d;
+            else if (r.t === 'bin') skelBin = r.d;
+        }
+        if (!pngUrl) throw new Error('No PNG found'); if (!atlasText) throw new Error('No .atlas found');
+        if (!skelJson && !skelBin) throw new Error('No skeleton (.json/.skel) found');
+
+        // --- Detect version EARLY to pick correct runtime ---
+        let detectedVersion = '';
+        if (skelJson) {
+            detectedVersion = (skelJson.skeleton && skelJson.skeleton.spine) || '';
+        } else if (skelBin) {
+            // Peek at binary header: first 4 bytes hash, then version string
+            try {
+                const dv = new DataView(skelBin.buffer, skelBin.byteOffset, skelBin.byteLength);
+                const verLen = dv.getUint8(8); // version string length at offset 8
+                if (verLen > 0 && verLen < 50) {
+                    let ver = '';
+                    for (let i = 0; i < verLen; i++) ver += String.fromCharCode(dv.getUint8(9 + i));
+                    detectedVersion = ver;
+                }
+            } catch (e) { /* ignore */ }
+        }
+        console.log(`[Spine] Detected version: "${detectedVersion}"`);
+
+        // Select appropriate runtime
+        const SP = window._getSpine(detectedVersion);
+        if (!SP) throw new Error('No spine runtime available');
+        console.log(`[Spine] Using runtime: ${SP === window.spine38 ? '3.8' : SP === window.spine41 ? '4.1' : 'default'}`);
+
+        // Load image
+        const img = new Image();
+        await new Promise((res, rej) => { img.onload = () => { console.log(`[Spine] Image: ${img.width}x${img.height}`); res(); }; img.onerror = () => rej(new Error('PNG load failed')); img.src = pngUrl; });
+        node.textureImg = img;
+
+        // Create atlas
+        const atlas = new SP.TextureAtlas(atlasText);
+        const texWrapper = { _image: img, getImage() { return this._image; }, setFilters() {}, setWraps() {}, dispose() {} };
+        for (let i = 0; i < atlas.pages.length; i++) {
+            const page = atlas.pages[i];
+            page.setTexture(texWrapper);
+            console.log(`[Spine] Atlas page "${page.name}": ${page.width}x${page.height}, pma=${page.pma}`);
+        }
+        node.atlasData = atlas;
+        console.log(`[Spine] Atlas: ${atlas.pages.length} page(s), ${atlas.regions.length} region(s)`);
+
+        // Load skeleton data
+        const al = new SP.AtlasAttachmentLoader(atlas);
+        let sd;
+        try {
+            if (skelBin) {
+                const bl = new SP.SkeletonBinary(al); bl.scale = 1; sd = bl.readSkeletonData(skelBin);
+            } else {
+                const jl = new SP.SkeletonJson(al); jl.scale = 1; sd = jl.readSkeletonData(skelJson);
+            }
+        } catch (e) {
+            throw new Error(`Skeleton parse failed: ${e.message}. ` +
+                (detectedVersion.startsWith('4.2') ? 'Spine 4.2 .skel files are NOT compatible with available runtimes. Please export as .json format from Spine editor instead.' :
+                 detectedVersion.startsWith('3.') ? '3.x skeleton parsing failed with 3.8 runtime.' :
+                 'Unknown format error.'));
+        }
+        node.skeletonData = sd;
+        node.version = sd.version || detectedVersion;
+        console.log(`[Spine] Skeleton v${node.version}: ${sd.bones.length} bones`);
+
+        // Extract data
+        node.animations = []; for (let i = 0; i < sd.animations.length; i++) node.animations.push({ name: sd.animations[i].name, duration: sd.animations[i].duration });
+        node.skins = []; for (let i = 0; i < sd.skins.length; i++) node.skins.push(sd.skins[i].name);
+        node.slots = []; for (let i = 0; i < sd.slots.length; i++) node.slots.push(sd.slots[i].name);
+        console.log(`[Spine] Anims: ${node.animations.map(a => a.name).join(', ')}`);
+
+        // Create skeleton
+        const sk = new SP.Skeleton(sd);
+        if (sd.defaultSkin) sk.setSkin(sd.defaultSkin);
+        sk.setToSetupPose();
+        if (atlas.pages.length > 0 && atlas.pages[0].pma) { node.premultipliedAlpha = true; sk.premultipliedAlpha = true; }
+        node.skeleton = sk;
+
+        // Animation state
+        const stateData = new SP.AnimationStateData(sd);
+        const state = new SP.AnimationState(stateData);
+        node.state = state;
+        if (node.animations.length > 0) { state.setAnimation(0, node.animations[0].name, true); node.currentAnim = node.animations[0].name; console.log(`[Spine] Playing: "${node.currentAnim}"`); }
+
+        // Setup canvas
+        const wrap = document.querySelector(`#sn-${node.id} .spine-canvas-wrap`); if (!wrap) return;
+        const oldC = wrap.querySelector('canvas'); if (oldC) oldC.remove();
+        const ph = wrap.querySelector('div'); if (ph) ph.remove();
+
+        sk.updateWorldTransform();
+        const boundsOff = new SP.Vector2(), boundsSize = new SP.Vector2();
+        sk.getBounds(boundsOff, boundsSize);
+        const cw = Math.max(200, Math.ceil(boundsSize.x) + 40);
+        const ch = Math.max(200, Math.ceil(boundsSize.y) + 40);
+        console.log(`[Spine] Canvas: ${cw}x${ch}, bounds: ${boundsSize.x.toFixed(0)}x${boundsSize.y.toFixed(0)}`);
+
+        const canvas = document.createElement('canvas'); canvas.width = cw; canvas.height = ch;
+        canvas.style.maxWidth = '100%'; canvas.style.height = 'auto';
+        wrap.appendChild(canvas);
+        node.canvas = canvas; node.ctx = canvas.getContext('2d');
+
+        sk.x = cw / 2; sk.y = ch - 20; sk.updateWorldTransform();
+
+        this._updateEl(node);
+        if (SMData.nodes.size === 1) setTimeout(() => this.fitAll(), 300);
+    },
+
+    // DOM
+    _createEl(node) {
+        const el = document.createElement('div'); el.className = 'spine-node'; el.id = `sn-${node.id}`; el.style.width = node.width + 'px';
+        const rows = node.animations.map(a => `<div class="state-row" data-state="${this._esc(a.name)}" onclick="SMTool._onStateClick(${node.id},'${this._esc(a.name)}')"><div class="conn-dot input" onclick="event.stopPropagation();SMTool._onDot(${node.id},'${this._esc(a.name)}','input')"></div><span style="flex:1;text-align:center">${this._esc(a.name)}</span><span class="state-dur">${a.duration.toFixed(2)}s</span><div class="conn-dot output" onclick="event.stopPropagation();SMTool._onDot(${node.id},'${this._esc(a.name)}','output')"></div></div>`).join('');
+        el.innerHTML = `<div class="header" onmousedown="event.stopPropagation();SMTool._onHD(event,${node.id})"><span class="name">${this._esc(node.name)}</span><div class="btns"><button onclick="event.stopPropagation();SMTool.toggleInfoPanel(${node.id})">ℹ️</button><button onclick="event.stopPropagation();SMTool.deleteNode(${node.id})">✕</button></div></div><div class="spine-canvas-wrap" ondragover="event.preventDefault();event.stopPropagation()" ondrop="event.preventDefault();event.stopPropagation();SMTool._onND(event,${node.id})"><div style="color:var(--text2);padding:40px">拖入 Spine 文件</div></div><div class="state-list">${rows || '<div style="color:var(--text2);text-align:center;padding:8px">暂无动画</div>'}</div><div class="footer">${node.skins.map(s => `<span class="badge">${this._esc(s)}</span>`).join('') || '<span class="badge">无皮肤</span>'}<span class="badge" style="margin-left:auto">v${this._esc(node.version || '?')}</span></div><div class="info-panel" id="info-${node.id}"><div class="ip-header" onclick="SMTool.toggleInfoPanel(${node.id})">📋 动画数据</div><div class="ip-body"><div class="ip-section"><div class="ip-title">📦 Spine 版本</div><div class="ip-row"><span>版本</span><span>${this._esc(node.version || '未知')}</span></div></div><div class="ip-section"><div class="ip-title">🎬 动画 (${node.animations.length})</div>${node.animations.map(a => `<div class="ip-row"><span>${this._esc(a.name)}</span><span>${a.duration.toFixed(2)}s</span></div>`).join('') || '<div class="ip-row">无</div>'}</div><div class="ip-section"><div class="ip-title">🎨 皮肤 (${node.skins.length})</div>${node.skins.map(s => `<div class="ip-row">${this._esc(s)}</div>`).join('') || '<div class="ip-row">default</div>'}</div><div class="ip-section"><div class="ip-title">🔧 插槽 (${node.slots.length})</div>${node.slots.map(s => `<div class="ip-row">${this._esc(s)}</div>`).join('') || '<div class="ip-row">无</div>'}</div><div class="ip-section"><div class="checkbox-row"><input type="checkbox" id="pma-${node.id}" ${node.premultipliedAlpha ? 'checked' : ''} onchange="SMTool._togglePMA(${node.id},this.checked)"><label>预乘 Alpha 通道</label></div></div></div></div>`;
+        this.nodesLayer.appendChild(el);
+    },
+
+    _updateEl(node) {
+        const el = this._getEl(node.id); if (!el) return;
+        const sl = el.querySelector('.state-list'); if (sl) { sl.innerHTML = node.animations.map(a => { const act = node.currentAnim === a.name; return `<div class="state-row${act ? ' active' : ''}" data-state="${this._esc(a.name)}" onclick="SMTool._onStateClick(${node.id},'${this._esc(a.name)}')"><div class="conn-dot input" onclick="event.stopPropagation();SMTool._onDot(${node.id},'${this._esc(a.name)}','input')"></div><span style="flex:1;text-align:center">${this._esc(a.name)}</span><span class="state-dur">${a.duration.toFixed(2)}s</span><div class="conn-dot output" onclick="event.stopPropagation();SMTool._onDot(${node.id},'${this._esc(a.name)}','output')"></div></div>`; }).join('') || '<div style="color:var(--text2);text-align:center;padding:8px">暂无动画</div>'; }
+        const ft = el.querySelector('.footer'); if (ft) ft.innerHTML = `${node.skins.map(s => `<span class="badge">${this._esc(s)}</span>`).join('') || '<span class="badge">无皮肤</span>'}<span class="badge" style="margin-left:auto">v${this._esc(node.version || '?')}</span>`;
+        const hn = el.querySelector('.header .name'); if (hn) { hn.textContent = node.name; hn.title = node.name; }
+        const cb = el.querySelector(`#pma-${node.id}`); if (cb) cb.checked = node.premultipliedAlpha;
+    },
+
+    _getEl(id) { return document.getElementById(`sn-${id}`); },
+    _updatePos(node) { const el = this._getEl(node.id); if (!el) return; const s = this.worldToDOM(node.x, node.y); el.style.left = s.x + 'px'; el.style.top = s.y + 'px'; el.style.transform = `scale(${SMData.view.zoom})`; el.style.transformOrigin = 'top left'; },
+    _updateAllPos() { for (const [, n] of SMData.nodes) this._updatePos(n); },
+    _updateSel() { for (const [, n] of SMData.nodes) { const el = this._getEl(n.id); if (el) { el.classList.toggle('selected', n.id === SMData.selectedNode); if (SMData.connecting && SMData.connecting.nodeId === n.id) el.classList.add('connecting'); else el.classList.remove('connecting'); } } },
+    _updateSB() { document.getElementById('sbNodes').textContent = `节点: ${SMData.nodes.size}`; document.getElementById('sbConns').textContent = `连线: ${SMData.connections.length}`; },
+    _esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; },
+    _hitTest(node, wx, wy) { const el = this._getEl(node.id); if (!el) return false; const r = el.getBoundingClientRect(); return wx >= node.x && wx <= node.x + r.width / SMData.view.zoom && wy >= node.y && wy <= node.y + r.height / SMData.view.zoom; },
+
+    _onHD(e, nid) { if (e.button !== 0) return; const n = SMData.nodes.get(nid); if (!n) return; SMData.selectedNode = nid; SMData.draggedNode = n; const wp = this.canvasToWorld(e.clientX, e.clientY); SMData.dragOffset = { x: wp.x - n.x, y: wp.y - n.y }; this._updateSel(); },
+    _onND(e, nid) { e.preventDefault(); e.stopPropagation(); const files = Array.from(e.dataTransfer.files); if (!files.length) return; const groups = {}; for (const f of files) { let base = f.name; for (const ext of ['.json', '.skel', '.atlas', '.png', '.jpg', '.jpeg']) { if (base.toLowerCase().endsWith(ext)) { base = base.slice(0, -ext.length); break; } } if (!groups[base]) groups[base] = {}; groups[base][f.name.split('.').pop().toLowerCase()] = f; } const node = SMData.nodes.get(nid); if (!node) return; for (const [, g] of Object.entries(groups)) { this._loadSpine(node, g).then(() => this._updateEl(node)).catch(err => console.error('[NodeDrop] Failed:', err)); break; } },
+    _onStateClick(nid, name) { const node = SMData.nodes.get(nid); if (!node || !node.state || SMData.connectMode) return; node.state.setAnimation(0, name, true); node.currentAnim = name; this._updateEl(node); },
+    _onDot(nid, name, type) {
+        if (!SMData.connectMode) { SMData.connectMode = true; document.getElementById('btnConnect').classList.add('active'); }
+        if (type === 'output') { const node = SMData.nodes.get(nid); if (!node) return; const pos = this._getStateConnectorPos(node, name, 'output'); const sp = this.worldToCanvas(pos.x, pos.y); SMData.connecting = { nodeId: nid, stateName: name, sx: pos.x, sy: pos.y, mx: sp.x, my: sp.y }; this._updateSel(); }
+        else if (type === 'input' && SMData.connecting && SMData.connecting.nodeId !== nid) {
+            if (!SMData.connections.some(c => c.fromNode === SMData.connecting.nodeId && c.fromState === SMData.connecting.stateName && c.toNode === nid && c.toState === name)) {
+                SMData.connections.push({ id: SMData.nextConnId++, fromNode: SMData.connecting.nodeId, fromState: SMData.connecting.stateName, toNode: nid, toState: name, condition: '' });
+            }
+            SMData.connecting = null; this._updateSel(); this._updateSB();
+        }
+    },
+
+    _findTarget(mx, my) { for (const [, n] of SMData.nodes) { const el = this._getEl(n.id); if (!el) continue; for (const row of el.querySelectorAll('.state-row')) { const dot = row.querySelector('.conn-dot.input'); if (dot) { const r = dot.getBoundingClientRect(); if (Math.sqrt((mx - r.left - r.width / 2) ** 2 + (my - r.top - r.height / 2) ** 2) < 20) return { nodeId: n.id, stateName: row.dataset.state, type: 'input' }; } } } return null; },
+    _highlightTarget(mx, my) { for (const [, n] of SMData.nodes) { const el = this._getEl(n.id); if (!el) continue; for (const row of el.querySelectorAll('.state-row')) { const dot = row.querySelector('.conn-dot.input'); if (dot) { const r = dot.getBoundingClientRect(); const near = Math.sqrt((mx - r.left - r.width / 2) ** 2 + (my - r.top - r.height / 2) ** 2) < 20; dot.style.transform = near ? 'scale(1.8)' : ''; dot.style.background = near ? '#53d8fb' : ''; } } } },
+
+    _checkConditionClick(mx, my) {
+        for (const c of SMData.connections) {
+            const fn = SMData.nodes.get(c.fromNode), tn = SMData.nodes.get(c.toNode); if (!fn || !tn) continue;
+            const fp = this._getStateConnectorPos(fn, c.fromState, 'output'), tp = this._getStateConnectorPos(tn, c.toState, 'input'); if (!fp || !tp) continue;
+            const fs = this.worldToCanvas(fp.x, fp.y), ts = this.worldToCanvas(tp.x, tp.y);
+            const dx = Math.abs(ts.x - fs.x), cp = Math.max(dx * 0.5, 50) * (fs.x < ts.x ? 1 : -1), mt = 0.5;
+            const mx2 = Math.pow(1 - mt, 3) * fs.x + 3 * Math.pow(1 - mt, 2) * mt * (fs.x + Math.abs(cp)) + 3 * (1 - mt) * mt * mt * (ts.x - Math.abs(cp)) + mt * mt * mt * ts.x;
+            const my2 = Math.pow(1 - mt, 3) * fs.y + 3 * Math.pow(1 - mt, 2) * mt * fs.y + 3 * (1 - mt) * mt * mt * ts.y + mt * mt * mt * ts.y;
+            if (Math.sqrt((mx - mx2) ** 2 + (my - my2) ** 2) < 30) { this._showCond(c, mx, my); return true; }
+        }
+        return false;
+    },
+
+    _showCond(conn, sx, sy) { const ed = document.getElementById('conditionEditor'); ed.classList.add('show'); ed.style.left = sx + 'px'; ed.style.top = sy + 'px'; ed._cid = conn.id; document.getElementById('condInput').value = conn.condition || ''; document.getElementById('condInput').focus(); },
+
+    // Public actions
+    addSpineNode() { const id = SMData.nextId++; const node = new SpineNodeData(id); const wp = this.canvasToWorld(window.innerWidth / 2, window.innerHeight / 2); node.x = wp.x; node.y = wp.y; SMData.nodes.set(id, node); this._createEl(node); this._updatePos(node); SMData.selectedNode = id; this._updateSel(); this._updateSB(); },
+    deleteNode(nid) { SMData.connections = SMData.connections.filter(c => c.fromNode !== nid && c.toNode !== nid); const node = SMData.nodes.get(nid); if (node?.state) node.state.clearTracks(); const el = this._getEl(nid); if (el) el.remove(); SMData.nodes.delete(nid); if (SMData.selectedNode === nid) SMData.selectedNode = null; this._updateSel(); this._updateSB(); },
+    toggleInfoPanel(nid) { const node = SMData.nodes.get(nid); if (!node) return; node.infoCollapsed = !node.infoCollapsed; const panel = document.getElementById(`info-${nid}`); if (panel) panel.classList.toggle('show', !node.infoCollapsed); },
+    _togglePMA(nid, v) { const node = SMData.nodes.get(nid); if (node?.skeleton) node.skeleton.premultipliedAlpha = v; if (node) node.premultipliedAlpha = v; },
+    toggleConnectMode() { SMData.connectMode = !SMData.connectMode; document.getElementById('btnConnect').classList.toggle('active', SMData.connectMode); SMData.connecting = null; this.gridCanvas.style.cursor = SMData.connectMode ? 'crosshair' : 'default'; this._updateSel(); },
+    saveCondition() { const ed = document.getElementById('conditionEditor'); const c = SMData.connections.find(x => x.id === ed._cid); if (c) c.condition = document.getElementById('condInput').value.trim(); ed.classList.remove('show'); },
+    deleteConnection() { const ed = document.getElementById('conditionEditor'); SMData.connections = SMData.connections.filter(x => x.id !== ed._cid); ed.classList.remove('show'); this._updateSB(); },
+    fitAll() { if (!SMData.nodes.size) return; let mx = Infinity, my = Infinity, Mx = -Infinity, My = -Infinity; for (const [, n] of SMData.nodes) { mx = Math.min(mx, n.x); my = Math.min(my, n.y); Mx = Math.max(Mx, n.x + n.width); My = Math.max(My, n.y + 400); } SMData.view.zoom = Math.min(window.innerWidth / (Mx - mx + 200), window.innerHeight / (My - my + 200), 2); SMData.view.x = -(mx + Mx) / 2; SMData.view.y = -(my + My) / 2; this._updateAllPos(); document.getElementById('zoomIndicator').textContent = Math.round(SMData.view.zoom * 100) + '%'; },
+    resetView() { SMData.view = { x: 0, y: 0, zoom: 1 }; this._updateAllPos(); document.getElementById('zoomIndicator').textContent = '100%'; },
+    toggleGrid() { SMData.showGrid = !SMData.showGrid; document.getElementById('btnGrid').classList.toggle('active', SMData.showGrid); },
+    ctxDeleteNode() { if (SMData.selectedNode) this.deleteNode(SMData.selectedNode); document.getElementById('ctxMenu').style.display = 'none'; },
+    ctxDuplicateNode() { if (!SMData.selectedNode) return; const orig = SMData.nodes.get(SMData.selectedNode); if (!orig) return; const id = SMData.nextId++; const node = new SpineNodeData(id); node.name = orig.name + ' (副本)'; node.x = orig.x + 50; node.y = orig.y + 50; SMData.nodes.set(id, node); this._createEl(node); this._updatePos(node); this._updateSB(); document.getElementById('ctxMenu').style.display = 'none'; },
+    exportData() { const data = { nodes: [], connections: SMData.connections, view: SMData.view }; for (const [, n] of SMData.nodes) data.nodes.push({ id: n.id, name: n.name, x: n.x, y: n.y, animations: n.animations, skins: n.skins, slots: n.slots, version: n.version, currentAnim: n.currentAnim, premultipliedAlpha: n.premultipliedAlpha }); const j = JSON.stringify(data, null, 2), b = new Blob([j], { type: 'application/json' }), u = URL.createObjectURL(b), a = document.createElement('a'); a.href = u; a.download = 'spine-state-machine.json'; a.click(); URL.revokeObjectURL(u); },
+    importData() { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.json'; inp.onchange = e => { const f = e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => { try { const d = JSON.parse(r.result); if (d.view) SMData.view = d.view; SMData.connections = d.connections || []; for (const nd of (d.nodes || [])) { const node = new SpineNodeData(nd.id); node.name = nd.name; node.x = nd.x || 0; node.y = nd.y || 0; node.animations = nd.animations || []; node.skins = nd.skins || []; node.slots = nd.slots || []; node.version = nd.version || ''; node.currentAnim = nd.currentAnim || ''; node.premultipliedAlpha = nd.premultipliedAlpha || false; SMData.nodes.set(nd.id, node); SMData.nextId = Math.max(SMData.nextId, nd.id + 1); this._createEl(node); this._updatePos(node); } SMData.nextConnId = Math.max(SMData.nextConnId, ...SMData.connections.map(c => c.id), 0) + 1; this._updateAllPos(); this._updateSB(); } catch (err) { alert('导入失败：无效的 JSON 文件'); } }; r.readAsText(f); }; inp.click(); },
+};
+
+// Init - wait for spine runtimes to load
+function _doInit() {
+    SMTool.init(); SMTool._updateSB();
+    const ce = document.getElementById('conditionEditor');
+    ce.addEventListener('keydown', e => { if (e.key === 'Enter') SMTool.saveCondition(); if (e.key === 'Escape') ce.classList.remove('show'); });
+    console.log('🎬 Spine Animation State Machine ready! (Direct Canvas2D renderer)');
+    console.log('  支持 3.8.x + 4.1.x JSON/skel');
+    console.log('  拖拽 spine 文件三件套到画布上');
+    console.log('  Alt+拖拽=平移 | 滚轮=缩放');
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+    if (window.spine41 || window.spine || window.spine38) {
+        _doInit();
+    } else {
+        window._onSpineReady = _doInit;
+        // Safety timeout
+        setTimeout(() => { if (!window.spine41 && !window.spine) { console.warn('[Init] Spine runtime timeout'); _doInit(); } }, 10000);
+    }
+});
+</script>
+</body>
+</html>

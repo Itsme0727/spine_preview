@@ -1,0 +1,20 @@
+
+qiZi_1.png
+size: 256, 128
+format: RGBA8888
+filter: Linear, Linear
+repeat: none
+sheng
+  rotate: true
+  xy: 2, 2
+  size: 71, 131
+  orig: 71, 131
+  offset: 0, 0
+  index: -1
+toou
+  rotate: false
+  xy: 135, 17
+  size: 56, 56
+  orig: 56, 56
+  offset: 0, 0
+  index: -1
