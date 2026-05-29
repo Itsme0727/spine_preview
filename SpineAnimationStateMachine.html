@@ -5,7 +5,7 @@
 <title>Spine Animation State Machine</title>
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <style>
-:root{--bg:#1a1a2e;--panel-bg:#16213e;--node-bg:#0f3460;--accent:#e94560;--accent2:#53d8fb;--text:#ccc;--text2:#999;--border:#2a2a4a;--input-bg:#1a1a3e;--success:#00e676;--warn:#ffab40;--connector:#ff6b9d;--shadow:0 8px 32px rgba(0,0,0,.4)}
+:root{--bg:#121218;--panel-bg:#1c1c28;--node-bg:#262636;--accent:#4a90d9;--accent2:#9b6dff;--text:#c8c8c8;--text2:#888;--border:#33334a;--input-bg:#1c1c26;--success:#50c878;--warn:#f0a040;--connector:#7c5ce7;--shadow:0 8px 32px rgba(0,0,0,.5)}
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);overflow:hidden;height:100vh;width:100vw;color:var(--text)}
 #app{position:relative;width:100%;height:100%}
@@ -21,9 +21,9 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);overflow:h
 #toolbar button.active{background:var(--accent2);border-color:var(--accent2);color:#111}
 #toolbar .sep{width:1px;background:var(--border);margin:0 4px}
 
-#dropZone{position:fixed;inset:0;z-index:200;background:rgba(233,69,96,.15);backdrop-filter:blur(2px);display:none;align-items:center;justify-content:center;pointer-events:none}
+#dropZone{position:fixed;inset:0;z-index:200;background:rgba(74,144,217,.12);backdrop-filter:blur(2px);display:none;align-items:center;justify-content:center;pointer-events:none}
 #dropZone.show{display:flex;pointer-events:all}
-#dropZone .inner{border:3px dashed var(--accent);border-radius:24px;padding:60px 80px;text-align:center;color:var(--accent);font-size:1.4em;background:rgba(26,26,46,.9)}
+#dropZone .inner{border:3px dashed var(--accent);border-radius:24px;padding:60px 80px;text-align:center;color:var(--accent2);font-size:1.4em;background:rgba(18,18,24,.92)}
 #dropZone .inner .icon{font-size:3em;margin-bottom:16px}
 #dropZone .inner .sub{font-size:.6em;color:var(--text2);margin-top:8px}
 
@@ -76,7 +76,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);overflow:h
 ::-webkit-scrollbar{width:6px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
-@keyframes pulse{0%,100%{box-shadow:0 0 8px rgba(233,69,96,.3)}50%{box-shadow:0 0 20px rgba(233,69,96,.6)}}
+@keyframes pulse{0%,100%{box-shadow:0 0 8px rgba(74,144,217,.3)}50%{box-shadow:0 0 20px rgba(74,144,217,.6)}}
 .connecting{animation:pulse .8s infinite}
 </style>
 </head>
@@ -224,7 +224,7 @@ const SMTool = {
         this.gridCanvas.addEventListener('mousedown', e => this._onMD(e));
         window.addEventListener('mousemove', e => this._onMM(e));
         window.addEventListener('mouseup', e => this._onMU(e));
-        this.gridCanvas.addEventListener('wheel', e => { e.preventDefault(); this._onWheel(e); });
+        this.gridCanvas.addEventListener('wheel', e => { if (e.ctrlKey) { e.preventDefault(); this._onWheel(e); } });
         this.gridCanvas.addEventListener('contextmenu', e => e.preventDefault());
 
         const dz = document.getElementById('dropZone');
@@ -320,19 +320,19 @@ const SMTool = {
             if (!fp || !tp) continue;
             const fs = this.worldToCanvas(fp.x, fp.y), ts = this.worldToCanvas(tp.x, tp.y);
             const dx = Math.abs(ts.x - fs.x), cp = Math.max(dx * 0.5, 50) * (fs.x < ts.x ? 1 : -1);
-            ctx.strokeStyle = conn.condition ? '#53d8fb' : '#ff6b9d'; ctx.lineWidth = 2.5; ctx.beginPath();
+            ctx.strokeStyle = conn.condition ? '#4a90d9' : '#7c5ce7'; ctx.lineWidth = 2.5; ctx.beginPath();
             ctx.moveTo(fs.x, fs.y); ctx.bezierCurveTo(fs.x + Math.abs(cp), fs.y, ts.x - Math.abs(cp), ts.y, ts.x, ts.y); ctx.stroke();
             const mt = 0.5, mx = Math.pow(1 - mt, 3) * fs.x + 3 * Math.pow(1 - mt, 2) * mt * (fs.x + Math.abs(cp)) + 3 * (1 - mt) * mt * mt * (ts.x - Math.abs(cp)) + mt * mt * mt * ts.x;
             const my = Math.pow(1 - mt, 3) * fs.y + 3 * Math.pow(1 - mt, 2) * mt * fs.y + 3 * (1 - mt) * mt * mt * ts.y + mt * mt * mt * ts.y;
             const label = conn.condition || '点击编辑条件';
             ctx.font = '12px "Segoe UI",system-ui,sans-serif'; const tw = ctx.measureText(label).width + 16;
-            ctx.fillStyle = conn.condition ? 'rgba(83,216,251,.9)' : 'rgba(255,107,157,.7)';
+            ctx.fillStyle = conn.condition ? 'rgba(74,144,217,.9)' : 'rgba(155,109,255,.75)';
             this._roundRect(ctx, mx - tw / 2, my - 12, tw, 24, 12); ctx.fill();
-            ctx.fillStyle = conn.condition ? '#111' : '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(label, mx, my);
+            ctx.fillStyle = conn.condition ? '#fff' : '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(label, mx, my);
         }
         if (SMData.connecting) {
             const c = SMData.connecting, sp = this.worldToCanvas(c.sx, c.sy);
-            ctx.strokeStyle = '#ff6b9d'; ctx.lineWidth = 2; ctx.setLineDash([6, 4]); ctx.beginPath();
+            ctx.strokeStyle = '#7c5ce7'; ctx.lineWidth = 2; ctx.setLineDash([6, 4]); ctx.beginPath();
             ctx.moveTo(sp.x, sp.y); const dx = Math.abs(c.mx - sp.x), cpo = Math.max(dx * 0.5, 50);
             ctx.bezierCurveTo(sp.x + cpo, sp.y, c.mx - cpo, c.my, c.mx, c.my); ctx.stroke(); ctx.setLineDash([]);
         }
@@ -356,7 +356,18 @@ const SMTool = {
     },
 
     _onMD(e) {
-        if (e.button === 2) return;
+        // Right-click: start panning (drag to pan, click to deselect)
+        if (e.button === 2) {
+            const wp = this.canvasToWorld(e.clientX, e.clientY);
+            let found = false;
+            for (const [, n] of SMData.nodes) { if (this._hitTest(n, wp.x, wp.y)) { found = true; break; } }
+            if (!found) {
+                SMData.isPanning = true; SMData.panStart = { x: e.clientX, y: e.clientY };
+                SMData.viewStart = { x: SMData.view.x, y: SMData.view.y };
+                this.gridCanvas.style.cursor = 'grabbing';
+            }
+            return;
+        }
         if (e.button === 1 || (e.button === 0 && e.altKey)) {
             SMData.isPanning = true; SMData.panStart = { x: e.clientX, y: e.clientY };
             SMData.viewStart = { x: SMData.view.x, y: SMData.view.y };
@@ -372,9 +383,8 @@ const SMTool = {
                 SMData.dragOffset = { x: wp.x - found.x, y: wp.y - found.y };
                 this._updateSel();
             } else {
+                // Left-click on empty: deselect (no auto-pan)
                 SMData.selectedNode = null; SMData.draggedNode = null;
-                SMData.isPanning = true; SMData.panStart = { x: e.clientX, y: e.clientY };
-                SMData.viewStart = { x: SMData.view.x, y: SMData.view.y };
                 this._updateSel();
             }
         }
@@ -405,6 +415,15 @@ const SMTool = {
                 this._updateSB();
             }
             SMData.connecting = null; this._updateSel();
+        }
+        // Right-click without drag on empty area → deselect
+        if (e.button === 2 && SMData.isPanning) {
+            const dx = e.clientX - SMData.panStart.x;
+            const dy = e.clientY - SMData.panStart.y;
+            if (Math.sqrt(dx * dx + dy * dy) < 5) {
+                SMData.selectedNode = null;
+                this._updateSel();
+            }
         }
         SMData.isPanning = false; SMData.draggedNode = null;
         this.gridCanvas.style.cursor = SMData.connectMode ? 'crosshair' : 'default';
@@ -715,7 +734,7 @@ const SMTool = {
     },
 
     _findTarget(mx, my) { for (const [, n] of SMData.nodes) { const el = this._getEl(n.id); if (!el) continue; for (const row of el.querySelectorAll('.state-row')) { const dot = row.querySelector('.conn-dot.input'); if (dot) { const r = dot.getBoundingClientRect(); if (Math.sqrt((mx - r.left - r.width / 2) ** 2 + (my - r.top - r.height / 2) ** 2) < 20) return { nodeId: n.id, stateName: row.dataset.state, type: 'input' }; } } } return null; },
-    _highlightTarget(mx, my) { for (const [, n] of SMData.nodes) { const el = this._getEl(n.id); if (!el) continue; for (const row of el.querySelectorAll('.state-row')) { const dot = row.querySelector('.conn-dot.input'); if (dot) { const r = dot.getBoundingClientRect(); const near = Math.sqrt((mx - r.left - r.width / 2) ** 2 + (my - r.top - r.height / 2) ** 2) < 20; dot.style.transform = near ? 'scale(1.8)' : ''; dot.style.background = near ? '#53d8fb' : ''; } } } },
+    _highlightTarget(mx, my) { for (const [, n] of SMData.nodes) { const el = this._getEl(n.id); if (!el) continue; for (const row of el.querySelectorAll('.state-row')) { const dot = row.querySelector('.conn-dot.input'); if (dot) { const r = dot.getBoundingClientRect(); const near = Math.sqrt((mx - r.left - r.width / 2) ** 2 + (my - r.top - r.height / 2) ** 2) < 20; dot.style.transform = near ? 'scale(1.8)' : ''; dot.style.background = near ? '#4a90d9' : ''; } } } },
 
     _checkConditionClick(mx, my) {
         for (const c of SMData.connections) {
