@@ -207,6 +207,12 @@ class SpineNodeData {
         this.animations = []; this.skins = []; this.slots = [];
         this.version = ''; this.currentAnim = '';
         this.premultipliedAlpha = false;
+        // Raw source data for export/import roundtrip
+        this._srcSkelJson = null;      // original skeleton JSON object
+        this._srcSkelBinBase64 = null; // original .skel binary as base64 string
+        this._srcAtlasText = '';       // original atlas text
+        this._srcTexDataUrl = '';      // texture PNG as data URL
+        this._srcType = '';            // 'json' or 'skel'
         // WebGL resources (3.8 barebones pattern)
         this.canvas = null;          // HTMLCanvasElement
         this.gl = null;              // WebGLRenderingContext
@@ -572,6 +578,14 @@ const SMTool = {
         }
         console.log(`[Spine] Detected version: "${detectedVersion}"`);
 
+        // --- Store raw source data for export/import roundtrip ---
+        node._srcSkelJson = skelJson;
+        node._srcSkelBinBase64 = skelBin ? SMTool._uint8ToBase64(skelBin) : null;
+        node._srcAtlasText = atlasText;
+        node._srcTexDataUrl = pngUrl;
+        node._srcType = skelBin ? 'skel' : 'json';
+        console.log(`[Spine] Source data stored: type=${node._srcType}, atlas=${atlasText.length}chars, tex=${pngUrl.length}chars`);
+
         // Use window.spine (3.8 runtime)
         const SP = window.spine;
         if (!SP) throw new Error('No spine runtime available');
@@ -792,6 +806,8 @@ const SMTool = {
     _updateAllPos() { for (const [, n] of SMData.nodes) this._updatePos(n); },
     _updateSel() { for (const [, n] of SMData.nodes) { const el = this._getEl(n.id); if (el) { el.classList.toggle('selected', n.id === SMData.selectedNode); if (SMData.connecting && SMData.connecting.nodeId === n.id) el.classList.add('connecting'); else el.classList.remove('connecting'); } } },
     _updateSB() { document.getElementById('sbNodes').textContent = `节点: ${SMData.nodes.size}`; document.getElementById('sbConns').textContent = `连线: ${SMData.connections.length}`; },
+    _uint8ToBase64(uint8) { let binary = ''; for (let i = 0; i < uint8.length; i++) binary += String.fromCharCode(uint8[i]); return btoa(binary); },
+    _base64ToUint8(base64) { const binary = atob(base64); const uint8 = new Uint8Array(binary.length); for (let i = 0; i < binary.length; i++) uint8[i] = binary.charCodeAt(i); return uint8; },
     _esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; },
     _hitTest(node, wx, wy) { const el = this._getEl(node.id); if (!el) return false; const r = el.getBoundingClientRect(); return wx >= node.x && wx <= node.x + r.width / SMData.view.zoom && wy >= node.y && wy <= node.y + r.height / SMData.view.zoom; },
 
@@ -839,9 +855,149 @@ const SMTool = {
     resetView() { SMData.view = { x: 0, y: 0, zoom: 1 }; this._updateAllPos(); this._syncZoomUI(); },
     toggleGrid() { SMData.showGrid = !SMData.showGrid; document.getElementById('btnGrid').classList.toggle('active', SMData.showGrid); },
     ctxDeleteNode() { if (SMData.selectedNode) this.deleteNode(SMData.selectedNode); document.getElementById('ctxMenu').style.display = 'none'; },
-    ctxDuplicateNode() { if (!SMData.selectedNode) return; const orig = SMData.nodes.get(SMData.selectedNode); if (!orig) return; const id = SMData.nextId++; const node = new SpineNodeData(id); node.name = orig.name + ' (副本)'; node.x = orig.x + 50; node.y = orig.y + 50; SMData.nodes.set(id, node); this._createEl(node); this._updatePos(node); this._updateSB(); document.getElementById('ctxMenu').style.display = 'none'; },
-    exportData() { const data = { nodes: [], connections: SMData.connections, view: SMData.view }; for (const [, n] of SMData.nodes) data.nodes.push({ id: n.id, name: n.name, x: n.x, y: n.y, animations: n.animations, skins: n.skins, slots: n.slots, version: n.version, currentAnim: n.currentAnim, premultipliedAlpha: n.premultipliedAlpha }); const j = JSON.stringify(data, null, 2), b = new Blob([j], { type: 'application/json' }), u = URL.createObjectURL(b), a = document.createElement('a'); a.href = u; a.download = 'spine-state-machine.json'; a.click(); URL.revokeObjectURL(u); },
-    importData() { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.json'; inp.onchange = e => { const f = e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => { try { const d = JSON.parse(r.result); if (d.view) SMData.view = d.view; SMData.connections = d.connections || []; for (const nd of (d.nodes || [])) { const node = new SpineNodeData(nd.id); node.name = nd.name; node.x = nd.x || 0; node.y = nd.y || 0; node.animations = nd.animations || []; node.skins = nd.skins || []; node.slots = nd.slots || []; node.version = nd.version || ''; node.currentAnim = nd.currentAnim || ''; node.premultipliedAlpha = nd.premultipliedAlpha || false; SMData.nodes.set(nd.id, node); SMData.nextId = Math.max(SMData.nextId, nd.id + 1); this._createEl(node); this._updatePos(node); } SMData.nextConnId = Math.max(SMData.nextConnId, ...SMData.connections.map(c => c.id), 0) + 1; this._updateAllPos(); this._updateSB(); } catch (err) { alert('导入失败：无效的 JSON 文件'); } }; r.readAsText(f); }; inp.click(); },
+    ctxDuplicateNode() { if (!SMData.selectedNode) return; const orig = SMData.nodes.get(SMData.selectedNode); if (!orig) return; const id = SMData.nextId++; const node = new SpineNodeData(id); node.name = orig.name + ' (副本)'; node.x = orig.x + 50; node.y = orig.y + 50; node._srcSkelJson = orig._srcSkelJson; node._srcSkelBinBase64 = orig._srcSkelBinBase64; node._srcAtlasText = orig._srcAtlasText; node._srcTexDataUrl = orig._srcTexDataUrl; node._srcType = orig._srcType; SMData.nodes.set(id, node); this._createEl(node); this._updatePos(node); if (node._srcAtlasText && node._srcTexDataUrl && (node._srcSkelJson || node._srcSkelBinBase64)) { this._loadFromSourceData(node).then(() => this._updateEl(node)).catch(err => console.error('[Duplicate] Failed to restore rendering:', err)); } this._updateSB(); document.getElementById('ctxMenu').style.display = 'none'; },
+    exportData() { const data = { nodes: [], connections: SMData.connections, view: SMData.view }; for (const [, n] of SMData.nodes) data.nodes.push({ id: n.id, name: n.name, x: n.x, y: n.y, animations: n.animations, skins: n.skins, slots: n.slots, version: n.version, currentAnim: n.currentAnim, premultipliedAlpha: n.premultipliedAlpha, _srcSkelJson: n._srcSkelJson, _srcSkelBinBase64: n._srcSkelBinBase64, _srcAtlasText: n._srcAtlasText, _srcTexDataUrl: n._srcTexDataUrl, _srcType: n._srcType }); const j = JSON.stringify(data, null, 2), b = new Blob([j], { type: 'application/json' }), u = URL.createObjectURL(b), a = document.createElement('a'); a.href = u; a.download = 'spine-state-machine.json'; a.click(); URL.revokeObjectURL(u); },
+    importData() { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.json'; inp.onchange = e => { const f = e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => { try { const d = JSON.parse(r.result); if (d.view) SMData.view = d.view; SMData.connections = d.connections || []; for (const nd of (d.nodes || [])) { const node = new SpineNodeData(nd.id); node.name = nd.name; node.x = nd.x || 0; node.y = nd.y || 0; node.animations = nd.animations || []; node.skins = nd.skins || []; node.slots = nd.slots || []; node.version = nd.version || ''; node.currentAnim = nd.currentAnim || ''; node.premultipliedAlpha = nd.premultipliedAlpha || false; node._srcSkelJson = nd._srcSkelJson || null; node._srcSkelBinBase64 = nd._srcSkelBinBase64 || null; node._srcAtlasText = nd._srcAtlasText || ''; node._srcTexDataUrl = nd._srcTexDataUrl || ''; node._srcType = nd._srcType || ''; SMData.nodes.set(nd.id, node); SMData.nextId = Math.max(SMData.nextId, nd.id + 1); this._createEl(node); this._updatePos(node); if (node._srcAtlasText && node._srcTexDataUrl && (node._srcSkelJson || node._srcSkelBinBase64)) { this._loadFromSourceData(node).then(() => this._updateEl(node)).catch(err => console.error('[Import] Failed to restore rendering:', err)); } } SMData.nextConnId = Math.max(SMData.nextConnId, ...SMData.connections.map(c => c.id), 0) + 1; this._updateAllPos(); this._updateSB(); } catch (err) { alert('导入失败：无效的 JSON 文件\n' + err.message); } }; r.readAsText(f); }; inp.click(); },
+
+    // Reconstruct WebGL rendering from stored source data (for import roundtrip)
+    async _loadFromSourceData(node) {
+        const SP = window.spine; const WGL = SP && SP.webgl;
+        if (!SP) throw new Error('No spine runtime available');
+        if (!WGL) throw new Error('spine-webgl not loaded');
+
+        const atlasText = node._srcAtlasText;
+        const texDataUrl = node._srcTexDataUrl;
+        const srcType = node._srcType || 'json';
+
+        console.log(`[Import] Restoring "${node.name}" from ${srcType} source (atlas:${atlasText.length}chars, tex:${texDataUrl.length}chars)`);
+
+        // Load image from data URL
+        const img = new Image();
+        await new Promise((res, rej) => { img.onload = () => { console.log(`[Import] Image: ${img.width}x${img.height}`); res(); }; img.onerror = () => rej(new Error('Texture image load failed')); img.src = texDataUrl; });
+        node.textureImg = img;
+
+        // Create atlas
+        const atlas = new SP.TextureAtlas(atlasText, function(path) {
+            return new SP.FakeTexture(img);
+        });
+        node.atlasData = atlas;
+        console.log(`[Import] Atlas: ${atlas.pages.length} page(s), ${atlas.regions.length} region(s)`);
+
+        // Parse skeleton
+        const al = new SP.AtlasAttachmentLoader(atlas);
+        let sd, skelJson;
+        try {
+            if (srcType === 'skel' && node._srcSkelBinBase64) {
+                const skelBin = this._base64ToUint8(node._srcSkelBinBase64);
+                console.log('[Import] Parsing .skel (' + skelBin.length + ' bytes)');
+                const bl = new SP.SkeletonBinary(al); bl.scale = 1;
+                sd = bl.readSkeletonData(skelBin);
+            } else {
+                skelJson = node._srcSkelJson;
+                if (!skelJson) throw new Error('No skeleton JSON data');
+                console.log('[Import] Parsing JSON skeleton: bones=' + (skelJson.bones ? skelJson.bones.length : 0));
+                const jl = new SP.SkeletonJson(al); jl.scale = 1;
+                sd = jl.readSkeletonData(skelJson);
+            }
+        } catch (e) {
+            throw new Error('Skeleton parse failed: ' + e.message);
+        }
+        node.skeletonData = sd;
+        node.version = sd.version || node.version;
+        console.log(`[Import] Skeleton v${node.version}: ${sd.bones.length} bones`);
+
+        // Create skeleton
+        const sk = new SP.Skeleton(sd);
+        if (sd.defaultSkin) sk.setSkin(sd.defaultSkin);
+        sk.setToSetupPose();
+        if (atlas.pages.length > 0 && atlas.pages[0].pma) { node.premultipliedAlpha = true; }
+        node.skeleton = sk;
+
+        // Animation state
+        const stateData = new SP.AnimationStateData(sd);
+        const state = new SP.AnimationState(stateData);
+        node.state = state;
+        if (node.animations.length > 0) {
+            const animName = node.currentAnim || node.animations[0].name;
+            state.setAnimation(0, animName, true);
+            node.currentAnim = animName;
+            console.log(`[Import] Playing: "${animName}"`);
+        }
+
+        // Setup canvas + WebGL renderer
+        const wrap = document.querySelector(`#sn-${node.id} .spine-canvas-wrap`); if (!wrap) return;
+        const oldC = wrap.querySelector('canvas'); if (oldC) oldC.remove();
+        const ph = wrap.querySelector('div'); if (ph) ph.remove();
+
+        // Compute bounds
+        sk.setToSetupPose();
+        sk.updateWorldTransform();
+        const boundsOff = new SP.Vector2(), boundsSize = new SP.Vector2();
+        try {
+            if (typeof sk.getBounds === 'function') {
+                sk.getBounds(boundsOff, boundsSize, []);
+            } else {
+                this._computeBoundsManually(sk, boundsOff, boundsSize);
+            }
+        } catch (e) {
+            console.warn('[Import] getBounds failed, using fallback:', e.message);
+            this._computeBoundsManually(sk, boundsOff, boundsSize);
+        }
+        node.bounds = { offset: boundsOff, size: boundsSize };
+        const pad = Math.max(100, Math.ceil(Math.max(boundsSize.x, boundsSize.y) * 0.4));
+        const cw = Math.max(400, Math.ceil(boundsSize.x) + pad * 2);
+        const ch = Math.max(400, Math.ceil(boundsSize.y) + pad * 2);
+
+        // Create canvas
+        const canvas = document.createElement('canvas'); canvas.width = cw; canvas.height = ch;
+        canvas.style.display = 'block';
+        canvas.style.width = cw + 'px';
+        canvas.style.height = ch + 'px';
+        wrap.appendChild(canvas);
+        node.canvas = canvas;
+        node.width = Math.max(cw + 10, node.width, 260);
+
+        // Clean up old resources
+        if (node.batcher) { try { node.batcher.dispose(); } catch(e) {} }
+        if (node.shader) { try { node.shader.dispose(); } catch(e) {} }
+        if (node.glTextures) { node.glTextures.forEach(t => { try { t.dispose(); } catch(e) {} }); }
+        node.glTextures = [];
+
+        // Get WebGL context
+        var gl = canvas.getContext('webgl2', { alpha: false }) || canvas.getContext('webgl', { alpha: false });
+        if (!gl) throw new Error('WebGL not available');
+        node.gl = gl;
+
+        // Create shader, batcher, MVP, renderer
+        node.shader = WGL.Shader.newTwoColoredTextured(gl);
+        node.batcher = new WGL.PolygonBatcher(gl);
+        node.mvp = new WGL.Matrix4();
+        node.skeletonRenderer = new WGL.SkeletonRenderer(gl);
+
+        node.mvp.ortho2d(0, 0, cw - 1, ch - 1);
+
+        // Create GL textures
+        for (var i = 0; i < atlas.pages.length; i++) {
+            var page = atlas.pages[i];
+            try {
+                var glTex = new WGL.GLTexture(gl, img, false);
+                page.texture = glTex;
+                node.glTextures.push(glTex);
+            } catch (e) {
+                console.error('[Import] GLTexture failed for "' + page.name + '":', e);
+            }
+        }
+        for (var r = 0; r < atlas.regions.length; r++) {
+            atlas.regions[r].texture = atlas.regions[r].page.texture;
+        }
+
+        // Center skeleton
+        sk.x = cw / 2 - (boundsOff.x + boundsSize.x / 2);
+        sk.y = ch / 2 - (boundsOff.y + boundsSize.y / 2);
+        sk.updateWorldTransform();
+
+        console.log(`[Import] ✓ "${node.name}" restored successfully`);
+    },
 };
 
 // Init - wait for spine runtime to load
