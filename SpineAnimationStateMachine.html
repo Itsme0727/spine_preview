@@ -27,7 +27,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);overflow:h
 #dropZone .inner .icon{font-size:3em;margin-bottom:16px}
 #dropZone .inner .sub{font-size:.6em;color:var(--text2);margin-top:8px}
 
-.spine-node{position:absolute;background:var(--panel-bg);border:2px solid var(--border);border-radius:16px;box-shadow:var(--shadow);min-width:260px;transition:border-color .3s}
+.spine-node{position:absolute;background:var(--panel-bg);border:2px solid var(--border);border-radius:16px;box-shadow:var(--shadow);min-width:260px;transition:border-color .3s;width:fit-content}
 .spine-node:hover{border-color:var(--accent2)}
 .spine-node.selected{border-color:var(--accent);box-shadow:0 0 24px rgba(233,69,96,.3)}
 .spine-node .header{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--node-bg);border-radius:14px 14px 0 0;cursor:grab;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;user-select:none}
@@ -35,8 +35,8 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);overflow:h
 .spine-node .header .btns{display:flex;gap:4px}
 .spine-node .header .btns button{background:none;border:none;color:var(--text2);cursor:pointer;font-size:14px;padding:2px 6px;border-radius:4px;transition:all .2s}
 .spine-node .header .btns button:hover{color:#fff;background:var(--accent)}
-.spine-node .spine-canvas-wrap{position:relative;display:flex;align-items:center;justify-content:center;background:var(--bg);min-height:200px;cursor:pointer;overflow:hidden}
-.spine-node .spine-canvas-wrap canvas{display:block}
+.spine-node .spine-canvas-wrap{position:relative;display:flex;align-items:center;justify-content:center;background:var(--bg);min-height:200px;cursor:pointer;overflow:visible}
+.spine-node .spine-canvas-wrap canvas{display:block;flex-shrink:0}
 .spine-node .footer{display:flex;align-items:center;gap:6px;padding:6px 12px;border-top:1px solid var(--border);font-size:11px;color:var(--text2);flex-wrap:wrap}
 .spine-node .footer .badge{background:var(--node-bg);padding:2px 8px;border-radius:10px;font-size:10px}
 
@@ -124,159 +124,56 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);overflow:h
 </div>
 <div id="zoomIndicator">100%</div>
 
-<!-- Multi-version spine runtime loading -->
+<!-- Spine WebGL 3.8.99 single bundle (includes core + webgl) -->
+<!-- 3.8 runtime matches Spine 3.8.xx export format -->
 <script>
-// Strategy: load 4.1 first (primary), save as spine41, then load 3.8 as spine38
-// auto-detect skeleton version and route to correct runtime
 (function() {
-    const CDN_41 = 'https://unpkg.com/@esotericsoftware/spine-core@4.1.24/dist/iife/spine-core.js';
-    const CDN_38_LIST = [
-        'https://unpkg.com/@esotericsoftware/spine-core@3.8.99/dist/iife/spine-core.js',
-        'https://unpkg.com/@esotericsoftware/spine-core@3.8.91/dist/iife/spine-core.js',
+    const CDN_BUNDLE = [
+        // 3.8 GitHub build via jsDelivr (npm doesn't have 3.8.x)
+        'https://cdn.jsdelivr.net/gh/EsotericSoftware/spine-runtimes@3.8/spine-ts/build/spine-webgl.js',
+        // Fallback: direct raw GitHub
+        'https://raw.githubusercontent.com/EsotericSoftware/spine-runtimes/3.8/spine-ts/build/spine-webgl.js',
     ];
-    var _readyCb = null;
 
-    window._getSpine = function(version) {
-        // version like "4.2.43" → major 4 → use spine41
-        // version like "3.8.99" → major 3 → use spine38
-        // version like "v3.8-from-4.0.64" → contains "3.8" → use spine38
-        if (!version) return window.spine41 || window.spine;
-        var v = String(version);
-        if (v.indexOf('3.') === 0 || v.indexOf('v3.') >= 0 || (parseInt(v) || 0) < 4) {
-            return window.spine38 || window.spine41 || window.spine;
-        }
-        return window.spine41 || window.spine;
-    };
-
-    function loadScript(url, onOk, onErr) {
-        var s = document.createElement('script');
-        s.src = url;
-        s.onload = onOk;
-        s.onerror = onErr;
-        document.head.appendChild(s);
+    function loadScript(url) {
+        return new Promise(function(resolve, reject) {
+            var s = document.createElement('script');
+            s.src = url;
+            s.onload = function() { console.log('[Spine] Loaded from', url); resolve(url); };
+            s.onerror = function() { console.warn('[Spine] CDN failed:', url); reject(url); };
+            document.head.appendChild(s);
+        });
     }
 
-    function load41(next) {
-        loadScript(CDN_41,
-            function() {
-                console.log('[Spine] 4.1 runtime loaded');
-                window.spine41 = window.spine;
-                next();
-            },
-            function() {
-                console.warn('[Spine] 4.1 CDN failed, trying to continue...');
-                next();
-            }
-        );
+    function tryLoad(urls, idx) {
+        idx = idx || 0;
+        if (idx >= urls.length) return Promise.reject('all CDNs failed');
+        return loadScript(urls[idx]).catch(function() { return tryLoad(urls, idx + 1); });
     }
 
-    function load38(done) {
-        var idx = 0;
-        function tryNext() {
-            if (idx >= CDN_38_LIST.length) {
-                console.warn('[Spine] 3.8 CDN not available (will only support 4.x files)');
-                done();
-                return;
-            }
-            var url = CDN_38_LIST[idx++];
-            loadScript(url,
-                function() {
-                    console.log('[Spine] 3.8 runtime loaded');
-                    window.spine38 = window.spine;
-                    if (window.spine41) window.spine = window.spine41;
-                    done();
-                },
-                function() { console.warn('[Spine] 3.8 CDN failed:', url); tryNext(); }
-            );
-        }
-        tryNext();
-    }
-
-    function finish() {
+    console.log('[Spine] Loading spine-webgl 3.8 (from GitHub)...');
+    tryLoad(CDN_BUNDLE).then(function(url) {
+        console.log('[Spine] spine-webgl 3.8 ready \u2713');
         var sb = document.getElementById('sbStatus');
-        if (window.spine41) {
-            sb.textContent = 'Spine: 4.1 ✓';
-        } else if (window.spine) {
-            sb.textContent = 'Spine: loaded';
+        if (window.spine && window.spine.webgl && window.spine.webgl.SkeletonRenderer) {
+            sb.textContent = 'Spine WebGL 3.8.99 \u2713';
         } else {
-            sb.textContent = '⚠️ Spine not loaded';
+            sb.textContent = '\u26A0\uFE0F Spine WebGL loaded but API missing';
         }
-        if (window.spine38) sb.textContent += ' | 3.8 ✓';
         if (window._onSpineReady) window._onSpineReady();
-    }
-
-    load41(function() { load38(finish); });
+    }).catch(function() {
+        console.error('[Spine] Failed to load!');
+        var sb = document.getElementById('sbStatus');
+        sb.textContent = '\u26A0\uFE0F Spine not loaded';
+        if (window._onSpineReady) window._onSpineReady();
+    });
 })();
 </script>
 
 <script>
-// ===================== Custom Canvas2D Spine Renderer =====================
-// Runtime-agnostic: uses duck-typing instead of instanceof for cross-version compat
-const SpineRenderer = {
-    _worldVertices: [],
-
-    /** Draw a spine.Skeleton to CanvasRenderingContext2D */
-    draw(ctx, skeleton, atlasImage) {
-        if (!atlasImage || !atlasImage.complete || atlasImage.naturalWidth === 0) return;
-        const imgW = atlasImage.naturalWidth, imgH = atlasImage.naturalHeight;
-        if (!imgW || !imgH) return;
-        ctx.globalCompositeOperation = 'source-over';
-
-        for (let i = 0, n = skeleton.drawOrder.length; i < n; i++) {
-            const slot = skeleton.drawOrder[i];
-            if (!slot.bone.active) continue;
-            const attachment = slot.attachment;
-            if (!attachment) continue;
-
-            // Duck-typing: RegionAttachment has uvs + computeWorldVertices
-            if (attachment.uvs && attachment.region && attachment.computeWorldVertices && !attachment.triangles) {
-                this._ensureArr(8);
-                const v = this._worldVertices;
-                attachment.computeWorldVertices(slot, v, 0, 2);
-                const reg = attachment.region;
-                if (!reg) continue;
-
-                const sx = reg.u * imgW, sy = reg.v * imgH;
-                const sw = (reg.u2 - reg.u) * imgW, sh = (reg.v2 - reg.v) * imgH;
-                const dx = Math.min(v[0], v[2], v[4], v[6]);
-                const dy = Math.min(v[1], v[3], v[5], v[7]);
-                const dw = Math.max(v[0], v[2], v[4], v[6]) - dx;
-                const dh = Math.max(v[1], v[3], v[5], v[7]) - dy;
-                if (dw > 0 && dh > 0) {
-                    ctx.drawImage(atlasImage, sx, sy, sw, sh, dx, dy, dw, dh);
-                }
-            }
-            // Duck-typing: MeshAttachment has triangles + worldVerticesLength
-            else if (attachment.triangles && attachment.worldVerticesLength) {
-                const vc = attachment.worldVerticesLength;
-                this._ensureArr(vc);
-                const v = this._worldVertices;
-                attachment.computeWorldVertices(slot, 0, vc, v, 0, 2);
-                const reg = attachment.region;
-                const tris = attachment.triangles;
-                if (!reg || !tris) continue;
-
-                for (let t = 0; t < tris.length; t += 3) {
-                    const i0 = tris[t] * 2, i1 = tris[t + 1] * 2, i2 = tris[t + 2] * 2;
-                    ctx.save();
-                    ctx.beginPath();
-                    ctx.moveTo(v[i0], v[i0 + 1]);
-                    ctx.lineTo(v[i1], v[i1 + 1]);
-                    ctx.lineTo(v[i2], v[i2 + 1]);
-                    ctx.closePath();
-                    ctx.clip();
-                    const cx = (v[i0] + v[i1] + v[i2]) / 3, cy = (v[i0 + 1] + v[i1 + 1] + v[i2 + 1]) / 3;
-                    const rw = Math.max(Math.abs(v[i1] - v[i0]), Math.abs(v[i2] - v[i0])) + 4;
-                    const rh = Math.max(Math.abs(v[i1 + 1] - v[i0 + 1]), Math.abs(v[i2 + 1] - v[i0 + 1])) + 4;
-                    ctx.drawImage(atlasImage, reg.u * imgW, reg.v * imgH, (reg.u2 - reg.u) * imgW, (reg.v2 - reg.v) * imgH, cx - rw / 2, cy - rh / 2, rw, rh);
-                    ctx.restore();
-                }
-            }
-        }
-    },
-
-    _ensureArr(n) { if (this._worldVertices.length < n) this._worldVertices.length = n; }
-};
+// ===================== Official spine-webgl Renderer (3.8) =====================
+// 3.8 barebones pattern: shader + batcher + skeletonRenderer
+// Full feature support: meshes, clipping, tint colors, blend modes
 
 // ===================== DATA MODEL =====================
 const SMData = {
@@ -300,7 +197,15 @@ class SpineNodeData {
         this.animations = []; this.skins = []; this.slots = [];
         this.version = ''; this.currentAnim = '';
         this.premultipliedAlpha = false;
-        this.canvas = null; this.ctx = null;
+        // WebGL resources (3.8 barebones pattern)
+        this.canvas = null;          // HTMLCanvasElement
+        this.gl = null;              // WebGLRenderingContext
+        this.shader = null;          // spine.webgl.Shader
+        this.batcher = null;         // spine.webgl.PolygonBatcher
+        this.mvp = null;             // spine.webgl.Matrix4
+        this.skeletonRenderer = null; // spine.webgl.SkeletonRenderer
+        this.glTextures = [];        // spine.webgl.GLTexture[] for cleanup
+        this.bounds = null;          // { offset: Vector2, size: Vector2 }
         this.infoCollapsed = true;
     }
 }
@@ -344,7 +249,9 @@ const SMTool = {
 
     worldToCanvas(wx, wy) { const z = SMData.view.zoom; return { x: (wx + SMData.view.x) * z + window.innerWidth / 2, y: (wy + SMData.view.y) * z + window.innerHeight / 2 }; },
     canvasToWorld(sx, sy) { const z = SMData.view.zoom; return { x: (sx - window.innerWidth / 2) / z - SMData.view.x, y: (sy - window.innerHeight / 2) / z - SMData.view.y }; },
-    worldToDOM(wx, wy) { const z = SMData.view.zoom; return { x: wx + SMData.view.x + window.innerWidth / 2 / z, y: wy + SMData.view.y + window.innerHeight / 2 / z }; },
+    // worldToDOM: same as worldToCanvas because _updatePos applies scale() with transformOrigin:top-left,
+    // which means the top-left corner stays at (left, top) regardless of scale.
+    worldToDOM(wx, wy) { return this.worldToCanvas(wx, wy); },
 
     _loop(now) {
         requestAnimationFrame(t => this._loop(t));
@@ -355,14 +262,33 @@ const SMTool = {
             document.getElementById('sbFPS').textContent = `FPS: ${Math.round(this._fc * 1000 / (now - this._ft))}`;
             this._fc = 0; this._ft = now;
         }
+        var WGL = window.spine && window.spine.webgl;
         for (const [, node] of SMData.nodes) {
-            if (node.state && node.skeleton && node.ctx && node.canvas) {
-                node.state.update(dt);
-                node.state.apply(node.skeleton);
-                node.skeleton.updateWorldTransform();
-                node.ctx.clearRect(0, 0, node.canvas.width, node.canvas.height);
-                SpineRenderer.draw(node.ctx, node.skeleton, node.textureImg);
-            }
+            if (!node.state || !node.skeleton || !node.gl || !node.skeletonRenderer || !WGL) continue;
+            var gl = node.gl;
+            var skeleton = node.skeleton;
+            var state = node.state;
+
+            // Update animation
+            state.update(dt);
+            state.apply(skeleton);
+            skeleton.updateWorldTransform();
+
+            // Render: 3.8 barebones pattern
+            gl.viewport(0, 0, node.canvas.width, node.canvas.height);
+            gl.clearColor(0, 0, 0, 0);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+
+            node.shader.bind();
+            node.shader.setUniformi(WGL.Shader.SAMPLER, 0);
+            node.shader.setUniform4x4f(WGL.Shader.MVP_MATRIX, node.mvp.values);
+
+            node.batcher.begin(node.shader);
+            node.skeletonRenderer.premultipliedAlpha = node.premultipliedAlpha;
+            node.skeletonRenderer.draw(node.batcher, skeleton);
+            node.batcher.end();
+
+            node.shader.unbind();
         }
         this._renderGrid();
         this._renderConnections();
@@ -560,23 +486,25 @@ const SMTool = {
         }
         console.log(`[Spine] Detected version: "${detectedVersion}"`);
 
-        // Select appropriate runtime
-        const SP = window._getSpine(detectedVersion);
+        // Use window.spine (3.8 runtime)
+        const SP = window.spine;
         if (!SP) throw new Error('No spine runtime available');
-        console.log(`[Spine] Using runtime: ${SP === window.spine38 ? '3.8' : SP === window.spine41 ? '4.1' : 'default'}`);
+        console.log('[Spine] Using runtime: spine-webgl 3.8');
 
         // Load image
         const img = new Image();
         await new Promise((res, rej) => { img.onload = () => { console.log(`[Spine] Image: ${img.width}x${img.height}`); res(); }; img.onerror = () => rej(new Error('PNG load failed')); img.src = pngUrl; });
         node.textureImg = img;
 
-        // Create atlas
-        const atlas = new SP.TextureAtlas(atlasText);
-        const texWrapper = { _image: img, getImage() { return this._image; }, setFilters() {}, setWraps() {}, dispose() {} };
+        // Create atlas — 3.8 TextureAtlas needs a textureLoader(path) function
+        // We create a dummy atlas first, then replace textures after GL context is ready
+        const atlas = new SP.TextureAtlas(atlasText, function(path) {
+            var fake = new SP.FakeTexture(img);
+            return fake;
+        });
         for (let i = 0; i < atlas.pages.length; i++) {
             const page = atlas.pages[i];
-            page.setTexture(texWrapper);
-            console.log(`[Spine] Atlas page "${page.name}": ${page.width}x${page.height}, pma=${page.pma}`);
+            console.log(`[Spine] Atlas page "${page.name}": ${page.width}x${page.height}`);
         }
         node.atlasData = atlas;
         console.log(`[Spine] Atlas: ${atlas.pages.length} page(s), ${atlas.regions.length} region(s)`);
@@ -610,7 +538,7 @@ const SMTool = {
         const sk = new SP.Skeleton(sd);
         if (sd.defaultSkin) sk.setSkin(sd.defaultSkin);
         sk.setToSetupPose();
-        if (atlas.pages.length > 0 && atlas.pages[0].pma) { node.premultipliedAlpha = true; sk.premultipliedAlpha = true; }
+        if (atlas.pages.length > 0 && atlas.pages[0].pma) { node.premultipliedAlpha = true; }
         node.skeleton = sk;
 
         // Animation state
@@ -619,32 +547,138 @@ const SMTool = {
         node.state = state;
         if (node.animations.length > 0) { state.setAnimation(0, node.animations[0].name, true); node.currentAnim = node.animations[0].name; console.log(`[Spine] Playing: "${node.currentAnim}"`); }
 
-        // Setup canvas
+        // Setup canvas + WebGL renderer (3.8 barebones pattern)
         const wrap = document.querySelector(`#sn-${node.id} .spine-canvas-wrap`); if (!wrap) return;
         const oldC = wrap.querySelector('canvas'); if (oldC) oldC.remove();
         const ph = wrap.querySelector('div'); if (ph) ph.remove();
 
+        // Compute bounds for canvas sizing (3.8: setToSetupPose + updateWorldTransform)
+        sk.setToSetupPose();
         sk.updateWorldTransform();
         const boundsOff = new SP.Vector2(), boundsSize = new SP.Vector2();
-        sk.getBounds(boundsOff, boundsSize);
-        const cw = Math.max(200, Math.ceil(boundsSize.x) + 40);
-        const ch = Math.max(200, Math.ceil(boundsSize.y) + 40);
-        console.log(`[Spine] Canvas: ${cw}x${ch}, bounds: ${boundsSize.x.toFixed(0)}x${boundsSize.y.toFixed(0)}`);
+        try {
+            if (typeof sk.getBounds === 'function') {
+                sk.getBounds(boundsOff, boundsSize, []);
+            } else {
+                this._computeBoundsManually(sk, boundsOff, boundsSize);
+            }
+        } catch (e) {
+            console.warn('[Spine] getBounds failed, using fallback:', e.message);
+            this._computeBoundsManually(sk, boundsOff, boundsSize);
+        }
+        node.bounds = { offset: boundsOff, size: boundsSize };
+        const pad = Math.max(100, Math.ceil(Math.max(boundsSize.x, boundsSize.y) * 0.4));
+        const cw = Math.max(400, Math.ceil(boundsSize.x) + pad * 2);
+        const ch = Math.max(400, Math.ceil(boundsSize.y) + pad * 2);
+        console.log(`[Spine] Canvas: ${cw}x${ch}, bounds: ${boundsSize.x.toFixed(0)}x${boundsSize.y.toFixed(0)}, pad:${pad}`);
 
+        // Create canvas
         const canvas = document.createElement('canvas'); canvas.width = cw; canvas.height = ch;
-        canvas.style.maxWidth = '100%'; canvas.style.height = 'auto';
+        canvas.style.display = 'block';
+        canvas.style.width = cw + 'px';
+        canvas.style.height = ch + 'px';
         wrap.appendChild(canvas);
-        node.canvas = canvas; node.ctx = canvas.getContext('2d');
+        node.canvas = canvas;
+        node.width = Math.max(cw + 10, node.width, 260);
 
-        sk.x = cw / 2; sk.y = ch - 20; sk.updateWorldTransform();
+        // === 3.8 spine-webgl setup (barebones pattern) ===
+        const WGL = window.spine && window.spine.webgl;
+        if (!WGL) throw new Error('spine-webgl 3.8 not loaded');
+
+        // Clean up old resources
+        if (node.batcher) { try { node.batcher.dispose(); } catch(e) {} }
+        if (node.shader) { try { node.shader.dispose(); } catch(e) {} }
+        if (node.glTextures) { node.glTextures.forEach(t => { try { t.dispose(); } catch(e) {} }); }
+        node.glTextures = [];
+
+        // Get WebGL context (no ManagedWebGLRenderingContext in 3.8)
+        var gl = canvas.getContext('webgl2', { alpha: false }) || canvas.getContext('webgl', { alpha: false });
+        if (!gl) throw new Error('WebGL not available');
+        node.gl = gl;
+
+        // Create shader, batcher, MVP matrix, skeletonRenderer
+        node.shader = WGL.Shader.newTwoColoredTextured(gl);
+        node.batcher = new WGL.PolygonBatcher(gl);
+        node.mvp = new WGL.Matrix4();
+        node.skeletonRenderer = new WGL.SkeletonRenderer(gl);
+
+        // Set MVP: center skeleton in canvas
+        node.mvp.ortho2d(0, 0, cw - 1, ch - 1);
+
+        // Create GL textures for atlas pages (3.8: directly assign page.texture)
+        for (var i = 0; i < atlas.pages.length; i++) {
+            var page = atlas.pages[i];
+            try {
+                var glTex = new WGL.GLTexture(gl, img, false);
+                page.texture = glTex; // 3.8: page.texture, not page.setTexture()
+                node.glTextures.push(glTex);
+                console.log('[Spine] WebGL texture for page "' + page.name + '" (' + page.width + 'x' + page.height + ')');
+            } catch (e) {
+                console.error('[Spine] GLTexture failed for "' + page.name + '":', e);
+            }
+        }
+        // Also update all region textures (3.8: region.texture references page.texture)
+        for (var r = 0; r < atlas.regions.length; r++) {
+            var region = atlas.regions[r];
+            region.texture = region.page.texture;
+        }
+
+        // Center skeleton in canvas coordinates
+        sk.x = cw / 2 - (boundsOff.x + boundsSize.x / 2);
+        sk.y = ch / 2 - (boundsOff.y + boundsSize.y / 2);
+        sk.updateWorldTransform();
 
         this._updateEl(node);
         if (SMData.nodes.size === 1) setTimeout(() => this.fitAll(), 300);
     },
 
+    // Fallback bounds computation (3.8: drawOrder is array, slot.attachment)
+    _computeBoundsManually(skeleton, offset, size) {
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        const drawOrder = skeleton.drawOrder;
+        if (!drawOrder || !Array.isArray(drawOrder)) { offset.set(0, 0); size.set(100, 100); return; }
+        const verts = [];
+        for (let i = 0; i < drawOrder.length; i++) {
+            const slot = drawOrder[i];
+            if (!slot || !slot.bone || !slot.bone.active) continue;
+            var att;
+            try { att = slot.getAttachment(); } catch(e) { att = slot.attachment; }
+            if (!att || typeof att.computeWorldVertices !== 'function') continue;
+            let vc;
+            if (att.worldVerticesLength) {
+                vc = att.worldVerticesLength;
+            } else if (att.uvs && att.uvs.length >= 8) {
+                vc = 8;
+            } else {
+                continue;
+            }
+            if (verts.length < vc) verts.length = vc;
+            try {
+                // 3.8: computeWorldVertices(slot, worldVertices)
+                // or computeWorldVertices(slot, start, count, worldVertices, offset, stride)
+                if (att.computeWorldVertices.length <= 2) {
+                    att.computeWorldVertices(slot, verts);
+                } else {
+                    att.computeWorldVertices(slot, 0, vc, verts, 0, 2);
+                }
+                for (let j = 0; j < vc; j += 2) {
+                    minX = Math.min(minX, verts[j]);
+                    maxX = Math.max(maxX, verts[j]);
+                    minY = Math.min(minY, verts[j + 1]);
+                    maxY = Math.max(maxY, verts[j + 1]);
+                }
+            } catch (e) { /* skip problematic attachments */ }
+        }
+        if (!isFinite(minX)) { offset.set(0, 0); size.set(100, 100); return; }
+        offset.set(minX, minY);
+        size.set(maxX - minX, maxY - minY);
+    },
+
     // DOM
     _createEl(node) {
-        const el = document.createElement('div'); el.className = 'spine-node'; el.id = `sn-${node.id}`; el.style.width = node.width + 'px';
+        const el = document.createElement('div'); el.className = 'spine-node'; el.id = `sn-${node.id}`;
+        // Use min-width so node can grow to fit canvas; CSS width:fit-content handles auto-sizing
+        el.style.minWidth = '260px';
         const rows = node.animations.map(a => `<div class="state-row" data-state="${this._esc(a.name)}" onclick="SMTool._onStateClick(${node.id},'${this._esc(a.name)}')"><div class="conn-dot input" onclick="event.stopPropagation();SMTool._onDot(${node.id},'${this._esc(a.name)}','input')"></div><span style="flex:1;text-align:center">${this._esc(a.name)}</span><span class="state-dur">${a.duration.toFixed(2)}s</span><div class="conn-dot output" onclick="event.stopPropagation();SMTool._onDot(${node.id},'${this._esc(a.name)}','output')"></div></div>`).join('');
         el.innerHTML = `<div class="header" onmousedown="event.stopPropagation();SMTool._onHD(event,${node.id})"><span class="name">${this._esc(node.name)}</span><div class="btns"><button onclick="event.stopPropagation();SMTool.toggleInfoPanel(${node.id})">ℹ️</button><button onclick="event.stopPropagation();SMTool.deleteNode(${node.id})">✕</button></div></div><div class="spine-canvas-wrap" ondragover="event.preventDefault();event.stopPropagation()" ondrop="event.preventDefault();event.stopPropagation();SMTool._onND(event,${node.id})"><div style="color:var(--text2);padding:40px">拖入 Spine 文件</div></div><div class="state-list">${rows || '<div style="color:var(--text2);text-align:center;padding:8px">暂无动画</div>'}</div><div class="footer">${node.skins.map(s => `<span class="badge">${this._esc(s)}</span>`).join('') || '<span class="badge">无皮肤</span>'}<span class="badge" style="margin-left:auto">v${this._esc(node.version || '?')}</span></div><div class="info-panel" id="info-${node.id}"><div class="ip-header" onclick="SMTool.toggleInfoPanel(${node.id})">📋 动画数据</div><div class="ip-body"><div class="ip-section"><div class="ip-title">📦 Spine 版本</div><div class="ip-row"><span>版本</span><span>${this._esc(node.version || '未知')}</span></div></div><div class="ip-section"><div class="ip-title">🎬 动画 (${node.animations.length})</div>${node.animations.map(a => `<div class="ip-row"><span>${this._esc(a.name)}</span><span>${a.duration.toFixed(2)}s</span></div>`).join('') || '<div class="ip-row">无</div>'}</div><div class="ip-section"><div class="ip-title">🎨 皮肤 (${node.skins.length})</div>${node.skins.map(s => `<div class="ip-row">${this._esc(s)}</div>`).join('') || '<div class="ip-row">default</div>'}</div><div class="ip-section"><div class="ip-title">🔧 插槽 (${node.slots.length})</div>${node.slots.map(s => `<div class="ip-row">${this._esc(s)}</div>`).join('') || '<div class="ip-row">无</div>'}</div><div class="ip-section"><div class="checkbox-row"><input type="checkbox" id="pma-${node.id}" ${node.premultipliedAlpha ? 'checked' : ''} onchange="SMTool._togglePMA(${node.id},this.checked)"><label>预乘 Alpha 通道</label></div></div></div></div>`;
         this.nodesLayer.appendChild(el);
@@ -700,9 +734,9 @@ const SMTool = {
 
     // Public actions
     addSpineNode() { const id = SMData.nextId++; const node = new SpineNodeData(id); const wp = this.canvasToWorld(window.innerWidth / 2, window.innerHeight / 2); node.x = wp.x; node.y = wp.y; SMData.nodes.set(id, node); this._createEl(node); this._updatePos(node); SMData.selectedNode = id; this._updateSel(); this._updateSB(); },
-    deleteNode(nid) { SMData.connections = SMData.connections.filter(c => c.fromNode !== nid && c.toNode !== nid); const node = SMData.nodes.get(nid); if (node?.state) node.state.clearTracks(); const el = this._getEl(nid); if (el) el.remove(); SMData.nodes.delete(nid); if (SMData.selectedNode === nid) SMData.selectedNode = null; this._updateSel(); this._updateSB(); },
+    deleteNode(nid) { SMData.connections = SMData.connections.filter(c => c.fromNode !== nid && c.toNode !== nid); const node = SMData.nodes.get(nid); if (node) { if (node.state) node.state.clearTracks(); if (node.glTextures) node.glTextures.forEach(t => { try { t.dispose(); } catch(e) {} }); if (node.batcher) { try { node.batcher.dispose(); } catch(e) {} } if (node.shader) { try { node.shader.dispose(); } catch(e) {} } } const el = this._getEl(nid); if (el) el.remove(); SMData.nodes.delete(nid); if (SMData.selectedNode === nid) SMData.selectedNode = null; this._updateSel(); this._updateSB(); },
     toggleInfoPanel(nid) { const node = SMData.nodes.get(nid); if (!node) return; node.infoCollapsed = !node.infoCollapsed; const panel = document.getElementById(`info-${nid}`); if (panel) panel.classList.toggle('show', !node.infoCollapsed); },
-    _togglePMA(nid, v) { const node = SMData.nodes.get(nid); if (node?.skeleton) node.skeleton.premultipliedAlpha = v; if (node) node.premultipliedAlpha = v; },
+    _togglePMA(nid, v) { const node = SMData.nodes.get(nid); if (node) node.premultipliedAlpha = v; },
     toggleConnectMode() { SMData.connectMode = !SMData.connectMode; document.getElementById('btnConnect').classList.toggle('active', SMData.connectMode); SMData.connecting = null; this.gridCanvas.style.cursor = SMData.connectMode ? 'crosshair' : 'default'; this._updateSel(); },
     saveCondition() { const ed = document.getElementById('conditionEditor'); const c = SMData.connections.find(x => x.id === ed._cid); if (c) c.condition = document.getElementById('condInput').value.trim(); ed.classList.remove('show'); },
     deleteConnection() { const ed = document.getElementById('conditionEditor'); SMData.connections = SMData.connections.filter(x => x.id !== ed._cid); ed.classList.remove('show'); this._updateSB(); },
@@ -715,24 +749,22 @@ const SMTool = {
     importData() { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.json'; inp.onchange = e => { const f = e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => { try { const d = JSON.parse(r.result); if (d.view) SMData.view = d.view; SMData.connections = d.connections || []; for (const nd of (d.nodes || [])) { const node = new SpineNodeData(nd.id); node.name = nd.name; node.x = nd.x || 0; node.y = nd.y || 0; node.animations = nd.animations || []; node.skins = nd.skins || []; node.slots = nd.slots || []; node.version = nd.version || ''; node.currentAnim = nd.currentAnim || ''; node.premultipliedAlpha = nd.premultipliedAlpha || false; SMData.nodes.set(nd.id, node); SMData.nextId = Math.max(SMData.nextId, nd.id + 1); this._createEl(node); this._updatePos(node); } SMData.nextConnId = Math.max(SMData.nextConnId, ...SMData.connections.map(c => c.id), 0) + 1; this._updateAllPos(); this._updateSB(); } catch (err) { alert('导入失败：无效的 JSON 文件'); } }; r.readAsText(f); }; inp.click(); },
 };
 
-// Init - wait for spine runtimes to load
+// Init - wait for spine runtime to load
 function _doInit() {
     SMTool.init(); SMTool._updateSB();
     const ce = document.getElementById('conditionEditor');
     ce.addEventListener('keydown', e => { if (e.key === 'Enter') SMTool.saveCondition(); if (e.key === 'Escape') ce.classList.remove('show'); });
-    console.log('🎬 Spine Animation State Machine ready! (Direct Canvas2D renderer)');
-    console.log('  支持 3.8.x + 4.1.x JSON/skel');
-    console.log('  拖拽 spine 文件三件套到画布上');
-    console.log('  Alt+拖拽=平移 | 滚轮=缩放');
+    console.log('\uD83C\uDFAC Spine Animation State Machine ready! (spine-webgl 3.8)');
+    console.log('  \u62D6\u62FD spine \u6587\u4EF6\u4E09\u4EF6\u5957 (.json/.skel + .atlas + .png) \u5230\u753B\u5E03\u4E0A');
+    console.log('  Alt+\u62D6\u62FD=\u5E73\u79FB | \u6EDA\u8F6E=\u7F29\u653E');
 }
 
 window.addEventListener('DOMContentLoaded', () => {
-    if (window.spine41 || window.spine || window.spine38) {
+    if (window.spine && window.spine.webgl && window.spine.webgl.SkeletonRenderer) {
         _doInit();
     } else {
         window._onSpineReady = _doInit;
-        // Safety timeout
-        setTimeout(() => { if (!window.spine41 && !window.spine) { console.warn('[Init] Spine runtime timeout'); _doInit(); } }, 10000);
+        setTimeout(() => { if (!window.spine || !window.spine.webgl) { console.warn('[Init] Spine runtime timeout'); _doInit(); } }, 10000);
     }
 });
 </script>
