@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-cn">
+<head>
+    <meta charset="utf-8" />
+    <title>Spine Animation State Machine</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+    <!-- ===== 画布层 ===== -->
+    <div id="app">
+        <canvas id="gridCanvas"></canvas>
+        <canvas id="connCanvas"></canvas>
+        <div id="nodesLayer"></div>
+    </div>
+
+    <!-- ===== 工具栏 ===== -->
+    <div id="toolbar">
+        <button onclick="SMTool.addSpineNode()">➕ 添加节点</button>
+        <span class="sep"></span>
+        <button id="btnConnect" onclick="SMTool.toggleConnectMode()">🔗 连线模式</button>
+        <span class="sep"></span>
+        <button onclick="SMTool.fitAll()">📐 适合视图</button>
+        <button onclick="SMTool.resetView()">🏠 重置视图</button>
+        <span class="sep"></span>
+        <button id="btnGrid" class="active" onclick="SMTool.toggleGrid()">📏 网格</button>
+        <button onclick="SMTool.exportData()">💾 导出</button>
+        <button onclick="SMTool.importData()">📥 导入</button>
+    </div>
+
+    <!-- ===== 拖拽提示 ===== -->
+    <div id="dropZone">
+        <div class="inner">
+            <div class="icon">📂</div>
+            拖拽 Spine 文件到此处
+            <br /><span class="sub">需要 .json/.skel + .atlas + .png</span>
+        </div>
+    </div>
+
+    <!-- ===== 条件编辑器 ===== -->
+    <div id="conditionEditor">
+        <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:6px">过渡条件：</label>
+        <input type="text" id="condInput" placeholder="例如：isDead == true" />
+        <div class="actions">
+            <button class="del" onclick="SMTool.deleteConnection()">删除连线</button>
+            <button class="ok" onclick="SMTool.saveCondition()">确定</button>
+        </div>
+    </div>
+
+    <!-- ===== 右键菜单 ===== -->
+    <div id="ctxMenu">
+        <div class="ctx-item" onclick="SMTool.ctxDeleteNode()">🗑️ 删除节点</div>
+        <div class="ctx-item" onclick="SMTool.ctxDuplicateNode()">📋 复制节点</div>
+    </div>
+
+    <!-- ===== 状态栏 ===== -->
+    <div id="statusBar">
+        <span id="sbNodes">节点: 0</span>
+        <span id="sbConns">连线: 0</span>
+        <span id="sbFPS">FPS: --</span>
+        <span id="sbStatus"></span>
+    </div>
+
+    <!-- ===== 缩放控件 ===== -->
+    <div id="zoomControl">
+        <input type="range" id="zoomSlider" min="10" max="500" value="100" />
+        <span id="zoomLabel">100%</span>
+    </div>
+
+    <!-- ================================================================
+         脚本加载顺序（依赖关系严格）:
+         1. spine-loader.js — 从 CDN 加载三个版本 Spine 运行时
+         2. data-model.js  — 全局状态 SMData + SpineNodeData 类
+         3. spine-loading.js — 文件读取/解析/版本检测
+         4. spine-rendering.js — WebGL 渲染器 + 视口变换
+         5. grid-connections.js — 网格背景 + 贝塞尔连线
+         6. ui-dom.js — 节点 DOM 创建/更新
+         7. interaction.js — 鼠标/键盘事件处理
+         8. export-import.js — 项目导出/导入
+         9. app.js — 主入口（汇总 + 初始化）
+         ================================================================ -->
+    <script src="js/lib/spine-loader.js"></script>
+    <script src="js/data-model.js"></script>
+    <script src="js/spine-loading.js"></script>
+    <script src="js/spine-rendering.js"></script>
+    <script src="js/grid-connections.js"></script>
+    <script src="js/ui-dom.js"></script>
+    <script src="js/interaction.js"></script>
+    <script src="js/export-import.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

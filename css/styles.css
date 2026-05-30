@@ -1,0 +1,515 @@
+/* ================================================================
+   Spine Animation State Machine — 全局样式
+   ================================================================ */
+
+:root {
+    --bg: #121218;
+    --panel-bg: #1c1c28;
+    --node-bg: #262636;
+    --accent: #4a90d9;
+    --accent2: #9b6dff;
+    --text: #c8c8c8;
+    --text2: #888;
+    --border: #33334a;
+    --input-bg: #1c1c26;
+    --success: #50c878;
+    --warn: #f0a040;
+    --connector: #7c5ce7;
+    --shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    overflow: hidden;
+    height: 100vh;
+    width: 100vw;
+    color: var(--text);
+}
+
+/* ===== 画布层级 ===== */
+#app {
+    position: relative;
+    width: 100%;
+    height: 100%;
+}
+#gridCanvas {
+    position: absolute;
+    top: 0; left: 0;
+    z-index: 1;
+}
+#connCanvas {
+    position: absolute;
+    top: 0; left: 0;
+    z-index: 4;
+    pointer-events: none;
+}
+#connCanvas.active {
+    pointer-events: all;
+}
+#nodesLayer {
+    position: absolute;
+    top: 0; left: 0;
+    z-index: 2;
+    pointer-events: none;
+}
+#nodesLayer > * {
+    pointer-events: all;
+}
+
+/* ===== 工具栏 ===== */
+#toolbar {
+    position: fixed;
+    top: 12px; left: 50%;
+    transform: translateX(-50%);
+    z-index: 100;
+    display: flex;
+    gap: 8px;
+    padding: 8px 16px;
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+}
+#toolbar button {
+    background: var(--node-bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 8px 16px;
+    cursor: pointer;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+#toolbar button:hover {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+#toolbar button.active {
+    background: var(--accent2);
+    border-color: var(--accent2);
+    color: #111;
+}
+#toolbar .sep {
+    width: 1px;
+    background: var(--border);
+    margin: 0 4px;
+}
+
+/* ===== 拖拽区域 ===== */
+#dropZone {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    background: rgba(74, 144, 217, 0.12);
+    backdrop-filter: blur(2px);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+}
+#dropZone.show {
+    display: flex;
+    pointer-events: all;
+}
+#dropZone .inner {
+    border: 3px dashed var(--accent);
+    border-radius: 24px;
+    padding: 60px 80px;
+    text-align: center;
+    color: var(--accent2);
+    font-size: 1.4em;
+    background: rgba(18, 18, 24, 0.92);
+}
+#dropZone .inner .icon {
+    font-size: 3em;
+    margin-bottom: 16px;
+}
+#dropZone .inner .sub {
+    font-size: 0.6em;
+    color: var(--text2);
+    margin-top: 8px;
+}
+
+/* ===== Spine 节点卡片 ===== */
+.spine-node {
+    position: absolute;
+    background: var(--panel-bg);
+    border: 2px solid var(--border);
+    border-radius: 16px;
+    box-shadow: var(--shadow);
+    min-width: 260px;
+    transition: border-color 0.3s;
+    width: fit-content;
+}
+.spine-node:hover {
+    border-color: var(--accent2);
+}
+.spine-node.selected {
+    border-color: var(--accent);
+    box-shadow: 0 0 24px rgba(233, 69, 96, 0.3);
+}
+
+/* 节点头部 */
+.spine-node .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: var(--node-bg);
+    border-radius: 14px 14px 0 0;
+    cursor: grab;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+    font-weight: 600;
+    user-select: none;
+}
+.spine-node .header .name {
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.spine-node .header .btns {
+    display: flex;
+    gap: 4px;
+}
+.spine-node .header .btns button {
+    background: none;
+    border: none;
+    color: var(--text2);
+    cursor: pointer;
+    font-size: 14px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition: all 0.2s;
+}
+.spine-node .header .btns button:hover {
+    color: #fff;
+    background: var(--accent);
+}
+
+/* Spine 画布区域 */
+.spine-node .spine-canvas-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+    min-height: 200px;
+    cursor: pointer;
+    overflow: visible;
+}
+.spine-node .spine-canvas-wrap canvas {
+    display: block;
+    flex-shrink: 0;
+}
+
+/* 节点底部 */
+.spine-node .footer {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--text2);
+    flex-wrap: wrap;
+}
+.spine-node .footer .badge {
+    background: var(--node-bg);
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 10px;
+}
+
+/* ===== 动画状态列表 ===== */
+.spine-node .state-list {
+    padding: 4px 8px;
+    max-height: 200px;
+    overflow-y: auto;
+    border-top: 1px solid var(--border);
+}
+.spine-node .state-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 8px;
+    margin: 2px 0;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: all 0.15s;
+    position: relative;
+    border-left: 3px solid transparent;
+}
+.spine-node .state-row:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+.spine-node .state-row.active {
+    background: rgba(74, 144, 217, 0.25);
+    color: #fff;
+    font-weight: 600;
+}
+.spine-node .state-row .state-dur {
+    font-size: 10px;
+    color: var(--text2);
+    margin-left: 8px;
+}
+.spine-node .state-row.active .state-dur {
+    color: rgba(255, 255, 255, 0.7);
+}
+
+/* 连线圆点 */
+.spine-node .state-row .conn-dot {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--connector);
+    border: 2px solid #fff;
+    cursor: crosshair;
+    opacity: 0;
+    transition: opacity 0.2s;
+    flex-shrink: 0;
+}
+.spine-node .state-row:hover .conn-dot {
+    opacity: 1;
+}
+
+/* ===== 信息面板 ===== */
+.info-panel {
+    position: absolute;
+    left: calc(100% + 16px);
+    top: 0;
+    width: 280px;
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    z-index: 10;
+    font-size: 12px;
+    overflow: hidden;
+    display: none;
+}
+.info-panel.show {
+    display: block;
+}
+.info-panel .ip-header {
+    padding: 8px 12px;
+    background: var(--node-bg);
+    font-weight: 600;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+}
+.info-panel .ip-body {
+    padding: 8px 12px;
+    max-height: 400px;
+    overflow-y: auto;
+}
+.info-panel .ip-section {
+    margin-bottom: 10px;
+}
+.info-panel .ip-section .ip-title {
+    color: var(--accent2);
+    font-weight: 600;
+    margin-bottom: 4px;
+    font-size: 11px;
+    text-transform: uppercase;
+}
+.info-panel .ip-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 2px 0;
+    color: var(--text2);
+}
+.info-panel .checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+}
+
+/* ===== 条件编辑器 ===== */
+#conditionEditor {
+    position: fixed;
+    z-index: 300;
+    background: var(--panel-bg);
+    border: 1px solid var(--accent2);
+    border-radius: 10px;
+    padding: 12px;
+    box-shadow: var(--shadow);
+    display: none;
+    min-width: 200px;
+}
+#conditionEditor.show {
+    display: block;
+}
+#conditionEditor input {
+    width: 100%;
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px;
+    border-radius: 6px;
+    font-size: 13px;
+    outline: none;
+}
+#conditionEditor input:focus {
+    border-color: var(--accent2);
+}
+#conditionEditor .actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+    justify-content: flex-end;
+}
+#conditionEditor .actions button {
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    font-size: 12px;
+}
+#conditionEditor .actions .ok {
+    background: var(--accent2);
+    color: #111;
+}
+#conditionEditor .actions .del {
+    background: var(--accent);
+    color: #fff;
+}
+
+/* ===== 状态栏 ===== */
+#statusBar {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    z-index: 100;
+    padding: 6px 16px;
+    background: var(--panel-bg);
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--text2);
+    display: flex;
+    gap: 20px;
+}
+
+/* ===== 右键菜单 ===== */
+#ctxMenu {
+    position: fixed;
+    z-index: 400;
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    display: none;
+    min-width: 160px;
+    padding: 4px;
+}
+#ctxMenu .ctx-item {
+    padding: 8px 14px;
+    cursor: pointer;
+    border-radius: 6px;
+    font-size: 13px;
+    transition: all 0.15s;
+}
+#ctxMenu .ctx-item:hover {
+    background: var(--accent);
+    color: #fff;
+}
+
+/* ===== 缩放控件 ===== */
+#zoomControl {
+    position: fixed;
+    bottom: 32px; right: 16px;
+    z-index: 100;
+    background: var(--panel-bg);
+    padding: 12px 6px 8px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    box-shadow: var(--shadow);
+    width: 40px;
+    min-height: 170px;
+}
+#zoomSlider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 140px;
+    height: 6px;
+    background: var(--border);
+    border-radius: 3px;
+    outline: none;
+    cursor: pointer;
+    transform: rotate(-90deg);
+    flex-shrink: 0;
+}
+#zoomSlider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    background: var(--accent);
+    border-radius: 50%;
+    cursor: pointer;
+    border: 2px solid #fff;
+    box-shadow: 0 0 8px rgba(74, 144, 217, 0.5);
+    transition: box-shadow 0.2s;
+}
+#zoomSlider::-webkit-slider-thumb:hover {
+    box-shadow: 0 0 14px rgba(74, 144, 217, 0.8);
+}
+#zoomSlider::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+    background: var(--accent);
+    border-radius: 50%;
+    cursor: pointer;
+    border: 2px solid #fff;
+}
+#zoomLabel {
+    font-size: 12px;
+    color: var(--text2);
+    font-variant-numeric: tabular-nums;
+    min-width: 42px;
+    text-align: center;
+}
+#zoomSlider::-webkit-slider-runnable-track {
+    height: 6px;
+    background: var(--border);
+    border-radius: 3px;
+}
+#zoomSlider::-moz-range-track {
+    height: 6px;
+    background: var(--border);
+    border-radius: 3px;
+}
+
+/* ===== 滚动条 ===== */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 3px;
+}
+
+/* ===== 动画 ===== */
+@keyframes pulse {
+    0%, 100% { box-shadow: 0 0 8px rgba(74, 144, 217, 0.3); }
+    50% { box-shadow: 0 0 20px rgba(74, 144, 217, 0.6); }
+}
+.connecting {
+    animation: pulse 0.8s infinite;
+}
