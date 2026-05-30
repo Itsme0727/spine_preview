@@ -141,7 +141,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);overflow:h
     // CDN URLs
     const CDN_38 = 'https://cdn.jsdelivr.net/gh/EsotericSoftware/spine-runtimes@3.8/spine-ts/build/spine-webgl.js';
     const CDN_38_FALLBACK = 'https://raw.githubusercontent.com/EsotericSoftware/spine-runtimes/3.8/spine-ts/build/spine-webgl.js';
-    const CDN_42 = 'https://unpkg.com/@esotericsoftware/spine-webgl@4.2.43/dist/iife/spine-webgl.js';
+    const CDN_42 = 'https://unpkg.com/@esotericsoftware/spine-webgl@4.2.100/dist/iife/spine-webgl.js';
     const CDN_43 = 'https://unpkg.com/@esotericsoftware/spine-webgl@4.3.2/dist/iife/spine-webgl.js';
 
     function loadScript(url) {
@@ -346,7 +346,7 @@ const SMTool = {
             // Update animation (same for both versions)
             state.update(dt);
             state.apply(skeleton);
-            skeleton.updateWorldTransform();
+            skeleton.updateWorldTransform(node._physParam);
 
             if ((node._spineVer === '4.3' || node._spineVer === '4.2') && node.sceneRenderer && node.sceneRenderer.begin) {
                 // --- 4.x rendering: SceneRenderer (shared between 4.2 and 4.3) ---
@@ -833,6 +833,9 @@ const SMTool = {
         if (!SP) throw new Error('No spine runtime available for ' + useVer);
         console.log('[Spine] Using runtime: spine-webgl ' + useVer);
         node._spineVer = useVer;
+        node._SP = SP;
+        const physParam = (useVer !== '3.8' && SP.Physics) ? SP.Physics.update : undefined;
+        node._physParam = physParam;
         // Override: if 3.8 but atlas has 4.x features → strip pma lines for 3.8 compat
         if (useVer === '3.8' && atlasIs4x) {
             console.log('[Spine]   Atlas has 4.x format (pma:), stripping for 3.8 compat');
@@ -916,7 +919,7 @@ const SMTool = {
 
         // Compute bounds
         sk.setToSetupPose();
-        sk.updateWorldTransform();
+        sk.updateWorldTransform(physParam);
         const boundsOff = new SP.Vector2(), boundsSize = new SP.Vector2();
         try {
             if (typeof sk.getBounds === 'function') {
@@ -940,6 +943,11 @@ const SMTool = {
         node.canvas = canvas;
         node.width = Math.max(cw + 10, node.width, 260);
 
+        // Center skeleton in canvas coordinates
+        sk.x = cw / 2 - (boundsOff.x + boundsSize.x / 2);
+        sk.y = ch / 2 - (boundsOff.y + boundsSize.y / 2);
+        sk.updateWorldTransform(physParam);
+
         if (useVer === '4.3' || useVer === '4.2') {
             // ============ 4.x rendering setup: SceneRenderer ============
             if (node.sceneRenderer) { try { node.sceneRenderer.dispose(); } catch(e) {} }
@@ -949,10 +957,8 @@ const SMTool = {
             const renderer = new SP.SceneRenderer(canvas, context, true);
             node.sceneRenderer = renderer;
 
-            // Position camera to center skeleton
-            const cx = boundsOff.x + boundsSize.x / 2;
-            const cy = boundsOff.y + boundsSize.y / 2;
-            renderer.camera.position.set(cx, cy, 0);
+            // Camera at canvas center (skeleton already centered via sk.x/sk.y)
+            renderer.camera.position.set(cw / 2, ch / 2, 0);
             renderer.camera.viewportWidth = cw;
             renderer.camera.viewportHeight = ch;
             renderer.camera.update();
@@ -1007,7 +1013,7 @@ const SMTool = {
         // Center skeleton in canvas coordinates
         sk.x = cw / 2 - (boundsOff.x + boundsSize.x / 2);
         sk.y = ch / 2 - (boundsOff.y + boundsSize.y / 2);
-        sk.updateWorldTransform();
+        sk.updateWorldTransform(physParam);
 
         this._updateEl(node);
         // Apply connection colors to state rows after update
@@ -1198,9 +1204,20 @@ const SMTool = {
 
     // Reconstruct WebGL rendering from stored source data (for import roundtrip)
     async _loadFromSourceData(node) {
-        const SP = window.spine; const WGL = SP && SP.webgl;
+        // Select runtime based on saved spine version
+        const ver = node.version || '';
+        let useVer = '3.8';
+        if (ver.match(/^4\.[3-9]/)) useVer = '4.3';
+        else if (ver.match(/^4\.[012]\./)) useVer = '4.2';
+        else if (ver.match(/^3\.\d/)) useVer = '3.8';
+        const SP = useVer === '4.3' ? window.spine43 : (useVer === '4.2' ? window.spine42 : window.spine38);
+        const WGL = useVer === '3.8' ? (window.spine38 && window.spine38.webgl) : null;
+        node._spineVer = useVer;
+        node._SP = SP;
+        const physParam = (useVer !== '3.8' && SP.Physics) ? SP.Physics.update : undefined;
+        node._physParam = physParam;
         if (!SP) throw new Error('No spine runtime available');
-        if (!WGL) throw new Error('spine-webgl not loaded');
+        if (useVer === '3.8' && !WGL) throw new Error('spine-webgl not loaded');
 
         const atlasText = node._srcAtlasText;
         const texDataUrl = node._srcTexDataUrl;
@@ -1214,9 +1231,14 @@ const SMTool = {
         node.textureImg = img;
 
         // Create atlas
-        const atlas = new SP.TextureAtlas(atlasText, function(path) {
-            return new SP.FakeTexture(img);
-        });
+        let atlas;
+        if (useVer === '4.3' || useVer === '4.2') {
+            atlas = new SP.TextureAtlas(atlasText);
+        } else {
+            atlas = new SP.TextureAtlas(atlasText, function(path) {
+                return new SP.FakeTexture(img);
+            });
+        }
         node.atlasData = atlas;
         console.log(`[Import] Atlas: ${atlas.pages.length} page(s), ${atlas.regions.length} region(s)`);
 
@@ -1269,7 +1291,7 @@ const SMTool = {
 
         // Compute bounds
         sk.setToSetupPose();
-        sk.updateWorldTransform();
+        sk.updateWorldTransform(physParam);
         const boundsOff = new SP.Vector2(), boundsSize = new SP.Vector2();
         try {
             if (typeof sk.getBounds === 'function') {
@@ -1298,41 +1320,57 @@ const SMTool = {
         // Clean up old resources
         if (node.batcher) { try { node.batcher.dispose(); } catch(e) {} }
         if (node.shader) { try { node.shader.dispose(); } catch(e) {} }
+        if (node.sceneRenderer) { try { node.sceneRenderer.dispose(); } catch(e) {} node.sceneRenderer = null; }
         if (node.glTextures) { node.glTextures.forEach(t => { try { t.dispose(); } catch(e) {} }); }
         node.glTextures = [];
 
-        // Get WebGL context
-        var gl = canvas.getContext('webgl2', { alpha: false }) || canvas.getContext('webgl', { alpha: false });
-        if (!gl) throw new Error('WebGL not available');
-        node.gl = gl;
-
-        // Create shader, batcher, MVP, renderer
-        node.shader = WGL.Shader.newTwoColoredTextured(gl);
-        node.batcher = new WGL.PolygonBatcher(gl);
-        node.mvp = new WGL.Matrix4();
-        node.skeletonRenderer = new WGL.SkeletonRenderer(gl);
-
-        node.mvp.ortho2d(0, 0, cw - 1, ch - 1);
-
-        // Create GL textures
-        for (var i = 0; i < atlas.pages.length; i++) {
-            var page = atlas.pages[i];
-            try {
-                var glTex = new WGL.GLTexture(gl, img, false);
-                page.texture = glTex;
+        if (useVer === '4.3' || useVer === '4.2') {
+            // 4.x rendering setup: SceneRenderer
+            const context = new SP.ManagedWebGLRenderingContext(canvas, { alpha: false });
+            node.gl = context.gl;
+            const renderer = new SP.SceneRenderer(canvas, context, true);
+            node.sceneRenderer = renderer;
+            const cx = boundsOff.x + boundsSize.x / 2;
+            const cy = boundsOff.y + boundsSize.y / 2;
+            renderer.camera.position.set(cx, cy, 0);
+            renderer.camera.viewportWidth = cw;
+            renderer.camera.viewportHeight = ch;
+            renderer.camera.update();
+            for (let i = 0; i < atlas.pages.length; i++) {
+                const page = atlas.pages[i];
+                const glTex = new SP.GLTexture(context, img, page.pma || false);
+                page.setTexture(glTex);
                 node.glTextures.push(glTex);
-            } catch (e) {
-                console.error('[Import] GLTexture failed for "' + page.name + '":', e);
             }
-        }
-        for (var r = 0; r < atlas.regions.length; r++) {
-            atlas.regions[r].texture = atlas.regions[r].page.texture;
+        } else {
+            // 3.8 rendering setup: barebones
+            var gl = canvas.getContext('webgl2', { alpha: false }) || canvas.getContext('webgl', { alpha: false });
+            if (!gl) throw new Error('WebGL not available');
+            node.gl = gl;
+            node.shader = WGL.Shader.newTwoColoredTextured(gl);
+            node.batcher = new WGL.PolygonBatcher(gl);
+            node.mvp = new WGL.Matrix4();
+            node.skeletonRenderer = new WGL.SkeletonRenderer(gl);
+            node.mvp.ortho2d(0, 0, cw - 1, ch - 1);
+            for (var i = 0; i < atlas.pages.length; i++) {
+                var page = atlas.pages[i];
+                try {
+                    var glTex = new WGL.GLTexture(gl, img, false);
+                    page.texture = glTex;
+                    node.glTextures.push(glTex);
+                } catch (e) {
+                    console.error('[Import] GLTexture failed for "' + page.name + '":', e);
+                }
+            }
+            for (var r = 0; r < atlas.regions.length; r++) {
+                atlas.regions[r].texture = atlas.regions[r].page.texture;
+            }
         }
 
         // Center skeleton
         sk.x = cw / 2 - (boundsOff.x + boundsSize.x / 2);
         sk.y = ch / 2 - (boundsOff.y + boundsSize.y / 2);
-        sk.updateWorldTransform();
+        sk.updateWorldTransform(physParam);
 
         console.log(`[Import] ✓ "${node.name}" restored successfully`);
     },
