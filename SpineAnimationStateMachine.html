@@ -134,56 +134,76 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);overflow:h
     <span id="zoomLabel">100%</span>
 </div>
 
-<!-- Spine WebGL 3.8.99 single bundle (includes core + webgl) -->
-<!-- 3.8 runtime matches Spine 3.8.xx export format -->
+<!-- Spine WebGL Dual Runtime: 3.8 + 4.3 via unpkg CDN -->
+<!-- 3.8: spine.webgl.* namespace | 4.3: flat spine.* namespace -->
 <script>
 (function() {
-    const CDN_BUNDLE = [
-        // 3.8 GitHub build via jsDelivr (npm doesn't have 3.8.x)
-        'https://cdn.jsdelivr.net/gh/EsotericSoftware/spine-runtimes@3.8/spine-ts/build/spine-webgl.js',
-        // Fallback: direct raw GitHub
-        'https://raw.githubusercontent.com/EsotericSoftware/spine-runtimes/3.8/spine-ts/build/spine-webgl.js',
-    ];
+    // CDN URLs
+    const CDN_38 = 'https://cdn.jsdelivr.net/gh/EsotericSoftware/spine-runtimes@3.8/spine-ts/build/spine-webgl.js';
+    const CDN_38_FALLBACK = 'https://raw.githubusercontent.com/EsotericSoftware/spine-runtimes/3.8/spine-ts/build/spine-webgl.js';
+    const CDN_42 = 'https://unpkg.com/@esotericsoftware/spine-webgl@4.2.43/dist/iife/spine-webgl.js';
+    const CDN_43 = 'https://unpkg.com/@esotericsoftware/spine-webgl@4.3.2/dist/iife/spine-webgl.js';
 
     function loadScript(url) {
         return new Promise(function(resolve, reject) {
             var s = document.createElement('script');
             s.src = url;
-            s.onload = function() { console.log('[Spine] Loaded from', url); resolve(url); };
-            s.onerror = function() { console.warn('[Spine] CDN failed:', url); reject(url); };
+            s.onload = function() { console.log('[Spine] Loaded:', url); resolve(url); };
+            s.onerror = function() { console.warn('[Spine] Failed:', url); reject(url); };
             document.head.appendChild(s);
         });
     }
 
-    function tryLoad(urls, idx) {
-        idx = idx || 0;
-        if (idx >= urls.length) return Promise.reject('all CDNs failed');
-        return loadScript(urls[idx]).catch(function() { return tryLoad(urls, idx + 1); });
+    function tryLoad(url, fallback) {
+        return loadScript(url).catch(function() { return fallback ? loadScript(fallback) : Promise.reject('all failed'); });
     }
 
-    console.log('[Spine] Loading spine-webgl 3.8 (from GitHub)...');
-    tryLoad(CDN_BUNDLE).then(function(url) {
-        console.log('[Spine] spine-webgl 3.8 ready \u2713');
+    // Step 1: Load 3.8, save to window.spine38
+    console.log('[Spine] Loading spine-webgl 3.8...');
+    tryLoad(CDN_38, CDN_38_FALLBACK).then(function() {
+        window.spine38 = window.spine;
+        console.log('[Spine] spine-webgl 3.8 ready \u2713 (saved as spine38)');
+
+        // Step 2: Load 4.2.1, save to window.spine42
+        console.log('[Spine] Loading spine-webgl 4.2...');
+        return loadScript(CDN_42);
+    }).then(function() {
+        window.spine42 = window.spine;
+        console.log('[Spine] spine-webgl 4.2 ready \u2713 (saved as spine42)');
+
+        // Step 3: Load 4.3.2, save to window.spine43
+        console.log('[Spine] Loading spine-webgl 4.3...');
+        return loadScript(CDN_43);
+    }).then(function() {
+        window.spine43 = window.spine;
+        // Restore 3.8 as default for backward compat
+        window.spine = window.spine38;
+        console.log('[Spine] spine-webgl 4.3 ready \u2713 (saved as spine43)');
+        console.log('[Spine] Triple runtime ready: 3.8 + 4.2 + 4.3');
+
         var sb = document.getElementById('sbStatus');
-        if (window.spine && window.spine.webgl && window.spine.webgl.SkeletonRenderer) {
-            sb.textContent = 'Spine WebGL 3.8.99 \u2713';
-        } else {
-            sb.textContent = '\u26A0\uFE0F Spine WebGL loaded but API missing';
-        }
+        sb.textContent = 'Spine 3.8 + 4.2 + 4.3 \u2713';
+
         if (window._onSpineReady) window._onSpineReady();
-    }).catch(function() {
-        console.error('[Spine] Failed to load!');
+    }).catch(function(err) {
+        console.error('[Spine] Failed to load dual runtime:', err);
         var sb = document.getElementById('sbStatus');
-        sb.textContent = '\u26A0\uFE0F Spine not loaded';
+        if (window.spine38) {
+            sb.textContent = 'Spine 3.8 only (4.3 failed)';
+        } else {
+            sb.textContent = '\u26A0\uFE0F Spine not loaded';
+        }
         if (window._onSpineReady) window._onSpineReady();
     });
 })();
 </script>
 
 <script>
-// ===================== Official spine-webgl Renderer (3.8) =====================
-// 3.8 barebones pattern: shader + batcher + skeletonRenderer
-// Full feature support: meshes, clipping, tint colors, blend modes
+// ===================== Triple-Runtime Spine Renderer (3.8 + 4.2 + 4.3) =====================
+// 3.8: barebones pattern (shader + batcher + skeletonRenderer via spine38.webgl.*)
+// 4.2: SceneRenderer pattern (via spine42.*)
+// 4.3: SceneRenderer pattern (via spine43.*)
+// Version auto-detected from skeleton data; node._spineVer = '3.8' | '4.2' | '4.3'
 
 // ===================== DATA MODEL =====================
 const CONN_COLORS = [
@@ -314,33 +334,45 @@ const SMTool = {
             document.getElementById('sbFPS').textContent = `FPS: ${Math.round(this._fc * 1000 / (now - this._ft))}`;
             this._fc = 0; this._ft = now;
         }
-        var WGL = window.spine && window.spine.webgl;
+        var SP38 = window.spine38, SP43 = window.spine43;
+        var WGL38 = SP38 && SP38.webgl;
         for (const [, node] of SMData.nodes) {
-            if (!node.state || !node.skeleton || !node.gl || !node.skeletonRenderer || !WGL) continue;
+            if (!node.state || !node.skeleton || !node.gl) continue;
+
             var gl = node.gl;
             var skeleton = node.skeleton;
             var state = node.state;
 
-            // Update animation
+            // Update animation (same for both versions)
             state.update(dt);
             state.apply(skeleton);
             skeleton.updateWorldTransform();
 
-            // Render: 3.8 barebones pattern
-            gl.viewport(0, 0, node.canvas.width, node.canvas.height);
-            gl.clearColor(0, 0, 0, 0);
-            gl.clear(gl.COLOR_BUFFER_BIT);
+            if ((node._spineVer === '4.3' || node._spineVer === '4.2') && node.sceneRenderer && node.sceneRenderer.begin) {
+                // --- 4.x rendering: SceneRenderer (shared between 4.2 and 4.3) ---
+                gl.viewport(0, 0, node.canvas.width, node.canvas.height);
+                gl.clearColor(0, 0, 0, 0);
+                gl.clear(gl.COLOR_BUFFER_BIT);
+                node.sceneRenderer.begin();
+                node.sceneRenderer.drawSkeleton(skeleton);
+                node.sceneRenderer.end();
+            } else if (node.shader && node.batcher && node.skeletonRenderer && WGL38) {
+                // --- 3.8 rendering: barebones pattern ---
+                gl.viewport(0, 0, node.canvas.width, node.canvas.height);
+                gl.clearColor(0, 0, 0, 0);
+                gl.clear(gl.COLOR_BUFFER_BIT);
 
-            node.shader.bind();
-            node.shader.setUniformi(WGL.Shader.SAMPLER, 0);
-            node.shader.setUniform4x4f(WGL.Shader.MVP_MATRIX, node.mvp.values);
+                node.shader.bind();
+                node.shader.setUniformi(WGL38.Shader.SAMPLER, 0);
+                node.shader.setUniform4x4f(WGL38.Shader.MVP_MATRIX, node.mvp.values);
 
-            node.batcher.begin(node.shader);
-            node.skeletonRenderer.premultipliedAlpha = node.premultipliedAlpha;
-            node.skeletonRenderer.draw(node.batcher, skeleton);
-            node.batcher.end();
+                node.batcher.begin(node.shader);
+                node.skeletonRenderer.premultipliedAlpha = node.premultipliedAlpha;
+                node.skeletonRenderer.draw(node.batcher, skeleton);
+                node.batcher.end();
 
-            node.shader.unbind();
+                node.shader.unbind();
+            }
         }
         this._renderGrid();
         this._renderConnections();
@@ -750,72 +782,93 @@ const SMTool = {
         if (!pngUrl) throw new Error('No PNG found'); if (!atlasText) throw new Error('No .atlas found');
         if (!skelJson && !skelBin) throw new Error('No skeleton (.json/.skel) found');
 
-        // --- Detect version from binary .skel header ---
-        // .skel format: hash(varint+utf8) + version(varint+utf8) + ...
+        // --- Detect version and choose runtime ---
         let detectedVersion = '';
         if (skelJson) {
             detectedVersion = (skelJson.skeleton && skelJson.skeleton.spine) || '';
         } else if (skelBin) {
             try {
                 const bytes = skelBin;
-                // Helper: read a varint from binary (same as BinaryInput.readInt)
-                function readVarint(arr, pos) {
-                    let b = arr[pos]; let result = b & 0x7F; pos++;
-                    if ((b & 0x80) !== 0) { b = arr[pos]; result |= (b & 0x7F) << 7; pos++;
-                    if ((b & 0x80) !== 0) { b = arr[pos]; result |= (b & 0x7F) << 14; pos++;
-                    if ((b & 0x80) !== 0) { b = arr[pos]; result |= (b & 0x7F) << 21; pos++;
-                    if ((b & 0x80) !== 0) { b = arr[pos]; result |= (b & 0x7F) << 28; pos++; } } } }
-                    return { value: result >>> 1 ^ -(result & 1), pos: pos };
-                }
-                // Skip hash string
-                let pos = 0;
-                let r = readVarint(bytes, pos); pos = r.pos;
-                let byteCount = r.value;
-                if (byteCount > 1) pos += byteCount - 1; // skip hash chars
-                // Read version string
-                r = readVarint(bytes, pos); pos = r.pos;
-                byteCount = r.value;
-                if (byteCount > 0 && byteCount < 50) {
-                    detectedVersion = '';
-                    for (let i = 0; i < byteCount - 1 && pos + i < bytes.length; i++)
-                        detectedVersion += String.fromCharCode(bytes[pos + i]);
+                // Use 4.3's BinaryInput to read version (avoid varint bugs)
+                // Fallback: simple detection for 3.x vs 4.x by known header patterns
+                // 4.3 binary starts with 2x int32 hashes, then version string
+                // 3.8 binary starts with string hash + string version
+                // We just try both runtimes' BinaryInput
+                const SP43 = window.spine43;
+                if (SP43 && SP43.BinaryInput) {
+                    try {
+                        const input = new SP43.BinaryInput(skelBin);
+                        input.readInt32(); input.readInt32(); // skip hash (4.3 format)
+                        detectedVersion = input.readString() || '';
+                    } catch (_) {
+                        // Fall back to 3.8 format
+                        const SP38 = window.spine38;
+                        if (SP38 && SP38.BinaryInput) {
+                            try {
+                                const input = new SP38.BinaryInput(new DataView(skelBin.buffer));
+                                detectedVersion = '' + (input.readString() || '') + '|' + (input.readString() || '');
+                                detectedVersion = detectedVersion.replace(/^[^|]*\|/, ''); // take 2nd string
+                            } catch (_2) {}
+                        }
+                    }
                 }
             } catch (e) { /* ignore */ }
         }
         console.log(`[Spine] Detected version: "${detectedVersion}"`);
+        // Also detect 4.x atlas format: "pma:" lines only exist in 4.x+ atlases
+        const atlasIs4x = /^pma\s*:/m.test(atlasText);
 
-        // --- Store raw source data for export/import roundtrip ---
+        // --- Determine runtime: 3.8 vs 4.2 vs 4.3 ---
+        let useVer = '3.8';
+        if (detectedVersion && detectedVersion.match(/^4\.[3-9]/)) useVer = '4.3';
+        else if (detectedVersion && detectedVersion.match(/^4\.[012]\./)) useVer = '4.2';
+        else if (detectedVersion && detectedVersion.match(/^3\.\d/)) useVer = '3.8';
+        else if (!detectedVersion) {
+            if (skelBin) useVer = '4.3'; // assume newer binary
+            else if (atlasIs4x) useVer = '4.3'; // 4.x atlas format
+        }
+        // Select runtime: spine42 for 4.0-4.2, spine43 for 4.3+, spine38 for 3.8
+        const SP = useVer === '4.3' ? window.spine43 : (useVer === '4.2' ? window.spine42 : window.spine38);
+        const WGL = useVer === '3.8' ? (window.spine38 && window.spine38.webgl) : null;
+        if (!SP) throw new Error('No spine runtime available for ' + useVer);
+        console.log('[Spine] Using runtime: spine-webgl ' + useVer);
+        node._spineVer = useVer;
+        // Override: if 3.8 but atlas has 4.x features → strip pma lines for 3.8 compat
+        if (useVer === '3.8' && atlasIs4x) {
+            console.log('[Spine]   Atlas has 4.x format (pma:), stripping for 3.8 compat');
+            atlasText = atlasText.replace(/^pma\s*:.*$/gm, '').replace(/\n{2,}/g, '\n');
+        }
+
+        // --- Store raw source data for export ---
         node._srcSkelJson = skelJson;
         node._srcSkelBinBase64 = skelBin ? SMTool._uint8ToBase64(skelBin) : null;
         node._srcAtlasText = atlasText;
         node._srcTexDataUrl = pngUrl;
         node._srcType = skelBin ? 'skel' : 'json';
-        console.log(`[Spine] Source data stored: type=${node._srcType}, atlas=${atlasText.length}chars, tex=${pngUrl.length}chars`);
 
-        // Use window.spine (3.8 runtime)
-        const SP = window.spine;
-        if (!SP) throw new Error('No spine runtime available');
-        console.log('[Spine] Using runtime: spine-webgl 3.8');
-
-        // Load image
+        // Load image (shared)
         const img = new Image();
         await new Promise((res, rej) => { img.onload = () => { console.log(`[Spine] Image: ${img.width}x${img.height}`); res(); }; img.onerror = () => rej(new Error('PNG load failed')); img.src = pngUrl; });
         node.textureImg = img;
 
-        // Create atlas — 3.8 TextureAtlas needs a textureLoader(path) function
-        // We create a dummy atlas first, then replace textures after GL context is ready
-        const atlas = new SP.TextureAtlas(atlasText, function(path) {
-            var fake = new SP.FakeTexture(img);
-            return fake;
-        });
+        // --- Create atlas ---
+        let atlas;
+        if (useVer === '4.3' || useVer === '4.2') {
+            // 4.x: TextureAtlas(atlasText) — no textureLoader
+            atlas = new SP.TextureAtlas(atlasText);
+        } else {
+            // 3.8: TextureAtlas(atlasText, textureLoader)
+            atlas = new SP.TextureAtlas(atlasText, function(path) {
+                return new SP.FakeTexture(img);
+            });
+        }
         for (let i = 0; i < atlas.pages.length; i++) {
-            const page = atlas.pages[i];
-            console.log(`[Spine] Atlas page "${page.name}": ${page.width}x${page.height}`);
+            console.log(`[Spine] Atlas page "${atlas.pages[i].name}": ${atlas.pages[i].width}x${atlas.pages[i].height}`);
         }
         node.atlasData = atlas;
         console.log(`[Spine] Atlas: ${atlas.pages.length} page(s), ${atlas.regions.length} region(s)`);
 
-        // Load skeleton data
+        // --- Load skeleton data ---
         const al = new SP.AtlasAttachmentLoader(atlas);
         let sd;
         try {
@@ -824,20 +877,13 @@ const SMTool = {
                 const bl = new SP.SkeletonBinary(al); bl.scale = 1;
                 sd = bl.readSkeletonData(skelBin);
             } else {
-                const jl = new SP.SkeletonJson(al); jl.scale = 1; sd = jl.readSkeletonData(skelJson);
+                const jl = new SP.SkeletonJson(al); jl.scale = 1;
+                sd = jl.readSkeletonData(skelJson);
             }
         } catch (e) {
-            // Give clear error for .skel version mismatches
-            if (skelBin) {
-                throw new Error(
-                    '.skel 解析失败' + (detectedVersion ? ' (版本: ' + detectedVersion + ')' : '') + '\n' +
-                    '3.8 runtime 只支持 Spine 3.8.x 的 .skel 二进制格式。\n' +
-                    '注意：Spine 3.8.75 版本的 .skel 也不被支持。\n' +
-                    '解决方法：使用 .json 格式替代（推荐），或在 Spine 编辑器中导出为非 3.8.75 版本。\n' +
-                    '原始错误: ' + e.message
-                );
-            }
-            throw new Error('Skeleton parse failed: ' + e.message);
+            throw new Error('Skeleton parse failed (' + useVer + ' runtime): ' + e.message +
+                (detectedVersion ? '\nDetected version: ' + detectedVersion : '') +
+                '\n\nTry exporting as JSON from Spine Editor if binary format is unsupported.');
         }
         node.skeletonData = sd;
         node.version = sd.version || detectedVersion;
@@ -852,9 +898,9 @@ const SMTool = {
 
         // Create skeleton
         const sk = new SP.Skeleton(sd);
-        if (sd.defaultSkin) sk.setSkin(sd.defaultSkin);
+        if (sd.defaultSkin) { sk.setSkin(sd.defaultSkin); }
         sk.setToSetupPose();
-        if (atlas.pages.length > 0 && atlas.pages[0].pma) { node.premultipliedAlpha = true; }
+        if (atlas.pages.length > 0 && (atlas.pages[0].pma || atlas.pages[0].premultipliedAlpha)) { node.premultipliedAlpha = true; }
         node.skeleton = sk;
 
         // Animation state
@@ -863,12 +909,12 @@ const SMTool = {
         node.state = state;
         if (node.animations.length > 0) { state.setAnimation(0, node.animations[0].name, true); node.currentAnim = node.animations[0].name; console.log(`[Spine] Playing: "${node.currentAnim}"`); }
 
-        // Setup canvas + WebGL renderer (3.8 barebones pattern)
+        // Setup canvas
         const wrap = document.querySelector(`#sn-${node.id} .spine-canvas-wrap`); if (!wrap) return;
         const oldC = wrap.querySelector('canvas'); if (oldC) oldC.remove();
         const ph = wrap.querySelector('div'); if (ph) ph.remove();
 
-        // Compute bounds for canvas sizing (3.8: setToSetupPose + updateWorldTransform)
+        // Compute bounds
         sk.setToSetupPose();
         sk.updateWorldTransform();
         const boundsOff = new SP.Vector2(), boundsSize = new SP.Vector2();
@@ -876,11 +922,11 @@ const SMTool = {
             if (typeof sk.getBounds === 'function') {
                 sk.getBounds(boundsOff, boundsSize, []);
             } else {
-                this._computeBoundsManually(sk, boundsOff, boundsSize);
+                SMTool._computeBoundsManually38 ? SMTool._computeBoundsManually38(sk, boundsOff, boundsSize) : SMTool._computeBoundsManually(sk, boundsOff, boundsSize);
             }
         } catch (e) {
             console.warn('[Spine] getBounds failed, using fallback:', e.message);
-            this._computeBoundsManually(sk, boundsOff, boundsSize);
+            try { SMTool._computeBoundsManually(sk, boundsOff, boundsSize); } catch (_) {}
         }
         node.bounds = { offset: boundsOff, size: boundsSize };
         const pad = Math.max(100, Math.ceil(Math.max(boundsSize.x, boundsSize.y) * 0.4));
@@ -888,55 +934,74 @@ const SMTool = {
         const ch = Math.max(400, Math.ceil(boundsSize.y) + pad * 2);
         console.log(`[Spine] Canvas: ${cw}x${ch}, bounds: ${boundsSize.x.toFixed(0)}x${boundsSize.y.toFixed(0)}, pad:${pad}`);
 
-        // Create canvas
         const canvas = document.createElement('canvas'); canvas.width = cw; canvas.height = ch;
-        canvas.style.display = 'block';
-        canvas.style.width = cw + 'px';
-        canvas.style.height = ch + 'px';
+        canvas.style.display = 'block'; canvas.style.width = cw + 'px'; canvas.style.height = ch + 'px';
         wrap.appendChild(canvas);
         node.canvas = canvas;
         node.width = Math.max(cw + 10, node.width, 260);
 
-        // === 3.8 spine-webgl setup (barebones pattern) ===
-        const WGL = window.spine && window.spine.webgl;
-        if (!WGL) throw new Error('spine-webgl 3.8 not loaded');
+        if (useVer === '4.3' || useVer === '4.2') {
+            // ============ 4.x rendering setup: SceneRenderer ============
+            if (node.sceneRenderer) { try { node.sceneRenderer.dispose(); } catch(e) {} }
 
-        // Clean up old resources
-        if (node.batcher) { try { node.batcher.dispose(); } catch(e) {} }
-        if (node.shader) { try { node.shader.dispose(); } catch(e) {} }
-        if (node.glTextures) { node.glTextures.forEach(t => { try { t.dispose(); } catch(e) {} }); }
-        node.glTextures = [];
+            const context = new SP.ManagedWebGLRenderingContext(canvas, { alpha: false });
+            node.gl = context.gl;
+            const renderer = new SP.SceneRenderer(canvas, context, true);
+            node.sceneRenderer = renderer;
 
-        // Get WebGL context (no ManagedWebGLRenderingContext in 3.8)
-        var gl = canvas.getContext('webgl2', { alpha: false }) || canvas.getContext('webgl', { alpha: false });
-        if (!gl) throw new Error('WebGL not available');
-        node.gl = gl;
+            // Position camera to center skeleton
+            const cx = boundsOff.x + boundsSize.x / 2;
+            const cy = boundsOff.y + boundsSize.y / 2;
+            renderer.camera.position.set(cx, cy, 0);
+            renderer.camera.viewportWidth = cw;
+            renderer.camera.viewportHeight = ch;
+            renderer.camera.update();
 
-        // Create shader, batcher, MVP matrix, skeletonRenderer
-        node.shader = WGL.Shader.newTwoColoredTextured(gl);
-        node.batcher = new WGL.PolygonBatcher(gl);
-        node.mvp = new WGL.Matrix4();
-        node.skeletonRenderer = new WGL.SkeletonRenderer(gl);
-
-        // Set MVP: center skeleton in canvas
-        node.mvp.ortho2d(0, 0, cw - 1, ch - 1);
-
-        // Create GL textures for atlas pages (3.8: directly assign page.texture)
-        for (var i = 0; i < atlas.pages.length; i++) {
-            var page = atlas.pages[i];
-            try {
-                var glTex = new WGL.GLTexture(gl, img, false);
-                page.texture = glTex; // 3.8: page.texture, not page.setTexture()
+            // Create GL textures for atlas pages (4.x: page.setTexture)
+            node.glTextures = [];
+            for (let i = 0; i < atlas.pages.length; i++) {
+                const page = atlas.pages[i];
+                const glTex = new SP.GLTexture(context, img, page.pma || false);
+                page.setTexture(glTex);
                 node.glTextures.push(glTex);
-                console.log('[Spine] WebGL texture for page "' + page.name + '" (' + page.width + 'x' + page.height + ')');
-            } catch (e) {
-                console.error('[Spine] GLTexture failed for "' + page.name + '":', e);
             }
-        }
-        // Also update all region textures (3.8: region.texture references page.texture)
-        for (var r = 0; r < atlas.regions.length; r++) {
-            var region = atlas.regions[r];
-            region.texture = region.page.texture;
+            // Update region texture references
+            for (let i = 0; i < atlas.regions.length; i++) {
+                const region = atlas.regions[i];
+                region.texture = region.page.texture;
+            }
+        } else {
+            // ============ 3.8 rendering setup: barebones ============
+            if (node.batcher) { try { node.batcher.dispose(); } catch(e) {} }
+            if (node.shader) { try { node.shader.dispose(); } catch(e) {} }
+            if (node.sceneRenderer) { try { node.sceneRenderer.dispose(); } catch(e) {} node.sceneRenderer = null; }
+            if (node.glTextures) { node.glTextures.forEach(t => { try { t.dispose(); } catch(e) {} }); }
+            node.glTextures = [];
+
+            var gl = canvas.getContext('webgl2', { alpha: false }) || canvas.getContext('webgl', { alpha: false });
+            if (!gl) throw new Error('WebGL not available');
+            node.gl = gl;
+
+            node.shader = WGL.Shader.newTwoColoredTextured(gl);
+            node.batcher = new WGL.PolygonBatcher(gl);
+            node.mvp = new WGL.Matrix4();
+            node.skeletonRenderer = new WGL.SkeletonRenderer(gl);
+            node.mvp.ortho2d(0, 0, cw - 1, ch - 1);
+
+            // Create GL textures (3.8: page.texture = glTex)
+            for (var i = 0; i < atlas.pages.length; i++) {
+                var page = atlas.pages[i];
+                try {
+                    var glTex = new WGL.GLTexture(gl, img, false);
+                    page.texture = glTex;
+                    node.glTextures.push(glTex);
+                } catch (e) { console.warn('[Spine] GL texture failed:', e); }
+            }
+            // Update region textures (3.8: region.texture = region.page.texture)
+            for (var j = 0; j < atlas.regions.length; j++) {
+                var region = atlas.regions[j];
+                if (region.page && region.page.texture) region.texture = region.page.texture;
+            }
         }
 
         // Center skeleton in canvas coordinates
