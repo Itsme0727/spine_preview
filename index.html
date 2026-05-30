@@ -28,6 +28,12 @@
         <button onclick="SMTool.importData()">📥 导入</button>
     </div>
 
+    <!-- ===== 缺失状态通知面板 ===== -->
+    <div id="missingPanel">
+        <div class="mp-header">⚠️ 缺失状态</div>
+        <div class="mp-list" id="missingList"></div>
+    </div>
+
     <!-- ===== 拖拽提示 ===== -->
     <div id="dropZone">
         <div class="inner">
@@ -40,7 +46,7 @@
     <!-- ===== 条件编辑器 ===== -->
     <div id="conditionEditor">
         <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:6px">过渡条件：</label>
-        <input type="text" id="condInput" placeholder="例如：isDead == true" />
+        <textarea id="condInput" placeholder="例如：isDead == true" rows="1"></textarea>
         <div class="actions">
             <button class="del" onclick="SMTool.deleteConnection()">删除连线</button>
             <button class="ok" onclick="SMTool.saveCondition()">确定</button>
@@ -52,6 +58,9 @@
         <div class="ctx-item" onclick="SMTool.ctxDeleteNode()">🗑️ 删除节点</div>
         <div class="ctx-item" onclick="SMTool.ctxDuplicateNode()">📋 复制节点</div>
     </div>
+
+    <!-- ===== 标签悬浮提示 ===== -->
+    <div id="labelTooltip"></div>
 
     <!-- ===== 状态栏 ===== -->
     <div id="statusBar">

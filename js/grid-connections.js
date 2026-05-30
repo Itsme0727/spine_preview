@@ -68,6 +68,7 @@ SMTool._renderConnections = function () {
 
     var selConn = SMData.selectedConnection;
     var dragging = SMData.draggingCP;
+    SMData._labelRects = [];  // 重置标签区域列表
 
     for (var i = 0; i < SMData.connections.length; i++) {
         var conn = SMData.connections[i];
@@ -96,25 +97,29 @@ SMTool._renderConnections = function () {
         var isSelected = selConn === conn.id;
         var isDragged = dragging && dragging.connId === conn.id;
         var isActive = isSelected || isDragged;
+        var z = SMData.view.zoom;  // 缩放因子
 
         // 绘制贝塞尔曲线
         ctx.strokeStyle = connColor;
-        ctx.lineWidth = isActive ? 3.5 : 2.5;
+        ctx.lineWidth = Math.max(1.5, (isActive ? 3.5 : 2.5) * z);
         ctx.shadowColor = isActive ? connColor : 'transparent';
-        ctx.shadowBlur = isActive ? 8 : 0;
+        ctx.shadowBlur = isActive ? 8 * z : 0;
         ctx.beginPath();
         ctx.moveTo(fs.x, fs.y);
         ctx.bezierCurveTo(cp1s.x, cp1s.y, cp2s.x, cp2s.y, ts.x, ts.y);
         ctx.stroke();
         ctx.shadowBlur = 0;
 
-        // 端点圆
-        var dotR = isActive ? 7 : 5;
+        // 端点圆（随缩放）
+        var dotR = Math.round((isActive ? 14 : 10) * z);
         ctx.fillStyle = connColor;
         ctx.beginPath(); ctx.arc(fs.x, fs.y, dotR, 0, Math.PI * 2); ctx.fill();
-        ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(1, 2 * z); ctx.stroke();
         ctx.beginPath(); ctx.arc(ts.x, ts.y, dotR, 0, Math.PI * 2); ctx.fill();
         ctx.stroke();
+
+        // 方向箭头（1/3 和 2/3 位置）
+        SMTool._drawBezierArrows(ctx, fs.x, fs.y, cp1s.x, cp1s.y, cp2s.x, cp2s.y, ts.x, ts.y, connColor, isActive, z);
 
         // 控制手柄（仅选中/拖拽时可见）
         if (isActive) {
@@ -123,50 +128,106 @@ SMTool._renderConnections = function () {
 
             // 虚线到控制点
             ctx.strokeStyle = connColor + '88';
-            ctx.lineWidth = 1.5;
-            ctx.setLineDash([3, 3]);
+            ctx.lineWidth = Math.max(1, 1.5 * z);
+            ctx.setLineDash([3 * z, 3 * z]);
             ctx.beginPath(); ctx.moveTo(fs.x, fs.y); ctx.lineTo(cp1s.x, cp1s.y); ctx.stroke();
             ctx.beginPath(); ctx.moveTo(ts.x, ts.y); ctx.lineTo(cp2s.x, cp2s.y); ctx.stroke();
             ctx.setLineDash([]);
 
             // CP1 手柄
-            var r1 = isCP1Active ? 8 : 6;
+            var r1 = Math.round((isCP1Active ? 8 : 6) * z);
             ctx.fillStyle = isCP1Active ? '#fff' : connColor;
             ctx.beginPath(); ctx.arc(cp1s.x, cp1s.y, r1, 0, Math.PI * 2); ctx.fill();
             ctx.strokeStyle = isCP1Active ? connColor : '#fff';
-            ctx.lineWidth = isCP1Active ? 2.5 : 1.5;
+            ctx.lineWidth = Math.max(1, (isCP1Active ? 2.5 : 1.5) * z);
             ctx.stroke();
 
             // CP2 手柄
-            var r2 = isCP2Active ? 8 : 6;
+            var r2 = Math.round((isCP2Active ? 8 : 6) * z);
             ctx.fillStyle = isCP2Active ? '#fff' : connColor;
             ctx.beginPath(); ctx.arc(cp2s.x, cp2s.y, r2, 0, Math.PI * 2); ctx.fill();
             ctx.strokeStyle = isCP2Active ? connColor : '#fff';
-            ctx.lineWidth = isCP2Active ? 2.5 : 1.5;
+            ctx.lineWidth = Math.max(1, (isCP2Active ? 2.5 : 1.5) * z);
             ctx.stroke();
         }
 
-        // 条件标签
+        // 条件标签（带换行/截断）—— 尺寸随画布缩放
+        var rawLabel = conn.condition || '条件';
+        var maxCharsPerLine = 20;
+        var maxTotalChars = 50;
+        var truncated = rawLabel.length > maxTotalChars;
+        var displayText = truncated ? rawLabel.substring(0, maxTotalChars) + '...' : rawLabel;
+
+        // 标签中心点（贝塞尔曲线 t=0.5 位置）
         var mt = 0.5;
         var mx = Math.pow(1 - mt, 3) * fs.x + 3 * Math.pow(1 - mt, 2) * mt * cp1s.x + 3 * (1 - mt) * mt * mt * cp2s.x + mt * mt * mt * ts.x;
         var my = Math.pow(1 - mt, 3) * fs.y + 3 * Math.pow(1 - mt, 2) * mt * cp1s.y + 3 * (1 - mt) * mt * mt * cp2s.y + mt * mt * mt * ts.y;
 
-        var label = conn.condition || '点击编辑条件';
-        ctx.font = 'bold 12px "Segoe UI",system-ui,sans-serif';
-        var tw = ctx.measureText(label).width + 16;
+        // 缩放因子（标签大小跟随画布缩放）
+        var fontSize = Math.round(14 * z);
+        var lineHeight = Math.round(20 * z);  // 行间距加大
+        var padX = Math.round(20 * z);
+        var padY = Math.round(14 * z);
+        var textOffY = Math.round(8 * z);
 
-        ctx.fillStyle = connColor + (isActive ? 'ee' : 'cc');
-        SMTool._roundRect(ctx, mx - tw / 2, my - 12, tw, 24, 12);
+        // 将显示文本按 maxCharsPerLine 拆分成多行
+        var lines = [];
+        var remaining = displayText;
+        while (remaining.length > 0) {
+            if (remaining.length <= maxCharsPerLine) {
+                lines.push(remaining);
+                break;
+            }
+            // 找合适的断点（优先在标点或空格处断）
+            var cut = maxCharsPerLine;
+            for (var cc = maxCharsPerLine; cc >= maxCharsPerLine - 5 && cc > 0; cc--) {
+                var ch = remaining.charAt(cc - 1);
+                if (ch === ' ' || ch === '，' || ch === '。' || ch === '、' || ch === '；' || ch === '：' || ch === '\n') {
+                    cut = cc;
+                    break;
+                }
+            }
+            lines.push(remaining.substring(0, cut));
+            remaining = remaining.substring(cut);
+            // 去掉行首空格
+            if (remaining.charAt(0) === ' ') remaining = remaining.substring(1);
+        }
+
+        ctx.font = '300 ' + fontSize + 'px "Segoe UI",system-ui,sans-serif';
+        var maxLineW = 0;
+        for (var li = 0; li < lines.length; li++) {
+            var lw = ctx.measureText(lines[li]).width;
+            if (lw > maxLineW) maxLineW = lw;
+        }
+        var tw = maxLineW + padX;
+        var th = lines.length * lineHeight + padY;
+        var rectX = mx - tw / 2;
+        var rectY = my - th / 2;
+
+        // 存储标签矩形区域供 hover 检测（屏幕坐标，用于 mouse 匹配）
+        if (!SMData._labelRects) SMData._labelRects = [];
+        SMData._labelRects.push({
+            connId: conn.id,
+            x: rectX, y: rectY, w: tw, h: th,
+            rawLabel: rawLabel,
+            truncated: truncated
+        });
+
+        ctx.fillStyle = '#1c1c28';  // 黑灰背景
+        var br = Math.round(8 * z);  // 圆角随缩放
+        SMTool._roundRect(ctx, rectX, rectY, tw, th, br);
         ctx.fill();
         ctx.strokeStyle = connColor;
-        ctx.lineWidth = 1;
-        SMTool._roundRect(ctx, mx - tw / 2, my - 12, tw, 24, 12);
+        ctx.lineWidth = Math.max(1.5, 2 * z);  // 线宽随缩放
+        SMTool._roundRect(ctx, rectX, rectY, tw, th, br);
         ctx.stroke();
 
-        ctx.fillStyle = isActive ? '#fff' : '#111';
+        ctx.fillStyle = '#ffffff';  // 白色文字
         ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(label, mx, my);
+        ctx.textBaseline = 'top';
+        for (var li2 = 0; li2 < lines.length; li2++) {
+            ctx.fillText(lines[li2], mx, rectY + textOffY + li2 * lineHeight);
+        }
     }
 
     // 正在连线时的预览
@@ -174,14 +235,31 @@ SMTool._renderConnections = function () {
         var c = SMData.connecting;
         var sp = SMTool.worldToCanvas(c.sx, c.sy);
         ctx.strokeStyle = '#7c5ce7';
-        ctx.lineWidth = 2;
-        ctx.setLineDash([6, 4]);
+        ctx.lineWidth = Math.max(1, 2 * SMData.view.zoom);
+        ctx.setLineDash([6 * SMData.view.zoom, 4 * SMData.view.zoom]);
         ctx.beginPath();
         ctx.moveTo(sp.x, sp.y);
         var dx = Math.abs(c.mx - sp.x);
         var cpo = Math.max(dx * 0.5, 50);
         ctx.bezierCurveTo(sp.x + cpo, sp.y, c.mx - cpo, c.my, c.mx, c.my);
         ctx.stroke();
+        ctx.setLineDash([]);
+    }
+
+    // 框选虚线矩形
+    if (SMData.marqueeActive) {
+        var mx1 = Math.min(SMData.marqueeStart.x, SMData.marqueeEnd.x);
+        var my1 = Math.min(SMData.marqueeStart.y, SMData.marqueeEnd.y);
+        var mx2 = Math.max(SMData.marqueeStart.x, SMData.marqueeEnd.x);
+        var my2 = Math.max(SMData.marqueeStart.y, SMData.marqueeEnd.y);
+
+        ctx.fillStyle = 'rgba(74, 144, 217, 0.08)';
+        ctx.fillRect(mx1, my1, mx2 - mx1, my2 - my1);
+
+        ctx.strokeStyle = '#4a90d9';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 4]);
+        ctx.strokeRect(mx1, my1, mx2 - mx1, my2 - my1);
         ctx.setLineDash([]);
     }
 };
@@ -191,17 +269,55 @@ SMTool._getStateConnectorPos = function (node, stateName, type) {
     var el = SMTool._getEl(node.id);
     if (!el) return null;
 
-    var stateEl = el.querySelector('.state-row[data-state="' + CSS.escape(stateName) + '"]');
-    var dot = stateEl ? stateEl.querySelector('.conn-dot.' + (type === 'output' ? 'output' : 'input')) : null;
+    // 在新布局中，连接点在 anim-bar 上
+    var bar = el.querySelector('.anim-bar');
+    var dot = bar ? bar.querySelector('.conn-dot.' + (type === 'output' ? 'output' : 'input')) : null;
     if (dot) {
         var r = dot.getBoundingClientRect();
         return SMTool.canvasToWorld(r.left + r.width / 2, r.top + r.height / 2);
     }
+    // 回退：使用节点边缘
     var rect = el.getBoundingClientRect();
     return SMTool.canvasToWorld(
         type === 'output' ? rect.right : rect.left,
         rect.top + rect.height / 2
     );
+};
+
+// ---- 在贝塞尔曲线上绘制方向箭头 ----
+// 在 t=1/6 和 t=4/6 位置绘制箭头，避免被条件框遮挡
+SMTool._drawBezierArrows = function (ctx, x0, y0, x1, y1, x2, y2, x3, y3, color, isActive, z) {
+    z = z || 1;
+    var arrowSize = (isActive ? 26 : 21) * z;
+    var positions = [1 / 6, 5 / 6];
+    for (var p = 0; p < positions.length; p++) {
+        var t = positions[p];
+        // 贝塞尔曲线上的点 (t)
+        var px = Math.pow(1 - t, 3) * x0 + 3 * Math.pow(1 - t, 2) * t * x1 + 3 * (1 - t) * t * t * x2 + t * t * t * x3;
+        var py = Math.pow(1 - t, 3) * y0 + 3 * Math.pow(1 - t, 2) * t * y1 + 3 * (1 - t) * t * t * y2 + t * t * t * y3;
+        // 切线方向（导数）
+        var tx = -3 * Math.pow(1 - t, 2) * x0 + 3 * (Math.pow(1 - t, 2) - 2 * (1 - t) * t) * x1 + 3 * (2 * (1 - t) * t - t * t) * x2 + 3 * t * t * x3;
+        var ty = -3 * Math.pow(1 - t, 2) * y0 + 3 * (Math.pow(1 - t, 2) - 2 * (1 - t) * t) * y1 + 3 * (2 * (1 - t) * t - t * t) * y2 + 3 * t * t * y3;
+        var len = Math.sqrt(tx * tx + ty * ty);
+        if (len < 0.001) continue;
+        tx /= len; ty /= len;
+
+        // 箭头三角形顶点
+        var tipX = px + tx * arrowSize * 0.6;
+        var tipY = py + ty * arrowSize * 0.6;
+        var leftX = px - tx * arrowSize * 0.5 + ty * arrowSize * 0.45;
+        var leftY = py - ty * arrowSize * 0.5 - tx * arrowSize * 0.45;
+        var rightX = px - tx * arrowSize * 0.5 - ty * arrowSize * 0.45;
+        var rightY = py - ty * arrowSize * 0.5 + tx * arrowSize * 0.45;
+
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(tipX, tipY);
+        ctx.lineTo(leftX, leftY);
+        ctx.lineTo(rightX, rightY);
+        ctx.closePath();
+        ctx.fill();
+    }
 };
 
 // ---- 默认贝塞尔控制点偏移 ----
@@ -215,7 +331,7 @@ SMTool._defaultCPOffsets = function (fp, tp) {
 
 // ---- 查找指定屏幕位置附近的控制点 ----
 SMTool._findCP = function (sx, sy, radius) {
-    radius = radius || 12;
+    radius = (radius || 12) * SMData.view.zoom;  // 随缩放调整命中半径
     for (var i = 0; i < SMData.connections.length; i++) {
         var c = SMData.connections[i];
         var fn = SMData.nodes.get(c.fromNode);
@@ -238,6 +354,18 @@ SMTool._findCP = function (sx, sy, radius) {
             return { connId: c.id, which: 'cp1' };
         if (Math.sqrt((sx - cp2s.x) * (sx - cp2s.x) + (sy - cp2s.y) * (sy - cp2s.y)) < radius)
             return { connId: c.id, which: 'cp2' };
+    }
+    return null;
+};
+
+// ---- 查找指定屏幕位置附近的标签矩形 ----
+SMTool._findLabel = function (sx, sy) {
+    if (!SMData._labelRects) return null;
+    for (var i = 0; i < SMData._labelRects.length; i++) {
+        var lr = SMData._labelRects[i];
+        if (sx >= lr.x && sx <= lr.x + lr.w && sy >= lr.y && sy <= lr.y + lr.h) {
+            return lr;
+        }
     }
     return null;
 };

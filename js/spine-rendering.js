@@ -64,8 +64,10 @@ SMTool._setupWebGLRenderer = function (node, SP, WGL, atlas, img, useVer) {
     console.log('[Spine] Canvas: ' + cw + 'x' + ch + ', bounds: ' + boundsSize.x.toFixed(0) + 'x' + boundsSize.y.toFixed(0));
 
     // 获取/创建 Canvas
-    var wrap = document.querySelector('#sn-' + node.id + ' .spine-canvas-wrap');
-    if (!wrap) return;
+    var nodeEl = SMTool._getEl(node.id);
+    if (!nodeEl) { console.warn('[Spine] Node #' + node.id + ' DOM not found, skip canvas'); return; }
+    var wrap = nodeEl.querySelector('.spine-canvas-wrap');
+    if (!wrap) { console.warn('[Spine] canvas-wrap not found for #' + node.id); return; }
 
     var oldC = wrap.querySelector('canvas');
     if (oldC) oldC.remove();
@@ -82,6 +84,23 @@ SMTool._setupWebGLRenderer = function (node, SP, WGL, atlas, img, useVer) {
 
     node.canvas = canvas;
     node.width = Math.max(cw + 10, node.width, 260);
+    node._canvasWidth = cw;
+    node._canvasHeight = ch;
+    // 同步 DOM 最小宽度，确保面板适配画布
+    if (nodeEl) nodeEl.style.minWidth = node.width + 'px';
+
+    // 监听 WebGL 上下文丢失（真实浏览器在大量上下文时可能触发）
+    canvas.addEventListener('webglcontextlost', function (ev) {
+        console.warn('[Spine] WebGL context LOST for node #' + node.id + ' — will try to restore');
+        ev.preventDefault(); // 允许后续恢复
+        node._glLost = true;
+    });
+    canvas.addEventListener('webglcontextrestored', function () {
+        console.log('[Spine] WebGL context RESTORED for node #' + node.id);
+        node._glLost = false;
+        // 上下文恢复后需要重新创建所有 WebGL 资源
+        // 这里标记后，下次渲染循环会尝试重新初始化
+    });
 
     // 居中 Skeleton
     sk.x = cw / 2 - (boundsOff.x + boundsSize.x / 2);
@@ -89,10 +108,30 @@ SMTool._setupWebGLRenderer = function (node, SP, WGL, atlas, img, useVer) {
     sk.updateWorldTransform(physParam);
 
     // 根据版本设置 WebGL
-    if (useVer === '4.3' || useVer === '4.2') {
-        SMTool._setupWebGL4x(node, SP, canvas, atlas, img, cw, ch);
-    } else {
-        SMTool._setupWebGL38(node, SP, WGL, canvas, atlas, img, cw, ch);
+    try {
+        if (useVer === '4.3' || useVer === '4.2') {
+            SMTool._setupWebGL4x(node, SP, canvas, atlas, img, cw, ch);
+        } else {
+            // 3.8 路径：检查 WGL 是否已加载，未加载则延迟重试
+            if (!WGL || !WGL.Shader) {
+                console.warn('[Spine] WGL not ready for 3.8 node #' + node.id + ', will retry...');
+                node._needsWebGLRetry = true;
+                return;
+            }
+            SMTool._setupWebGL38(node, SP, WGL, canvas, atlas, img, cw, ch);
+        }
+    } catch (e) {
+        console.error('[Spine] WebGL setup failed for node #' + node.id + ':', e.message);
+        // 只有非「WGL 未就绪」的情况才永久标记失败
+        if (!node._needsWebGLRetry) {
+            if (node.canvas && node.canvas.parentNode) node.canvas.remove();
+            node.canvas = null;
+            node.gl = null;
+            var fb = document.createElement('div');
+            fb.style.cssText = 'color:#f55;padding:40px;text-align:center;font-size:13px';
+            fb.textContent = '⚠ 渲染失败';
+            if (wrap) wrap.appendChild(fb);
+        }
     }
 };
 
@@ -172,7 +211,25 @@ SMTool._loop = function (now) {
     var result = nodesIter.next();
     while (!result.done) {
         var node = result.value;
-        if (!node.state || !node.skeleton || !node.gl) { result = nodesIter.next(); continue; }
+        if (!node.state || !node.skeleton) { result = nodesIter.next(); continue; }
+        if (node._glLost || (node.gl && node.gl.isContextLost())) { result = nodesIter.next(); continue; }
+
+        // WGL 延迟重试：首次初始化时 WGL 未就绪，每帧尝试完成 WebGL 设置
+        if (node._needsWebGLRetry) {
+            var WGLnow = window.spine38 && window.spine38.webgl;
+            if (WGLnow && WGLnow.Shader && node.canvas && node.atlasData && node.textureImg) {
+                try {
+                    SMTool._setupWebGL38(node, node._SP, WGLnow, node.canvas, node.atlasData, node.textureImg, node._canvasWidth, node._canvasHeight);
+                    node._needsWebGLRetry = false;
+                    console.log('[Spine] Retry OK for node #' + node.id);
+                } catch (e2) {
+                    // 仍失败，下帧继续
+                }
+            }
+            if (node._needsWebGLRetry) { result = nodesIter.next(); continue; }
+        }
+
+        if (!node.gl) { result = nodesIter.next(); continue; }
 
         var gl = node.gl;
         var skeleton = node.skeleton;
@@ -185,7 +242,7 @@ SMTool._loop = function (now) {
         if ((node._spineVer === '4.3' || node._spineVer === '4.2') && node.sceneRenderer && node.sceneRenderer.begin) {
             // 4.x 渲染
             gl.viewport(0, 0, node.canvas.width, node.canvas.height);
-            gl.clearColor(0, 0, 0, 0);
+            gl.clearColor(0, 0, 0, 1);
             gl.clear(gl.COLOR_BUFFER_BIT);
             node.sceneRenderer.begin();
             node.sceneRenderer.drawSkeleton(skeleton);
@@ -193,7 +250,7 @@ SMTool._loop = function (now) {
         } else if (node.shader && node.batcher && node.skeletonRenderer && WGL38) {
             // 3.8 渲染
             gl.viewport(0, 0, node.canvas.width, node.canvas.height);
-            gl.clearColor(0, 0, 0, 0);
+            gl.clearColor(0, 0, 0, 1);
             gl.clear(gl.COLOR_BUFFER_BIT);
 
             node.shader.bind();
@@ -206,6 +263,11 @@ SMTool._loop = function (now) {
             node.batcher.end();
 
             node.shader.unbind();
+        } else {
+            // 兜底：渲染条件不满足时至少清屏为暗色，防止白色残留
+            gl.viewport(0, 0, node.canvas.width, node.canvas.height);
+            gl.clearColor(0.07, 0.07, 0.09, 1);
+            gl.clear(gl.COLOR_BUFFER_BIT);
         }
 
         result = nodesIter.next();

@@ -25,17 +25,28 @@ var SMData = {
     connectMode: false,
     connecting: null,
     selectedNode: null,
+    selectedNodes: new Set(),    // 多选集合
     selectedConnection: null,
     showGrid: true,
     draggedNode: null,
     dragOffset: { x: 0, y: 0 },
+    isMultiDragging: false,      // 是否正在拖拽多个选中节点
+    multiDragOffsets: new Map(), // 多拖拽时每个节点的偏移
     isPanning: false,
     panStart: { x: 0, y: 0 },
     viewStart: { x: 0, y: 0 },
     // 贝塞尔控制点拖拽
     draggingCP: null,
     hoveredCP: null,
-    selectingCP: false
+    selectingCP: false,
+    // 条件标签拖拽（拖拽标签改变贝塞尔曲线走势）
+    draggingLabel: null,  // { connId, startCp1x, startCp1y, startCp2x, startCp2y, startMx, startMy }
+    // 框选（marquee selection）
+    marqueeActive: false,
+    marqueeStart: { x: 0, y: 0 },
+    marqueeEnd: { x: 0, y: 0 },
+    // 翻译缓存
+    _transCache: {}
 };
 
 // ---- Spine 节点数据类 ----
@@ -46,6 +57,9 @@ var SpineNodeData = (function () {
         this.x = Math.random() * 200 - 100 + window.innerWidth / 2;
         this.y = Math.random() * 200 - 100 + window.innerHeight / 2;
         this.width = 300;
+
+        // 归属文件名
+        this.sourceFile = '';
 
         // Spine 数据
         this.skeletonData = null;

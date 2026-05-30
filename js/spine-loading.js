@@ -56,11 +56,12 @@ SMTool._onDrop = function (e) {
     }
 };
 
-// ---- 创建节点 ----
+// ---- 创建节点（多动画自动拆分） ----
 SMTool._createNode = function (fileGroup, baseName) {
     var id = SMData.nextId++;
     var node = new SpineNodeData(id);
     node.name = baseName;
+    node.sourceFile = baseName;
 
     var wp = SMTool.canvasToWorld(
         SMData._mx || window.innerWidth / 2,
@@ -75,7 +76,47 @@ SMTool._createNode = function (fileGroup, baseName) {
 
     var self = this;
     SMTool._loadSpine(node, fileGroup).then(function () {
-        // 加载成功后更新 DOM
+        var anims = node.animations;
+        var animNames = [];
+        for (var ai = 0; ai < anims.length; ai++) animNames.push(anims[ai].name);
+
+        // 异步联网翻译所有动画名
+        SMTool._translateAnimNames(animNames, function () {
+            if (anims.length > 0) {
+                node.name = SMTool._translateName(anims[0].name);
+                SMTool._updateEl(node);
+            }
+        });
+
+        if (anims.length > 0) {
+            node.name = SMTool._translateName(anims[0].name);
+            SMTool._updateEl(node);
+        }
+        if (anims.length > 1) {
+            var allNodes = [node]; // 收集所有节点用于布局
+            var animIdx = 1;
+
+            // 串行创建克隆（逐个来，避免真实浏览器中并发 WebGL 上下文竞争导致首个节点画面丢失）
+            function createNextClone() {
+                if (animIdx >= anims.length) {
+                    // 全部完成，自动布局
+                    setTimeout(function () {
+                        SMTool._autoLayoutNodes(allNodes);
+                    }, 200);
+                    return;
+                }
+                SMTool._createCloneNode(node, anims[animIdx].name, animIdx, anims.length, function (clonedNode) {
+                    if (clonedNode) allNodes.push(clonedNode);
+                    animIdx++;
+                    // 加短暂延迟让浏览器消化当前 WebGL 上下文
+                    setTimeout(createNextClone, 80);
+                });
+            }
+            createNextClone();
+        } else {
+            if (SMData.nodes.size <= 1) setTimeout(function () { SMTool.fitAll(); }, 300);
+        }
+        SMTool._updateSB();
     }).catch(function (err) {
         console.error('[Spine] Load failed:', err);
         node.name = baseName + ' (加载失败)';
@@ -84,6 +125,109 @@ SMTool._createNode = function (fileGroup, baseName) {
 
     SMTool._updateSB();
     SMTool._updateSel();
+};
+
+// ---- 自动布局：200px间距，每行最多5个，左到右上到下排列 ----
+SMTool._autoLayoutNodes = function (nodesArray) {
+    if (!nodesArray.length) return;
+
+    var gap = 200;    // 节点间屏幕像素间距
+    var margin = 200; // 四周留白
+    var maxCols = 5;  // 每行最多5个
+
+    // 读取每个节点的屏幕尺寸
+    var sizes = [];
+    for (var i = 0; i < nodesArray.length; i++) {
+        var el = SMTool._getEl(nodesArray[i].id);
+        var w, h;
+        if (el) {
+            var rect = el.getBoundingClientRect();
+            w = rect.width;
+            h = rect.height;
+        } else {
+            w = nodesArray[i].width || 300;
+            h = (nodesArray[i]._canvasHeight || 400) + 100;
+        }
+        sizes.push({ node: nodesArray[i], w: w, h: h });
+    }
+
+    // 逐行计算列宽和行高
+    var rows = [];      // [{ nodes: [...], maxH: number }]
+    var curRow = { nodes: [], maxH: 0 };
+    for (var i = 0; i < sizes.length; i++) {
+        if (curRow.nodes.length >= maxCols) {
+            rows.push(curRow);
+            curRow = { nodes: [], maxH: 0 };
+        }
+        curRow.nodes.push(sizes[i]);
+        curRow.maxH = Math.max(curRow.maxH, sizes[i].h);
+    }
+    if (curRow.nodes.length > 0) rows.push(curRow);
+
+    // 从左到右、从上到下放置
+    var y = margin;
+    for (var r = 0; r < rows.length; r++) {
+        var row = rows[r];
+        var x = margin;
+        for (var c = 0; c < row.nodes.length; c++) {
+            var s = row.nodes[c];
+            var wp = SMTool.canvasToWorld(x, y);
+            s.node.x = wp.x;
+            s.node.y = wp.y;
+            SMTool._updatePos(s.node);
+            x += s.w + gap;
+        }
+        y += row.maxH + gap;
+    }
+
+    // 适配视图
+    setTimeout(function () { SMTool.fitAll(); }, 100);
+    setTimeout(function () { SMTool._updateDuplicateHighlights(); }, 200);
+    setTimeout(function () { SMTool._checkMissingStates(); }, 200);
+    SMTool._refreshAllTranslations();
+};
+
+// ---- 从已加载节点克隆出新节点（每个动画一个节点） ----
+SMTool._createCloneNode = function (sourceNode, animName, index, total, callback) {
+    var id = SMData.nextId++;
+    var node = new SpineNodeData(id);
+    node.name = SMTool._translateName(animName);
+    node.sourceFile = sourceNode.sourceFile;
+
+    // 先用临时位置（自动布局会重新计算）
+    node.x = sourceNode.x;
+    node.y = sourceNode.y;
+
+    // 复制源数据
+    node._srcSkelJson = sourceNode._srcSkelJson;
+    node._srcSkelBinBase64 = sourceNode._srcSkelBinBase64;
+    node._srcAtlasText = sourceNode._srcAtlasText;
+    node._srcTexDataUrl = sourceNode._srcTexDataUrl;
+    node._srcType = sourceNode._srcType;
+    node.currentAnim = animName;
+    node.animations = sourceNode.animations.slice();
+    node.skins = sourceNode.skins.slice();
+    node.slots = sourceNode.slots.slice();
+    node.bones = sourceNode.bones.slice();
+    node.version = sourceNode.version;
+
+    SMData.nodes.set(id, node);
+    SMTool._createEl(node);
+    SMTool._updatePos(node);
+
+    SMTool._loadFromSourceData(node).then(function () {
+        SMTool._updateEl(node);
+        setTimeout(function () { SMTool._updateStateRowColors(); }, 150);
+        SMTool._updateDuplicateHighlights();
+        SMTool._checkMissingStates();
+        SMTool._refreshAllTranslations();
+        if (callback) callback(node);
+    }).catch(function (err) {
+        console.error('[Clone] Failed to restore rendering for "' + animName + '":', err);
+        node.name = animName + ' (失败)';
+        SMTool._updateEl(node);
+        if (callback) callback(node);
+    });
 };
 
 // ---- 节点内拖入替换 Spine 文件 ----
@@ -389,7 +533,6 @@ SMTool._parseSpineData = function (node, SP, WGL, atlasText, pngUrl, skelJson, s
 
             SMTool._updateEl(node);
             setTimeout(function () { SMTool._updateStateRowColors(); }, 100);
-            if (SMData.nodes.size === 1) setTimeout(function () { SMTool.fitAll(); }, 300);
 
             resolve();
         } catch (e) {
@@ -513,4 +656,156 @@ SMTool._loadFromSourceData = function (node) {
         img.onerror = function () { reject(new Error('Texture image load failed')); };
         img.src = texDataUrl;
     });
+};
+
+// ---- 本地离线翻译词典（游戏动画常用词） ----
+var ANIM_TRANS_DICT = {
+    // 基础动作
+    'idle': '待机', 'idle1': '待机1', 'idle2': '待机2', 'idle3': '待机3',
+    'walk': '行走', 'walk1': '行走1', 'walk2': '行走2',
+    'run': '奔跑', 'run1': '奔跑1', 'run2': '奔跑2',
+    'jump': '跳跃', 'jump1': '跳跃1', 'jump2': '跳跃2',
+    'attack': '攻击', 'attack1': '攻击1', 'attack2': '攻击2', 'attack3': '攻击3', 'attack4': '攻击4',
+    'atk': '攻击', 'atk1': '攻击1', 'atk2': '攻击2', 'atk2b': '攻击2b', 'atk2c': '攻击2c', 'atk3': '攻击3', 'atk4': '攻击4',
+    'skill': '技能', 'skill1': '技能1', 'skill2': '技能2', 'skill3': '技能3',
+    'hit': '受击', 'hit1': '受击1', 'hit2': '受击2',
+    'hurt': '受伤', 'death': '死亡', 'dead': '死亡',
+    'die': '死亡', 'dying': '濒死',
+    'win': '胜利', 'victory': '胜利', 'lose': '失败', 'defeat': '失败',
+    'cheer': '欢呼', 'dance': '舞蹈',
+    'enter': '入场', 'enter1': '入场1', 'enter2': '入场2',
+    'appear': '出场', 'disappear': '消失',
+    'sit': '坐下', 'sleep': '睡眠', 'wake': '醒来',
+    'stand': '站立', 'crouch': '蹲下', 'kneel': '跪下',
+    'fly': '飞行', 'float': '漂浮', 'swim': '游泳',
+    'cast': '施法', 'magic': '魔法', 'spell': '咒语',
+    'defend': '防御', 'guard': '格挡', 'block': '格挡',
+    'dodge': '闪避', 'roll': '翻滚',
+    'shoot': '射击', 'bow': '弓箭', 'arrow': '射箭',
+    'throw': '投掷', 'catch': '接住',
+    'pickup': '拾取', 'drop': '放下',
+    'open': '打开', 'close': '关闭',
+    'push': '推', 'pull': '拉',
+    'climb': '攀爬', 'fall': '坠落',
+    'land': '着陆', 'takeoff': '起飞',
+    'turn': '转身', 'rotate': '旋转',
+    'stun': '眩晕', 'freeze': '冻结', 'burn': '燃烧',
+    'buff': '增益', 'debuff': '减益', 'heal': '治疗',
+    'taunt': '嘲讽', 'laugh': '大笑', 'cry': '哭泣',
+    'talk': '说话', 'greet': '问候', 'wave': '挥手',
+    'pose': '姿势', 'pose1': '姿势1', 'pose2': '姿势2',
+    'special': '特殊', 'special1': '特殊1', 'special2': '特殊2',
+    'ultimate': '大招', 'ult': '大招',
+    // 带前缀的常见命名
+    'h_idle': '待机', 'h_idle1': '待机1', 'h_idle2': '待机2',
+    'h_walk': '行走', 'h_run': '奔跑',
+    'h_attack': '攻击', 'h_atk': '攻击',
+    'hidle': '待机', 'hidle1': '待机1',
+    'hwalk': '行走', 'hrun': '奔跑',
+    'hatk': '攻击', 'hatk1': '攻击1',
+    'move': '移动', 'moving': '移动中',
+    'damage': '受伤', 'damaged': '受伤',
+    'charged': '蓄力', 'charge': '蓄力',
+    'charging': '蓄力中',
+    'chuxian': '出现', 'xiaoshi': '消失',
+    'pifeng': '披风', 'weapon': '武器',
+    'shadow': '影子', 'body': '身体',
+    'head': '头部', 'hand': '手部', 'lhand': '左手', 'rhand': '右手',
+    'shoulder': '肩膀', 'lshoulder': '左肩', 'rshoulder': '右肩',
+    'xiuzi': '袖子', 'gebo': '胳膊',
+    'normal': '普通', 'default': '默认',
+    'loop': '循环', 'once': '单次',
+    'start': '开始', 'end': '结束', 'intro': '开场',
+    'outro': '结尾', 'ending': '结局'
+};
+
+// ---- 联网翻译（Google 免费接口） ----
+SMTool._translateAnimNames = function (names, callback) {
+    if (!names || !names.length) { callback({}); return; }
+    var uncached = [];
+    for (var i = 0; i < names.length; i++) {
+        if (!SMData._transCache[names[i]]) uncached.push(names[i]);
+    }
+    if (!uncached.length) { callback(SMData._transCache); return; }
+
+    var joined = uncached.join('\n');
+    var url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=zh-CN&dt=t&q=' + encodeURIComponent(joined);
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', url, true);
+    xhr.timeout = 5000;
+    xhr.onload = function () {
+        if (xhr.status === 200) {
+            try {
+                var data = JSON.parse(xhr.responseText);
+                if (data && data[0]) {
+                    var lines = [];
+                    for (var j = 0; j < data[0].length; j++) {
+                        if (data[0][j] && data[0][j][0]) lines.push(data[0][j][0].trim());
+                    }
+                    for (var k = 0; k < uncached.length; k++) {
+                        SMData._transCache[uncached[k]] = lines[k] || uncached[k];
+                    }
+                }
+            } catch (e) { console.warn('[Translate] Parse error:', e.message); }
+        }
+        callback(SMData._transCache);
+    };
+    xhr.onerror = function () { callback(SMData._transCache); };
+    xhr.ontimeout = function () { callback(SMData._transCache); };
+    xhr.send();
+};
+
+// ---- 全局刷新所有节点翻译（延迟1s保底） ----
+SMTool._refreshAllTranslations = function () {
+    setTimeout(function () {
+        var allNames = new Set();
+        var nodesIter = SMData.nodes.values();
+        var r = nodesIter.next();
+        while (!r.done) {
+            if (r.value.currentAnim) allNames.add(r.value.currentAnim);
+            r = nodesIter.next();
+        }
+        var nameArr = [];
+        var setIter = allNames.values();
+        var si = setIter.next();
+        while (!si.done) { nameArr.push(si.value); si = setIter.next(); }
+        if (!nameArr.length) return;
+
+        SMTool._translateAnimNames(nameArr, function () {
+            var nodesIter2 = SMData.nodes.values();
+            var r2 = nodesIter2.next();
+            while (!r2.done) {
+                var n = r2.value;
+                if (n.currentAnim) {
+                    var cn = SMTool._translateName(n.currentAnim);
+                    if (n.name !== cn) {
+                        n.name = cn;
+                        SMTool._updateEl(n);
+                    }
+                }
+                r2 = nodesIter2.next();
+            }
+        });
+    }, 1000);
+};
+
+// ---- 查找翻译（缓存优先 → 离线词典兜底） ----
+SMTool._translateName = function (name) {
+    if (!name) return name;
+    // 1. Google 翻译缓存
+    if (SMData._transCache[name]) return SMData._transCache[name];
+    // 2. 离线词典匹配
+    var lower = name.toLowerCase().trim();
+    if (ANIM_TRANS_DICT[name]) return ANIM_TRANS_DICT[name];
+    if (ANIM_TRANS_DICT[lower]) return ANIM_TRANS_DICT[lower];
+    var candidates = [lower];
+    candidates.push(lower.replace(/[_\-\d]+[a-z]?$/, ''));
+    candidates.push(lower.replace(/[_\-\d]+$/, ''));
+    candidates.push(lower.replace(/^[hH]_?/, ''));
+    candidates.push(lower.replace(/^[hH]_?/, '').replace(/[_\-\d]+[a-z]?$/, ''));
+    candidates.push(lower.replace(/^[hH]_?/, '').replace(/[_\-\d]+$/, ''));
+    for (var i = 0; i < candidates.length; i++) {
+        if (candidates[i] !== lower && ANIM_TRANS_DICT[candidates[i]]) return ANIM_TRANS_DICT[candidates[i]];
+    }
+    return name;
 };
