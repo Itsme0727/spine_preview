@@ -141,6 +141,7 @@ SMTool._updatePos = function (node) {
     el.style.top = s.y + 'px';
     el.style.transform = 'scale(' + z + ')';
     el.style.transformOrigin = 'top left';
+    SMTool._updateFloatLabels();
 };
 
 SMTool._updateAllPos = function () {
