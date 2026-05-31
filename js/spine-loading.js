@@ -31,6 +31,10 @@ SMTool._onDrop = function (e) {
     var files = Array.from(e.dataTransfer.files);
     console.log('[Drop] Files:', files.map(function (f) { return f.name; }).join(', '));
 
+    // 以鼠标松手位置为基准
+    var dropX = e.clientX;
+    var dropY = e.clientY;
+
     var groups = {};
     for (var i = 0; i < files.length; i++) {
         var f = files[i];
@@ -47,26 +51,30 @@ SMTool._onDrop = function (e) {
     }
 
     var keys = Object.keys(groups);
+    // 计算累计水平偏移，防止多个文件组的节点重叠
+    var accumulatedOffset = 0;
+    var H_SPACING = 350; // 每个文件组之间的水平间距（屏幕像素）
     for (var k = 0; k < keys.length; k++) {
         var base = keys[k];
         var group = groups[base];
         if (group.json || group.skel) {
-            SMTool._createNode(group, base);
+            SMTool._createNode(group, base, dropX + accumulatedOffset, dropY);
+            accumulatedOffset += H_SPACING;
         }
     }
 };
 
 // ---- 创建节点（多动画自动拆分） ----
-SMTool._createNode = function (fileGroup, baseName) {
+// optX, optY: 可选的屏幕坐标（拖放时传入鼠标松手位置）
+SMTool._createNode = function (fileGroup, baseName, optX, optY) {
     var id = SMData.nextId++;
     var node = new SpineNodeData(id);
     node.name = baseName;
     node.sourceFile = baseName;
 
-    var wp = SMTool.canvasToWorld(
-        SMData._mx || window.innerWidth / 2,
-        SMData._my || window.innerHeight / 2
-    );
+    var sx = (optX !== undefined) ? optX : (SMData._mx || window.innerWidth / 2);
+    var sy = (optY !== undefined) ? optY : (SMData._my || window.innerHeight / 2);
+    var wp = SMTool.canvasToWorld(sx, sy);
     node.x = wp.x;
     node.y = wp.y;
     SMData.nodes.set(id, node);
@@ -92,9 +100,9 @@ SMTool._createNode = function (fileGroup, baseName) {
             // 串行创建克隆（逐个来，避免真实浏览器中并发 WebGL 上下文竞争导致首个节点画面丢失）
             function createNextClone() {
                 if (animIdx >= anims.length) {
-                    // 全部完成，自动布局
+                    // 全部完成，自动布局（以首个节点的世界坐标为锚点）
                     setTimeout(function () {
-                        SMTool._autoLayoutNodes(allNodes);
+                        SMTool._autoLayoutNodes(allNodes, node.x, node.y);
                     }, 200);
                     return;
                 }
@@ -121,10 +129,13 @@ SMTool._createNode = function (fileGroup, baseName) {
 };
 
 // ---- 自动布局：间距 = 每个节点自身面板宽度 / 2，每行最多5个，左到右上到下排列 ----
-SMTool._autoLayoutNodes = function (nodesArray) {
+// anchorWorldX, anchorWorldY: 可选的世界坐标锚点（拖放时传入鼠标松手位置），
+//   第一个节点固定在该锚点，其余节点以此为基础向右/下排列
+SMTool._autoLayoutNodes = function (nodesArray, anchorWorldX, anchorWorldY) {
     if (!nodesArray.length) return;
 
     var maxCols = 5;  // 每行最多5个
+    var hasAnchor = (anchorWorldX !== undefined && anchorWorldY !== undefined);
 
     // 读取每个节点的屏幕尺寸，并计算每个节点的自身间距 = 面板宽度 / 2
     var sizes = [];
@@ -157,13 +168,23 @@ SMTool._autoLayoutNodes = function (nodesArray) {
     }
     if (curRow.nodes.length > 0) rows.push(curRow);
 
+    // 计算起始屏幕坐标
+    var startScreenX, startScreenY;
+    if (hasAnchor) {
+        // 将世界坐标锚点转换回屏幕坐标，作为布局起点
+        var sp = SMTool.worldToCanvas(anchorWorldX, anchorWorldY);
+        startScreenX = sp.x;
+        startScreenY = sp.y;
+    } else {
+        startScreenX = sizes[0].spacing;
+        startScreenY = sizes[0].spacing;
+    }
+
     // 从左到右、从上到下放置
-    // margin 使用第一个节点的 spacing
-    var margin = sizes[0].spacing;
-    var y = margin;
+    var y = startScreenY;
     for (var r = 0; r < rows.length; r++) {
         var row = rows[r];
-        var x = margin;
+        var x = startScreenX;
         for (var c = 0; c < row.nodes.length; c++) {
             var s = row.nodes[c];
             var wp = SMTool.canvasToWorld(x, y);

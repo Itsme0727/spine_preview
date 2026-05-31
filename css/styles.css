@@ -39,15 +39,19 @@ body {
     position: absolute;
     top: 0; left: 0;
     z-index: 1;
+    pointer-events: none;
 }
-#connCanvas {
+#sharedSpineCanvas {
+    position: absolute;
+    top: 0; left: 0;
+    z-index: 3;
+    pointer-events: none;
+}
+#boneOverlay {
     position: absolute;
     top: 0; left: 0;
     z-index: 4;
     pointer-events: none;
-}
-#connCanvas.active {
-    pointer-events: all;
 }
 #nodesLayer {
     position: absolute;
@@ -56,6 +60,15 @@ body {
     pointer-events: none;
 }
 #nodesLayer > * {
+    pointer-events: all;
+}
+#connCanvas {
+    position: absolute;
+    top: 0; left: 0;
+    z-index: 5;
+    pointer-events: none;
+}
+#connCanvas.active {
     pointer-events: all;
 }
 
@@ -304,6 +317,9 @@ body {
 .spine-node .spine-canvas-wrap canvas {
     display: block;
     flex-shrink: 0;
+}
+.spine-node .spine-canvas-container {
+    display: block;
 }
 
 /* 节点底部 */

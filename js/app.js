@@ -35,11 +35,8 @@ SMTool.deleteNode = function (nid) {
     var node = SMData.nodes.get(nid);
     if (node) {
         if (node.state) node.state.clearTracks();
-        if (node.glTextures) {
-            node.glTextures.forEach(function (t) {
-                try { t.dispose(); } catch (e) {}
-            });
-        }
+        // 通过缓存释放纹理（引用计数归零才真正 dispose）
+        SMTool._releaseNodeTextures(node);
         if (node.batcher) { try { node.batcher.dispose(); } catch (e) {} }
         if (node.shader) { try { node.shader.dispose(); } catch (e) {} }
         if (node.sceneRenderer) { try { node.sceneRenderer.dispose(); } catch (e) {} }
@@ -47,6 +44,30 @@ SMTool.deleteNode = function (nid) {
 
     var el = SMTool._getEl(nid);
     if (el) el.remove();
+
+    // 清除共享 WebGL 画布上该节点的残留画面
+    if (node && node._canvasWidth && node._canvasHeight) {
+        var sharedGL = SMTool._sharedGL;
+        var sharedCanvas = SMTool._sharedCanvas;
+        if (sharedGL && sharedCanvas) {
+            try {
+                var sp = SMTool.worldToCanvas(node.x, node.y);
+                var sx = Math.round(sp.x);
+                var sy = Math.round(sp.y);
+                var z = SMData.view.zoom;
+                var sw = Math.round(node._canvasWidth * z);
+                var sh = Math.round(node._canvasHeight * z);
+                var glY = sharedCanvas.height - sy - sh;
+
+                sharedGL.enable(sharedGL.SCISSOR_TEST);
+                sharedGL.scissor(sx, glY, sw, sh);
+                sharedGL.clearColor(0, 0, 0, 0);
+                sharedGL.clear(sharedGL.COLOR_BUFFER_BIT);
+                sharedGL.disable(sharedGL.SCISSOR_TEST);
+            } catch (e) { /* 忽略清除错误 */ }
+        }
+    }
+
     SMData.nodes.delete(nid);
     SMData.selectedNodes.delete(nid);
     if (SMData.selectedNode === nid) SMData.selectedNode = null;
@@ -184,6 +205,9 @@ SMTool.init = function () {
     SMTool.connCanvas = document.getElementById('connCanvas');
     SMTool.connCtx = SMTool.connCanvas.getContext('2d');
     SMTool.nodesLayer = document.getElementById('nodesLayer');
+
+    // 初始化共享 WebGL 渲染器（只创建一次，所有 Spine 节点共用）
+    SMTool._initSharedRenderer();
 
     SMTool.resize();
     window.addEventListener('resize', function () { SMTool.resize(); });
