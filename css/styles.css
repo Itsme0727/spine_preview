@@ -62,6 +62,30 @@ body {
 #nodesLayer > * {
     pointer-events: all;
 }
+#floatLabels {
+    position: absolute;
+    top: 0; left: 0;
+    z-index: 6;
+    pointer-events: none;
+}
+.float-label {
+    position: absolute;
+    font-weight: 700;
+    color: #fff;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+    white-space: nowrap;
+    pointer-events: none;
+    line-height: 1.1;
+}
+.float-label .fl-name {
+    display: block;
+}
+.float-label .fl-state {
+    display: block;
+    font-weight: 400;
+    color: #ccc;
+    font-size: 0.75em;
+}
 #connCanvas {
     position: absolute;
     top: 0; left: 0;

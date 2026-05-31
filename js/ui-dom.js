@@ -135,10 +135,11 @@ SMTool._getEl = function (id) {
 SMTool._updatePos = function (node) {
     var el = SMTool._getEl(node.id);
     if (!el) return;
+    var z = SMData.view.zoom;
     var s = SMTool.worldToDOM(node.x, node.y);
     el.style.left = s.x + 'px';
     el.style.top = s.y + 'px';
-    el.style.transform = 'scale(' + SMData.view.zoom + ')';
+    el.style.transform = 'scale(' + z + ')';
     el.style.transformOrigin = 'top left';
 };
 
@@ -148,6 +149,65 @@ SMTool._updateAllPos = function () {
     while (!result.done) {
         SMTool._updatePos(result.value);
         result = nodesIter.next();
+    }
+    SMTool._updateFloatLabels();
+};
+
+// ---- 浮动大字标签（缩放 < 40% 时显示，固定字号不随缩放放大）----
+SMTool._floatLabels = {};
+
+SMTool._updateFloatLabels = function () {
+    var container = document.getElementById('floatLabels');
+    if (!container) return;
+    var z = SMData.view.zoom;
+    var show = z < 0.40;
+    var seen = {};
+
+    if (show) {
+        var nodesIter = SMData.nodes.values();
+        var result = nodesIter.next();
+        while (!result.done) {
+            var node = result.value;
+            if (!node.skeleton) { result = nodesIter.next(); continue; }
+            seen[node.id] = true;
+
+            var label = SMTool._floatLabels[node.id];
+            if (!label) {
+                label = document.createElement('div');
+                label.className = 'float-label';
+                container.appendChild(label);
+                SMTool._floatLabels[node.id] = label;
+            }
+            label.style.display = '';
+
+            var sp = SMTool.worldToCanvas(node.x, node.y);
+            var fontSize = 22;
+            label.style.left = sp.x + 'px';
+            label.style.top = (sp.y - fontSize * 2) + 'px';
+            label.style.fontSize = fontSize + 'px';
+
+            var name = node.name || '';
+            var state = node.currentAnim || '';
+            label.innerHTML = '<span class="fl-name">' + SMTool._esc(name) + '</span>' +
+                (state ? '<span class="fl-state">' + SMTool._esc(state) + '</span>' : '');
+            result = nodesIter.next();
+        }
+    }
+
+    var keys = Object.keys(SMTool._floatLabels);
+    for (var i = 0; i < keys.length; i++) {
+        var id = keys[i];
+        if (!show || !seen[id]) {
+            var old = SMTool._floatLabels[id];
+            if (old) {
+                if (!SMData.nodes.has(parseInt(id))) {
+                    if (old.parentNode) old.remove();
+                    delete SMTool._floatLabels[id];
+                } else {
+                    old.style.display = 'none';
+                }
+            }
+        }
     }
 };
 
