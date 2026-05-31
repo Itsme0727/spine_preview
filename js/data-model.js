@@ -46,7 +46,13 @@ var SMData = {
     marqueeStart: { x: 0, y: 0 },
     marqueeEnd: { x: 0, y: 0 },
     // 翻译缓存
-    _transCache: {}
+    _transCache: {},
+
+    // 骨骼标签全局存储：{ "源文件名||动画名": { "骨骼名": "标签文本" } }
+    _boneLabelStore: {},
+
+    // 骨骼标记全局存储：{ "源文件名||动画名": { "骨骼名": true } }
+    _boneMarkStore: {}
 };
 
 // ---- Spine 节点数据类 ----
@@ -81,6 +87,7 @@ var SpineNodeData = (function () {
         this._srcAtlasText = '';
         this._srcTexDataUrl = '';
         this._srcType = '';
+        this._srcFileNames = [];    // 原始文件名列表（含后缀）
 
         // WebGL 资源
         this.canvas = null;

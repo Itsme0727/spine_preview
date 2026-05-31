@@ -164,11 +164,11 @@ SMTool._renderConnections = function () {
         var my = Math.pow(1 - mt, 3) * fs.y + 3 * Math.pow(1 - mt, 2) * mt * cp1s.y + 3 * (1 - mt) * mt * mt * cp2s.y + mt * mt * mt * ts.y;
 
         // 缩放因子（标签大小跟随画布缩放）
-        var fontSize = Math.round(14 * z);
-        var lineHeight = Math.round(20 * z);  // 行间距加大
-        var padX = Math.round(20 * z);
-        var padY = Math.round(14 * z);
-        var textOffY = Math.round(8 * z);
+        var fontSize = Math.round(28 * z);
+        var lineHeight = Math.round(40 * z);
+        var padX = Math.round(40 * z);
+        var padY = Math.round(28 * z);
+        var textOffY = Math.round(16 * z);
 
         // 将显示文本按 maxCharsPerLine 拆分成多行
         var lines = [];

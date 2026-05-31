@@ -35,31 +35,6 @@ SMTool._createEl = function (node) {
     }
     if (!skinsHtml) skinsHtml = '<span class="badge">无皮肤</span>';
 
-    var animsHtml = '';
-    for (var ai2 = 0; ai2 < node.animations.length; ai2++) {
-        var aa2 = node.animations[ai2];
-        animsHtml += '<div class="ip-row"><span>' + SMTool._esc(aa2.name) + '</span><span>' + aa2.duration.toFixed(2) + 's</span></div>';
-    }
-    if (!animsHtml) animsHtml = '<div class="ip-row">无</div>';
-
-    var skinRows = '';
-    for (var si2 = 0; si2 < node.skins.length; si2++) {
-        skinRows += '<div class="ip-row">' + SMTool._esc(node.skins[si2]) + '</div>';
-    }
-    if (!skinRows) skinRows = '<div class="ip-row">default</div>';
-
-    var boneRows = '';
-    for (var bi = 0; bi < node.bones.length; bi++) {
-        boneRows += '<div class="ip-row">' + SMTool._esc(node.bones[bi]) + '</div>';
-    }
-    if (!boneRows) boneRows = '<div class="ip-row">无</div>';
-
-    var slotRows = '';
-    for (var sli = 0; sli < node.slots.length; sli++) {
-        slotRows += '<div class="ip-row">' + SMTool._esc(node.slots[sli]) + '</div>';
-    }
-    if (!slotRows) slotRows = '<div class="ip-row">无</div>';
-
     el.innerHTML =
         '<div class="header" onmousedown="event.stopPropagation();SMTool._onHD(event,' + node.id + ')">' +
             '<div class="header-titles">' +
@@ -68,7 +43,6 @@ SMTool._createEl = function (node) {
             '</div>' +
             '<div class="btns">' +
                 '<button onclick="event.stopPropagation();SMTool.copyNode(' + node.id + ',50,50);" title="复制节点">📋</button>' +
-                '<button onclick="event.stopPropagation();SMTool.toggleInfoPanel(' + node.id + ')">ℹ️</button>' +
                 '<button onclick="event.stopPropagation();SMTool.deleteNode(' + node.id + ')">✕</button>' +
             '</div>' +
         '</div>' +
@@ -80,18 +54,7 @@ SMTool._createEl = function (node) {
             '<select class="anim-select" onchange="SMTool._onAnimChange(' + node.id + ', this.value)">' + animOptionsHtml + '</select>' +
             '<div class="conn-dot output" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'' + SMTool._esc(curState) + '\',\'output\')" title="连线输出"></div>' +
         '</div>' +
-        '<div class="footer">' + skinsHtml + '<span class="badge" style="margin-left:auto">v' + SMTool._esc(node.version || '?') + '</span></div>' +
-        '<div class="info-panel" id="info-' + node.id + '">' +
-            '<div class="ip-header" onclick="SMTool.toggleInfoPanel(' + node.id + ')">📋 动画数据</div>' +
-            '<div class="ip-body">' +
-                '<div class="ip-section"><div class="ip-title">📦 Spine 版本</div><div class="ip-row"><span>版本</span><span>' + SMTool._esc(node.version || '未知') + '</span></div></div>' +
-                '<div class="ip-section"><div class="ip-title">🎬 动画 (' + node.animations.length + ')</div>' + animsHtml + '</div>' +
-                '<div class="ip-section"><div class="ip-title">🎨 皮肤 (' + node.skins.length + ')</div>' + skinRows + '</div>' +
-                '<div class="ip-section"><div class="ip-title">🦴 骨骼 (' + node.bones.length + ')</div>' + boneRows + '</div>' +
-                '<div class="ip-section"><div class="ip-title">🔧 插槽 (' + node.slots.length + ')</div>' + slotRows + '</div>' +
-                '<div class="ip-section"><div class="checkbox-row"><input type="checkbox" id="pma-' + node.id + '" ' + (node.premultipliedAlpha ? 'checked' : '') + ' onchange="SMTool._togglePMA(' + node.id + ',this.checked)"><label>预乘 Alpha 通道</label></div></div>' +
-            '</div>' +
-        '</div>';
+        '<div class="footer">' + skinsHtml + '<span class="badge" style="margin-left:auto">v' + SMTool._esc(node.version || '?') + '</span></div>';
 
     SMTool.nodesLayer.appendChild(el);
 };
@@ -160,38 +123,7 @@ SMTool._updateEl = function (node) {
         }
     }
 
-    // PMA 勾选框
-    var cb = el.querySelector('#pma-' + node.id);
-    if (cb) cb.checked = node.premultipliedAlpha;
-
-    // 信息面板
-    var ip = el.querySelector('#info-' + node.id + ' .ip-body');
-    if (ip) {
-        var animsHtml = '';
-        for (var ai2 = 0; ai2 < node.animations.length; ai2++) {
-            var aa2 = node.animations[ai2];
-            animsHtml += '<div class="ip-row"><span>' + SMTool._esc(aa2.name) + '</span><span>' + aa2.duration.toFixed(2) + 's</span></div>';
-        }
-        var skinRows = '';
-        for (var si2 = 0; si2 < node.skins.length; si2++) {
-            skinRows += '<div class="ip-row">' + SMTool._esc(node.skins[si2]) + '</div>';
-        }
-        var boneRows = '';
-        for (var bi = 0; bi < node.bones.length; bi++) {
-            boneRows += '<div class="ip-row">' + SMTool._esc(node.bones[bi]) + '</div>';
-        }
-        var slotRows = '';
-        for (var sli = 0; sli < node.slots.length; sli++) {
-            slotRows += '<div class="ip-row">' + SMTool._esc(node.slots[sli]) + '</div>';
-        }
-        ip.innerHTML =
-            '<div class="ip-section"><div class="ip-title">📦 Spine 版本</div><div class="ip-row"><span>版本</span><span>' + SMTool._esc(node.version || '未知') + '</span></div></div>' +
-            '<div class="ip-section"><div class="ip-title">🎬 动画 (' + node.animations.length + ')</div>' + (animsHtml || '<div class="ip-row">无</div>') + '</div>' +
-            '<div class="ip-section"><div class="ip-title">🎨 皮肤 (' + node.skins.length + ')</div>' + (skinRows || '<div class="ip-row">default</div>') + '</div>' +
-            '<div class="ip-section"><div class="ip-title">🦴 骨骼 (' + node.bones.length + ')</div>' + (boneRows || '<div class="ip-row">无</div>') + '</div>' +
-            '<div class="ip-section"><div class="ip-title">🔧 插槽 (' + node.slots.length + ')</div>' + (slotRows || '<div class="ip-row">无</div>') + '</div>' +
-            '<div class="ip-section"><div class="checkbox-row"><input type="checkbox" id="pma-' + node.id + '" ' + (node.premultipliedAlpha ? 'checked' : '') + ' onchange="SMTool._togglePMA(' + node.id + ',this.checked)"><label>预乘 Alpha 通道</label></div></div>';
-    }
+    // PMA - handled via floating panel
 };
 
 // ---- 获取节点 DOM 元素 ----
@@ -235,6 +167,92 @@ SMTool._updateSel = function () {
             }
         }
         result = nodesIter.next();
+    }
+    // 更新浮窗面板数据
+    SMTool._updateFloatPanel();
+};
+
+// ---- 更新左侧浮窗面板数据 ----
+SMTool._updateFloatPanel = function () {
+    var content = document.getElementById('dfpContent');
+    var panel = document.getElementById('dataFloatPanel');
+    if (!content || !panel) return;
+
+    // 仅当单选一个节点时显示数据
+    if (SMData.selectedNodes.size === 1 && SMData.selectedNode) {
+        panel.classList.remove('inactive');
+        var node = SMData.nodes.get(SMData.selectedNode);
+        if (!node) { content.innerHTML = '<div class="dfp-hint">未找到节点数据</div>'; return; }
+
+        var animsHtml = '';
+        for (var ai = 0; ai < node.animations.length; ai++) {
+            var a = node.animations[ai];
+            var isActive = node.currentAnim === a.name;
+            animsHtml += '<div class="dfp-row' + (isActive ? ' active' : '') + '"><span>' + SMTool._esc(a.name) + '</span><span>' + a.duration.toFixed(2) + 's</span></div>';
+        }
+        if (!animsHtml) animsHtml = '<div class="dfp-row">无</div>';
+
+        var skinRows = '';
+        for (var si = 0; si < node.skins.length; si++) {
+            skinRows += '<div class="dfp-row">' + SMTool._esc(node.skins[si]) + '</div>';
+        }
+        if (!skinRows) skinRows = '<div class="dfp-row">default</div>';
+
+        var boneRows = '';
+        var curAnim = node.currentAnim || '';
+        var storeKey = (node.sourceFile || node.name) + '||' + curAnim;
+        var boneLabels = SMData._boneLabelStore[storeKey] || {};
+        var boneMarks = SMData._boneMarkStore[storeKey] || {};
+        for (var bi = 0; bi < node.bones.length; bi++) {
+            var boneName = node.bones[bi];
+            var label = boneLabels[boneName] || '';
+            var isMarked = !!boneMarks[boneName];
+            var labelHtml = '';
+            if (label) {
+                labelHtml = '<span class="dfp-bone-label" data-bone="' + SMTool._esc(boneName) + '" title="点击编辑标签">' +
+                    SMTool._esc(label) +
+                    '<span class="dfp-bone-label-del" data-bone="' + SMTool._esc(boneName) + '" title="删除标签">&times;</span>' +
+                '</span>';
+            }
+            boneRows += '<div class="dfp-row dfp-bone-row" data-bone="' + SMTool._esc(boneName) + '">' +
+                '<span class="dfp-bone-mark' + (isMarked ? ' active' : '') + '" data-bone="' + SMTool._esc(boneName) + '" title="标记骨骼位置">✚</span>' +
+                '<span>' + SMTool._esc(boneName) + '</span>' +
+                '<span class="dfp-bone-right">' + labelHtml + '</span></div>';
+        }
+        if (!boneRows) boneRows = '<div class="dfp-row">无</div>';
+
+        var slotRows = '';
+        for (var sli = 0; sli < node.slots.length; sli++) {
+            slotRows += '<div class="dfp-row">' + SMTool._esc(node.slots[sli]) + '</div>';
+        }
+        if (!slotRows) slotRows = '<div class="dfp-row">无</div>';
+
+        var sourceInfo = '';
+        if (node._srcFileNames && node._srcFileNames.length > 0) {
+            var sfRows = '';
+            for (var sfi = 0; sfi < node._srcFileNames.length; sfi++) {
+                sfRows += '<div class="dfp-row" style="word-break:break-all;font-size:11px">' + SMTool._esc(node._srcFileNames[sfi]) + '</div>';
+            }
+            sourceInfo = '<div class="dfp-section"><div class="dfp-section-title">📁 源文件 (' + node._srcFileNames.length + ')</div>' + sfRows + '</div>';
+        } else if (node.sourceFile) {
+            sourceInfo = '<div class="dfp-section"><div class="dfp-section-title">📁 源文件</div><div class="dfp-row" style="word-break:break-all">' + SMTool._esc(node.sourceFile) + '</div></div>';
+        }
+
+        content.innerHTML =
+            '<div class="dfp-section"><div class="dfp-section-title">🏷️ 节点名称</div><div class="dfp-row">' + SMTool._esc(node.name) + '</div></div>' +
+            sourceInfo +
+            '<div class="dfp-section"><div class="dfp-section-title">📦 Spine 版本</div><div class="dfp-row"><span>版本</span><span>' + SMTool._esc(node.version || '未知') + '</span></div></div>' +
+            '<div class="dfp-section"><div class="dfp-section-title">🎬 动画 (' + node.animations.length + ')</div>' + animsHtml + '</div>' +
+            '<div class="dfp-section"><div class="dfp-section-title">🎨 皮肤 (' + node.skins.length + ')</div>' + skinRows + '</div>' +
+            '<div class="dfp-section"><div class="dfp-section-title">🦴 骨骼 (' + node.bones.length + ')</div>' + boneRows + '</div>' +
+            '<div class="dfp-section"><div class="dfp-section-title">🔧 插槽 (' + node.slots.length + ')</div>' + slotRows + '</div>' +
+            '<div class="dfp-section"><div class="dfp-check-row"><input type="checkbox" id="dfpPma" ' + (node.premultipliedAlpha ? 'checked' : '') + ' onchange="SMTool._togglePMA(' + node.id + ',this.checked)"><label for="dfpPma">预乘 Alpha 通道</label></div></div>';
+    } else if (SMData.selectedNodes.size > 1) {
+        panel.classList.add('inactive');
+        content.innerHTML = '<div class="dfp-hint">已多选 ' + SMData.selectedNodes.size + ' 个节点</div>';
+    } else {
+        panel.classList.add('inactive');
+        content.innerHTML = '<div class="dfp-hint">点击一个 Spine 节点以查看其动画数据</div>';
     }
 };
 
@@ -293,15 +311,6 @@ SMTool._updateStateRowColors = function () {
         }
         seResult = stateEntriesIter.next();
     }
-};
-
-// ---- 信息面板 ----
-SMTool.toggleInfoPanel = function (nid) {
-    var node = SMData.nodes.get(nid);
-    if (!node) return;
-    node.infoCollapsed = !node.infoCollapsed;
-    var panel = document.getElementById('info-' + nid);
-    if (panel) panel.classList.toggle('show', !node.infoCollapsed);
 };
 
 // ---- PMA 切换 ----

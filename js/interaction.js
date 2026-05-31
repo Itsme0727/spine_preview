@@ -764,3 +764,278 @@ SMTool._showCtxMenu = function (e) {
         SMTool._updateStateRowColors();
     }
 };
+
+// ================================================================
+// 左侧浮窗面板交互 — 边缘检测 / 铆钉 / 离开收起
+// ================================================================
+
+// 浮窗面板状态
+SMData._floatPanel = {
+    pinned: false,       // 铆钉是否激活
+    hovered: false,      // 鼠标是否在面板上
+    expanded: false      // 当前是否展开
+};
+
+// 初始化浮窗面板事件
+SMTool._initFloatPanel = function () {
+    var panel = document.getElementById('dataFloatPanel');
+    var pinBtn = panel.querySelector('.dfp-pin');
+    var triggerIcon = panel.querySelector('.dfp-trigger-icon');
+    var body = panel.querySelector('.dfp-body');
+
+    // 用 mouseenter/mouseleave 分别监听 trigger 和 body（因为它们都有 pointer-events:all，面板容器是 none）
+    function onPanelAreaEnter() {
+        SMData._floatPanel.hovered = true;
+        if (SMData._floatPanel._collapseTimer) {
+            clearTimeout(SMData._floatPanel._collapseTimer);
+            SMData._floatPanel._collapseTimer = null;
+        }
+        if (!SMData._floatPanel.expanded) {
+            SMTool._expandFloatPanel();
+        }
+    }
+    function onPanelAreaLeave(e) {
+        SMData._floatPanel.hovered = false;
+        SMTool._scheduleFloatPanelCollapse(e);
+    }
+
+    triggerIcon.addEventListener('mouseenter', onPanelAreaEnter);
+    triggerIcon.addEventListener('mouseleave', onPanelAreaLeave);
+    body.addEventListener('mouseenter', onPanelAreaEnter);
+    body.addEventListener('mouseleave', onPanelAreaLeave);
+
+    // 点击铆钉图标切换固定状态
+    pinBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        SMData._floatPanel.pinned = !SMData._floatPanel.pinned;
+        if (SMData._floatPanel.pinned) {
+            pinBtn.classList.add('active');
+            pinBtn.title = '取消固定';
+            panel.classList.add('pinned');
+        } else {
+            pinBtn.classList.remove('active');
+            pinBtn.title = '固定面板';
+            panel.classList.remove('pinned');
+            // 取消固定后，检查鼠标是否还在面板上
+            if (!SMData._floatPanel.hovered) {
+                SMTool._scheduleFloatPanelCollapse(null);
+            }
+        }
+    });
+
+    // 点击触发器图标也能展开/收起
+    triggerIcon.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (!SMData._floatPanel.pinned) {
+            if (SMData._floatPanel.expanded) {
+                SMTool._collapseFloatPanel();
+            } else {
+                SMTool._expandFloatPanel();
+            }
+        }
+    });
+
+    // 全局鼠标移动 — 检测靠近左边缘
+    document.addEventListener('mousemove', function (e) {
+        if (SMData._floatPanel.pinned || SMData._floatPanel.expanded) return;
+        if (e.clientX <= 15) {
+            SMTool._expandFloatPanel();
+        }
+    });
+
+    // 全局鼠标移动 — 检测是否远离面板（50px 阈值）
+    document.addEventListener('mousemove', function (e) {
+        if (SMData._floatPanel.pinned) return;
+        if (!SMData._floatPanel.expanded) return;
+
+        var rect = panel.getBoundingClientRect();
+        var panelRight = rect.right;
+        if (e.clientX > panelRight + 50 || e.clientX < rect.left - 50) {
+            SMTool._collapseFloatPanel();
+        }
+    });
+};
+
+// 展开面板
+SMTool._expandFloatPanel = function () {
+    if (SMData._floatPanel.expanded) return;
+    SMData._floatPanel.expanded = true;
+    var panel = document.getElementById('dataFloatPanel');
+    if (panel) panel.classList.add('expanded');
+};
+
+// 收起面板
+SMTool._collapseFloatPanel = function () {
+    if (!SMData._floatPanel.expanded) return;
+    if (SMData._floatPanel.pinned) return;
+    SMData._floatPanel.expanded = false;
+    var panel = document.getElementById('dataFloatPanel');
+    if (panel) panel.classList.remove('expanded');
+};
+
+// 延迟收起（鼠标离开面板时使用，留一点缓冲）
+SMTool._scheduleFloatPanelCollapse = function (e) {
+    // 清除之前的定时器
+    if (SMData._floatPanel._collapseTimer) {
+        clearTimeout(SMData._floatPanel._collapseTimer);
+    }
+    SMData._floatPanel._collapseTimer = setTimeout(function () {
+        // 再次检查鼠标是否确实离开了面板区域
+        if (!SMData._floatPanel.hovered && !SMData._floatPanel.pinned) {
+            var panel = document.getElementById('dataFloatPanel');
+            if (panel) {
+                var rect = panel.getBoundingClientRect();
+                // 面板实际占据的右侧边缘
+                var panelRight = rect.right;
+                // 当前鼠标位置（使用 SMData 中记录的鼠标坐标）
+                var mx = SMData._mx || 0;
+                if (mx > panelRight + 50 || mx < rect.left) {
+                    SMTool._collapseFloatPanel();
+                }
+            }
+        }
+    }, 150);
+};
+
+// ================================================================
+// 骨骼标签交互 — 点击骨骼行添加/编辑/删除标签（按动画状态隔离）
+// ================================================================
+SMTool._initBoneLabelEvents = function () {
+    var content = document.getElementById('dfpContent');
+    if (!content) return;
+
+    content.addEventListener('click', function (e) {
+        // 标记骨骼（✚ 按钮）
+        var markEl = e.target.closest('.dfp-bone-mark');
+        if (markEl) {
+            e.stopPropagation();
+            var boneName = markEl.getAttribute('data-bone');
+            SMTool._toggleBoneMark(boneName);
+            return;
+        }
+
+        // 删除标签
+        var delBtn = e.target.closest('.dfp-bone-label-del');
+        if (delBtn) {
+            e.stopPropagation();
+            var boneName = delBtn.getAttribute('data-bone');
+            SMTool._removeBoneLabel(boneName);
+            return;
+        }
+
+        // 点击已有标签 → 进入编辑
+        var labelEl = e.target.closest('.dfp-bone-label');
+        if (labelEl) {
+            e.stopPropagation();
+            var boneName = labelEl.getAttribute('data-bone');
+            SMTool._startBoneLabelEdit(boneName, labelEl.textContent.replace('×', '').trim());
+            return;
+        }
+
+        // 点击骨骼行空白区域 → 添加标签
+        var boneRow = e.target.closest('.dfp-bone-row');
+        if (boneRow) {
+            var boneName = boneRow.getAttribute('data-bone');
+            // 如果已有标签 → 编辑；否则 → 新建
+            var existingLabel = boneRow.querySelector('.dfp-bone-label');
+            if (existingLabel) {
+                SMTool._startBoneLabelEdit(boneName, existingLabel.textContent.replace('×', '').trim());
+            } else {
+                SMTool._startBoneLabelEdit(boneName, '');
+            }
+        }
+    });
+};
+
+// 开始编辑/新建骨骼标签（显示内联输入框）
+SMTool._startBoneLabelEdit = function (boneName, currentText) {
+    // 手动转义属性选择器中的特殊字符
+    var escaped = boneName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    var boneRow = document.querySelector('.dfp-bone-row[data-bone="' + escaped + '"]');
+    if (!boneRow) return;
+
+    var rightEl = boneRow.querySelector('.dfp-bone-right');
+    if (!rightEl) return;
+
+    // 替换为输入框
+    var input = document.createElement('input');
+    input.className = 'dfp-bone-input';
+    input.value = currentText;
+    input.setAttribute('data-bone', boneName);
+    input.placeholder = '输入标签...';
+    rightEl.innerHTML = '';
+    rightEl.appendChild(input);
+
+    // 自动聚焦并选中
+    input.focus();
+    if (currentText) input.select();
+
+    // 回车/失焦保存
+    function save() {
+        var val = input.value.trim();
+        if (val) {
+            SMTool._saveBoneLabel(boneName, val);
+        } else {
+            SMTool._removeBoneLabel(boneName);
+        }
+    }
+    input.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter') { ev.preventDefault(); save(); }
+        if (ev.key === 'Escape') { SMTool._updateFloatPanel(); }
+    });
+    input.addEventListener('blur', function () {
+        // 延迟保存，避免点击其他元素时冲突
+        setTimeout(function () {
+            if (document.contains(input)) {
+                save();
+            }
+        }, 100);
+    });
+};
+
+// 保存骨骼标签（全局存储，按源文件+动画状态关联，节点删创不丢失）
+SMTool._saveBoneLabel = function (boneName, labelText) {
+    var node = SMData.nodes.get(SMData.selectedNode);
+    if (!node) return;
+
+    var storeKey = (node.sourceFile || node.name) + '||' + (node.currentAnim || '');
+    if (!SMData._boneLabelStore[storeKey]) SMData._boneLabelStore[storeKey] = {};
+    SMData._boneLabelStore[storeKey][boneName] = labelText;
+
+    SMTool._updateFloatPanel();
+};
+
+// 删除骨骼标签
+SMTool._removeBoneLabel = function (boneName) {
+    var node = SMData.nodes.get(SMData.selectedNode);
+    if (!node) return;
+
+    var storeKey = (node.sourceFile || node.name) + '||' + (node.currentAnim || '');
+    if (SMData._boneLabelStore[storeKey]) {
+        delete SMData._boneLabelStore[storeKey][boneName];
+        if (Object.keys(SMData._boneLabelStore[storeKey]).length === 0) {
+            delete SMData._boneLabelStore[storeKey];
+        }
+    }
+
+    SMTool._updateFloatPanel();
+};
+
+// 切换骨骼标记（在动画画布上显示红色十字叉）
+SMTool._toggleBoneMark = function (boneName) {
+    var node = SMData.nodes.get(SMData.selectedNode);
+    if (!node) return;
+
+    var storeKey = (node.sourceFile || node.name) + '||' + (node.currentAnim || '');
+    if (!SMData._boneMarkStore[storeKey]) SMData._boneMarkStore[storeKey] = {};
+
+    if (SMData._boneMarkStore[storeKey][boneName]) {
+        delete SMData._boneMarkStore[storeKey][boneName];
+        if (Object.keys(SMData._boneMarkStore[storeKey]).length === 0) {
+            delete SMData._boneMarkStore[storeKey];
+        }
+    } else {
+        SMData._boneMarkStore[storeKey][boneName] = true;
+    }
+    SMTool._updateFloatPanel();
+};

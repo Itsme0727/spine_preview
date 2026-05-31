@@ -79,15 +79,8 @@ SMTool._createNode = function (fileGroup, baseName) {
         var anims = node.animations;
         var animNames = [];
         for (var ai = 0; ai < anims.length; ai++) animNames.push(anims[ai].name);
-
-        // 异步联网翻译所有动画名
-        SMTool._translateAnimNames(animNames, function () {
-            if (anims.length > 0) {
-                node.name = SMTool._translateName(anims[0].name);
-                SMTool._updateEl(node);
-            }
-        });
-
+        // 异步联网翻译
+        SMTool._translateAnimNames(animNames, function () {});
         if (anims.length > 0) {
             node.name = SMTool._translateName(anims[0].name);
             SMTool._updateEl(node);
@@ -127,15 +120,13 @@ SMTool._createNode = function (fileGroup, baseName) {
     SMTool._updateSel();
 };
 
-// ---- 自动布局：200px间距，每行最多5个，左到右上到下排列 ----
+// ---- 自动布局：间距 = 每个节点自身面板宽度 / 2，每行最多5个，左到右上到下排列 ----
 SMTool._autoLayoutNodes = function (nodesArray) {
     if (!nodesArray.length) return;
 
-    var gap = 200;    // 节点间屏幕像素间距
-    var margin = 200; // 四周留白
     var maxCols = 5;  // 每行最多5个
 
-    // 读取每个节点的屏幕尺寸
+    // 读取每个节点的屏幕尺寸，并计算每个节点的自身间距 = 面板宽度 / 2
     var sizes = [];
     for (var i = 0; i < nodesArray.length; i++) {
         var el = SMTool._getEl(nodesArray[i].id);
@@ -148,23 +139,27 @@ SMTool._autoLayoutNodes = function (nodesArray) {
             w = nodesArray[i].width || 300;
             h = (nodesArray[i]._canvasHeight || 400) + 100;
         }
-        sizes.push({ node: nodesArray[i], w: w, h: h });
+        var spacing = Math.max(50, Math.round(w / 2));  // 自身四周间距 = 面板宽度 / 2，最小50px
+        sizes.push({ node: nodesArray[i], w: w, h: h, spacing: spacing });
     }
 
     // 逐行计算列宽和行高
-    var rows = [];      // [{ nodes: [...], maxH: number }]
-    var curRow = { nodes: [], maxH: 0 };
+    var rows = [];      // [{ nodes: [...], maxH: number, maxSpacing: number }]
+    var curRow = { nodes: [], maxH: 0, maxSpacing: 0 };
     for (var i = 0; i < sizes.length; i++) {
         if (curRow.nodes.length >= maxCols) {
             rows.push(curRow);
-            curRow = { nodes: [], maxH: 0 };
+            curRow = { nodes: [], maxH: 0, maxSpacing: 0 };
         }
         curRow.nodes.push(sizes[i]);
         curRow.maxH = Math.max(curRow.maxH, sizes[i].h);
+        curRow.maxSpacing = Math.max(curRow.maxSpacing, sizes[i].spacing);
     }
     if (curRow.nodes.length > 0) rows.push(curRow);
 
     // 从左到右、从上到下放置
+    // margin 使用第一个节点的 spacing
+    var margin = sizes[0].spacing;
     var y = margin;
     for (var r = 0; r < rows.length; r++) {
         var row = rows[r];
@@ -175,9 +170,15 @@ SMTool._autoLayoutNodes = function (nodesArray) {
             s.node.x = wp.x;
             s.node.y = wp.y;
             SMTool._updatePos(s.node);
-            x += s.w + gap;
+            // 当前节点右边的间距 = 当前节点自身 spacing
+            x += s.w + s.spacing;
         }
-        y += row.maxH + gap;
+        // 行间距取当前行和下一行的最大 spacing 中的较大值
+        var rowGap = row.maxSpacing;
+        if (r + 1 < rows.length) {
+            rowGap = Math.max(row.maxSpacing, rows[r + 1].maxSpacing);
+        }
+        y += row.maxH + rowGap;
     }
 
     // 适配视图
@@ -204,6 +205,7 @@ SMTool._createCloneNode = function (sourceNode, animName, index, total, callback
     node._srcAtlasText = sourceNode._srcAtlasText;
     node._srcTexDataUrl = sourceNode._srcTexDataUrl;
     node._srcType = sourceNode._srcType;
+    node._srcFileNames = sourceNode._srcFileNames ? sourceNode._srcFileNames.slice() : [];
     node.currentAnim = animName;
     node.animations = sourceNode.animations.slice();
     node.skins = sourceNode.skins.slice();
@@ -390,12 +392,17 @@ SMTool._loadSpine = function (node, fileGroup) {
                 atlasText = atlasText.replace(/^pma\s*:.*$/gm, '').replace(/\n{2,}/g, '\n');
             }
 
-            // 第五步：存储原始数据用于导出
+            // 第五步：存储原始数据用于导出 + 记录源文件名
             node._srcSkelJson = skelJson;
             node._srcSkelBinBase64 = skelBin ? SMTool._uint8ToBase64(skelBin) : null;
             node._srcAtlasText = atlasText;
             node._srcTexDataUrl = pngUrl;
             node._srcType = skelBin ? 'skel' : 'json';
+            // 收集原始文件名（含后缀）
+            node._srcFileNames = [];
+            for (var ri = 0; ri < results.length; ri++) {
+                if (results[ri].n) node._srcFileNames.push(results[ri].n);
+            }
 
             // 第六步：加载图片
             var img = new Image();
@@ -716,8 +723,80 @@ var ANIM_TRANS_DICT = {
     'normal': '普通', 'default': '默认',
     'loop': '循环', 'once': '单次',
     'start': '开始', 'end': '结束', 'intro': '开场',
-    'outro': '结尾', 'ending': '结局'
+    'outro': '结尾', 'ending': '结局',
+    // 复合词常见组成部分
+    'state': '状态', 'loop': '循环', 'start': '开始', 'end': '结束',
+    'front': '前', 'back': '后', 'left': '左', 'right': '右',
+    'up': '上', 'down': '下', 'in': '入', 'out': '出',
+    'fast': '快速', 'slow': '慢速', 'long': '长', 'short': '短',
+    'big': '大', 'small': '小', 'high': '高', 'low': '低',
+    'normal': '普通', 'special': '特殊', 'extra': '额外',
+    'combo': '连击', 'chain': '连锁', 'burst': '爆发',
+    'fire': '火', 'ice': '冰', 'wind': '风', 'light': '光', 'dark': '暗',
+    'thunder': '雷', 'water': '水', 'earth': '土', 'poison': '毒',
+    'sword': '剑', 'blade': '刃', 'gun': '枪', 'staff': '杖',
+    'ready': '准备', 'active': '激活', 'passive': '被动',
+    'half': '半', 'full': '满', 'empty': '空'
 };
+
+// ---- 拼音→中文映射（游戏动画常见拼音命名） ----
+var PINYIN_DICT = {
+    'chuxian': '出现', 'xiaoshi': '消失', 'dengdai': '等待',
+    'gongji': '攻击', 'fangyu': '防御', 'shandian': '闪电',
+    'tiaoyue': '跳跃', 'xingzou': '行走', 'benpao': '奔跑',
+    'siwang': '死亡', 'shoushang': '受伤', 'shengli': '胜利',
+    'shibai': '失败', 'xuanzhuan': '旋转', 'feixing': '飞行',
+    'xuji': '蓄力', 'jineng': '技能', 'dazhao': '大招',
+    'jiangluo': '降落', 'rusheng': '上升', 'duobi': '躲避',
+    'zhanli': '站立', 'dunxia': '蹲下', 'paqi': '爬起',
+    'rushui': '入水', 'chushui': '出水', 'zhuolu': '着陆',
+    'qifei': '起飞', 'huanhu': '欢呼', 'tiaowu': '舞蹈',
+    'shuijiao': '睡觉', 'xinglai': '醒来', 'bingsi': '濒死',
+    'shifa': '施法', 'zhiliao': '治疗', 'dongjie': '冻结',
+    'ranshao': '燃烧', 'xuanyun': '眩晕', 'zengyi': '增益',
+    'jianyi': '减益', 'shanbi': '闪避', 'fangun': '翻滚',
+    'toushi': '投掷', 'sheji': '射击', 'pandeng': '攀爬',
+    'zhuiluo': '坠落', 'shiqu': '拾取', 'kaiqi': '开启',
+    'guanbi': '关闭', 'chuchang': '出场', 'ruchang': '入场',
+    'putong': '普通', 'teshu': '特殊', 'xunhuan': '循环',
+    'danqu': '单次', 'kaichang': '开场', 'jieju': '结局',
+    'zhunbei': '准备', 'jihuo': '激活', 'beidong': '被动'
+};
+
+// ---- 编辑距离（Levenshtein）模糊匹配 ----
+function _levDist(a, b) {
+    if (a.length === 0) return b.length;
+    if (b.length === 0) return a.length;
+    var m = [], i, j;
+    for (i = 0; i <= a.length; i++) { m[i] = [i]; }
+    for (j = 0; j <= b.length; j++) { m[0][j] = j; }
+    for (i = 1; i <= a.length; i++) {
+        for (j = 1; j <= b.length; j++) {
+            m[i][j] = Math.min(
+                m[i-1][j] + 1,
+                m[i][j-1] + 1,
+                m[i-1][j-1] + (a[i-1] === b[j-1] ? 0 : 1)
+            );
+        }
+    }
+    return m[a.length][b.length];
+}
+
+function _fuzzyMatch(word, dict, maxDist) {
+    maxDist = maxDist || 2;
+    var best = null, bestDist = maxDist + 1;
+    var keys = Object.keys(dict);
+    for (var i = 0; i < keys.length; i++) {
+        var d = _levDist(word, keys[i]);
+        if (d < bestDist) { bestDist = d; best = keys[i]; }
+    }
+    return bestDist <= maxDist ? dict[best] : null;
+}
+
+// ---- 判断是否像拼音（全小写字母，无空格数字，长度≤10） ----
+function _looksLikePinyin(word) {
+    return /^[a-z]{3,10}$/.test(word) && !/[aeiou]{3,}/.test(word);
+}
 
 // ---- 联网翻译（Google 免费接口） ----
 SMTool._translateAnimNames = function (names, callback) {
@@ -777,11 +856,8 @@ SMTool._refreshAllTranslations = function () {
             while (!r2.done) {
                 var n = r2.value;
                 if (n.currentAnim) {
-                    var cn = SMTool._translateName(n.currentAnim);
-                    if (n.name !== cn) {
-                        n.name = cn;
-                        SMTool._updateEl(n);
-                    }
+                    var cn = SMData._transCache[n.currentAnim] || n.currentAnim;
+                    if (n.name !== cn) { n.name = cn; SMTool._updateEl(n); }
                 }
                 r2 = nodesIter2.next();
             }
@@ -789,23 +865,7 @@ SMTool._refreshAllTranslations = function () {
     }, 1000);
 };
 
-// ---- 查找翻译（缓存优先 → 离线词典兜底） ----
+// ---- 查找翻译（缓存优先） ----
 SMTool._translateName = function (name) {
-    if (!name) return name;
-    // 1. Google 翻译缓存
-    if (SMData._transCache[name]) return SMData._transCache[name];
-    // 2. 离线词典匹配
-    var lower = name.toLowerCase().trim();
-    if (ANIM_TRANS_DICT[name]) return ANIM_TRANS_DICT[name];
-    if (ANIM_TRANS_DICT[lower]) return ANIM_TRANS_DICT[lower];
-    var candidates = [lower];
-    candidates.push(lower.replace(/[_\-\d]+[a-z]?$/, ''));
-    candidates.push(lower.replace(/[_\-\d]+$/, ''));
-    candidates.push(lower.replace(/^[hH]_?/, ''));
-    candidates.push(lower.replace(/^[hH]_?/, '').replace(/[_\-\d]+[a-z]?$/, ''));
-    candidates.push(lower.replace(/^[hH]_?/, '').replace(/[_\-\d]+$/, ''));
-    for (var i = 0; i < candidates.length; i++) {
-        if (candidates[i] !== lower && ANIM_TRANS_DICT[candidates[i]]) return ANIM_TRANS_DICT[candidates[i]];
-    }
-    return name;
+    return SMData._transCache[name] || name;
 };

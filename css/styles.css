@@ -427,59 +427,254 @@ body {
     opacity: 1;
 }
 
-/* ===== 信息面板 ===== */
-.info-panel {
-    position: absolute;
-    left: calc(100% + 16px);
-    top: 0;
-    width: 280px;
+/* ===== 左侧数据浮窗面板 ===== */
+#dataFloatPanel {
+    position: fixed;
+    left: 0;
+    top: 50%;
+    transform: translate(calc(-100% + 5px), -50%);
+    z-index: 500;
+    display: flex;
+    flex-direction: row-reverse;
+    align-items: stretch;
+    transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+    pointer-events: none;
+}
+#dataFloatPanel.expanded {
+    transform: translate(0, -50%);
+}
+#dataFloatPanel.pinned {
+    /* pinned 状态视觉上无变化，仅交互逻辑不同 */
+}
+/* 未选中任何节点 → 置灰不可展开 */
+#dataFloatPanel.inactive .dfp-trigger-icon {
+    filter: grayscale(0.7) brightness(0.5);
+    cursor: not-allowed;
+    box-shadow: none;
+}
+
+/* 触发器（右侧窄条，含铆钉图标） */
+#dataFloatPanel .dfp-trigger-icon {
+    flex-shrink: 0;
+    width: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, var(--accent2), var(--accent));
+    border-radius: 0 12px 12px 0;
+    cursor: pointer;
+    pointer-events: all;
+    transition: filter 0.35s, box-shadow 0.35s, background 0.3s, border-radius 0.3s, width 0.3s;
+    box-shadow: 4px 0 20px rgba(155, 109, 255, 0.35);
+    user-select: none;
+}
+#dataFloatPanel.expanded .dfp-trigger-icon {
+    border-radius: 0 12px 12px 0;
+    box-shadow: none;
+    background: var(--node-bg);
+    width: 20px;
+}
+
+/* 面板主体 */
+#dataFloatPanel .dfp-body {
+    width: 290px;
+    height: 80vh;
+    max-height: 80vh;
     background: var(--panel-bg);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    box-shadow: var(--shadow);
-    z-index: 10;
-    font-size: 12px;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    border-left: 1px solid var(--border);
+    border-right: none;
+    border-radius: 0;
+    box-shadow: -8px 0 32px rgba(0, 0, 0, 0.55);
+    display: flex;
+    flex-direction: column;
     overflow: hidden;
+    pointer-events: all;
+}
+
+/* 面板头部 */
+#dataFloatPanel .dfp-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    background: var(--node-bg);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+#dataFloatPanel .dfp-title {
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--text);
+}
+
+/* 铆钉图标（在右侧窄条内） */
+#dataFloatPanel .dfp-pin {
+    font-size: 16px;
+    cursor: pointer;
+    user-select: none;
+    transition: transform 0.25s, filter 0.25s;
+    filter: grayscale(0.4) brightness(0.8);
+    line-height: 1;
+}
+#dataFloatPanel .dfp-pin:hover {
+    transform: scale(1.25);
+    filter: none;
+}
+#dataFloatPanel .dfp-pin.active {
+    filter: none;
+    transform: rotate(-45deg);
+    text-shadow: 0 0 10px rgba(255, 180, 50, 0.7);
+}
+/* 收起态铆钉不可见（窄条仅 24px 时隐藏） */
+#dataFloatPanel:not(.expanded) .dfp-pin {
     display: none;
 }
-.info-panel.show {
-    display: block;
-}
-.info-panel .ip-header {
-    padding: 8px 12px;
-    background: var(--node-bg);
-    font-weight: 600;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    cursor: pointer;
-}
-.info-panel .ip-body {
-    padding: 8px 12px;
-    max-height: 400px;
+
+/* 面板内容区 */
+#dataFloatPanel .dfp-content {
+    flex: 1;
     overflow-y: auto;
+    padding: 10px 14px;
 }
-.info-panel .ip-section {
+
+/* 提示文字 */
+#dataFloatPanel .dfp-hint {
+    color: var(--text2);
+    font-size: 12px;
+    text-align: center;
+    padding: 20px 0;
+    line-height: 1.6;
+}
+
+/* 数据段落 */
+#dataFloatPanel .dfp-section {
     margin-bottom: 10px;
 }
-.info-panel .ip-section .ip-title {
+#dataFloatPanel .dfp-section-title {
     color: var(--accent2);
     font-weight: 600;
     margin-bottom: 4px;
     font-size: 11px;
     text-transform: uppercase;
+    letter-spacing: 0.3px;
 }
-.info-panel .ip-row {
+
+/* 数据行 */
+#dataFloatPanel .dfp-row {
     display: flex;
     justify-content: space-between;
-    padding: 2px 0;
+    align-items: center;
+    padding: 3px 0;
     color: var(--text2);
+    font-size: 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
 }
-.info-panel .checkbox-row {
+#dataFloatPanel .dfp-row.active {
+    color: var(--success);
+    font-weight: 600;
+}
+
+/* PMA 勾选行 */
+#dataFloatPanel .dfp-check-row {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 4px 0;
+    padding: 6px 0;
+    font-size: 12px;
+    color: var(--text2);
+}
+#dataFloatPanel .dfp-check-row input[type="checkbox"] {
+    accent-color: var(--accent2);
+}
+
+/* 骨骼行可点击 */
+#dataFloatPanel .dfp-bone-row {
+    cursor: pointer;
+    transition: background 0.15s;
+}
+#dataFloatPanel .dfp-bone-row:hover {
+    background: rgba(155, 109, 255, 0.08);
+}
+
+/* 骨骼标记按钮（✚ 红色十字叉切换） */
+#dataFloatPanel .dfp-bone-mark {
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text2);
+    transition: color 0.15s, text-shadow 0.15s;
+    margin-right: 4px;
+    flex-shrink: 0;
+}
+#dataFloatPanel .dfp-bone-mark:hover {
+    color: #ff5555;
+}
+#dataFloatPanel .dfp-bone-mark.active {
+    color: #ff3333;
+    text-shadow: 0 0 6px rgba(255, 50, 50, 0.6);
+}
+
+/* 骨骼右侧容器 */
+#dataFloatPanel .dfp-bone-right {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+/* 骨骼标签框 */
+#dataFloatPanel .dfp-bone-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 1px 6px;
+    font-size: 11px;
+    color: #ffd43b;
+    border: 1px solid #ffd43b;
+    border-radius: 4px;
+    cursor: pointer;
+    white-space: nowrap;
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: background 0.15s;
+}
+#dataFloatPanel .dfp-bone-label:hover {
+    background: rgba(255, 212, 59, 0.1);
+}
+
+/* 骨骼标签删除按钮 */
+#dataFloatPanel .dfp-bone-label-del {
+    font-size: 13px;
+    font-weight: bold;
+    color: #ff6b6b;
+    cursor: pointer;
+    line-height: 1;
+    opacity: 0;
+    transition: opacity 0.15s;
+    margin-left: 2px;
+}
+#dataFloatPanel .dfp-bone-label:hover .dfp-bone-label-del {
+    opacity: 1;
+}
+#dataFloatPanel .dfp-bone-label-del:hover {
+    color: #ff4444;
+}
+
+/* 骨骼标签内联输入框 */
+#dataFloatPanel .dfp-bone-input {
+    width: 100%;
+    padding: 3px 6px;
+    font-size: 11px;
+    background: var(--input-bg);
+    border: 1px solid var(--accent2);
+    border-radius: 4px;
+    color: var(--text);
+    outline: none;
+    font-family: inherit;
+}
+#dataFloatPanel .dfp-bone-input:focus {
+    border-color: var(--accent);
 }
 
 /* ===== 条件编辑器 ===== */

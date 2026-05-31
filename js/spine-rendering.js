@@ -69,8 +69,10 @@ SMTool._setupWebGLRenderer = function (node, SP, WGL, atlas, img, useVer) {
     var wrap = nodeEl.querySelector('.spine-canvas-wrap');
     if (!wrap) { console.warn('[Spine] canvas-wrap not found for #' + node.id); return; }
 
-    var oldC = wrap.querySelector('canvas');
+    var oldC = wrap.querySelector('canvas:not(.bone-mark-overlay)');
     if (oldC) oldC.remove();
+    var oldOv = wrap.querySelector('.bone-mark-overlay');
+    if (oldOv) oldOv.remove();
     var ph = wrap.querySelector('div');
     if (ph) ph.remove();
 
@@ -81,6 +83,16 @@ SMTool._setupWebGLRenderer = function (node, SP, WGL, atlas, img, useVer) {
     canvas.style.width = cw + 'px';
     canvas.style.height = ch + 'px';
     wrap.appendChild(canvas);
+
+    // 创建骨骼标记叠加画布（透明，在 Spine 画布上方）
+    var overlay = document.createElement('canvas');
+    overlay.width = cw;
+    overlay.height = ch;
+    overlay.className = 'bone-mark-overlay';
+    overlay.style.cssText = 'position:absolute;top:0;left:0;width:' + cw + 'px;height:' + ch + 'px;pointer-events:none;display:block';
+    wrap.appendChild(overlay);
+    node._boneOverlay = overlay;
+    node._boneOverlayCtx = overlay.getContext('2d');
 
     node.canvas = canvas;
     node.width = Math.max(cw + 10, node.width, 260);
@@ -187,6 +199,74 @@ SMTool._setupWebGL38 = function (node, SP, WGL, canvas, atlas, img, cw, ch) {
     }
 };
 
+// ---- 骨骼标记绘制（红色十字叉，实时跟随动画） ----
+SMTool._drawBoneMarks = function (node, skeleton) {
+    try {
+        var overlay = node._boneOverlay;
+        var ctx = node._boneOverlayCtx;
+        if (!overlay || !ctx) return;
+
+        var cw = overlay.width;
+        var ch = overlay.height;
+        if (cw <= 0 || ch <= 0) return;
+
+        // 获取当前动画的标记骨骼集合
+        var storeKey = (node.sourceFile || node.name) + '||' + (node.currentAnim || '');
+        var marks = SMData._boneMarkStore[storeKey];
+        if (!marks) { ctx.clearRect(0, 0, cw, ch); return; }
+
+        var boneNames = Object.keys(marks);
+        if (boneNames.length === 0) { ctx.clearRect(0, 0, cw, ch); return; }
+
+        // 骨架在画布中的偏移
+        var sx = (typeof skeleton.x === 'number') ? skeleton.x : 0;
+        var sy = (typeof skeleton.y === 'number') ? skeleton.y : 0;
+
+        // 检查 findBone 是否可用
+        if (typeof skeleton.findBone !== 'function') { ctx.clearRect(0, 0, cw, ch); return; }
+
+        // 清空上一帧
+        ctx.clearRect(0, 0, cw, ch);
+
+        for (var i = 0; i < boneNames.length; i++) {
+            var bone = skeleton.findBone(boneNames[i]);
+            if (!bone) continue;
+            if (typeof bone.getWorldX !== 'function' || typeof bone.getWorldY !== 'function') continue;
+
+            // 骨骼世界坐标 → 画布像素坐标（Spine Y 朝上，Canvas Y 朝下 → 翻转）
+            var bx = sx + bone.getWorldX();
+            var by = ch - (sy + bone.getWorldY());
+
+            // 跳过画布外的点
+            if (isNaN(bx) || isNaN(by)) continue;
+
+            // 绘制红色十字叉
+            var size = 8;
+            ctx.save();
+            ctx.strokeStyle = '#ff3333';
+            ctx.lineWidth = 2;
+            ctx.shadowColor = 'rgba(255,0,0,0.6)';
+            ctx.shadowBlur = 4;
+            ctx.beginPath();
+            ctx.moveTo(bx - size, by);
+            ctx.lineTo(bx + size, by);
+            ctx.moveTo(bx, by - size);
+            ctx.lineTo(bx, by + size);
+            ctx.stroke();
+
+            // 小圆点中心
+            ctx.fillStyle = '#ff3333';
+            ctx.shadowBlur = 0;
+            ctx.beginPath();
+            ctx.arc(bx, by, 2.5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+    } catch (e) {
+        // 骨骼标记绘制失败不应影响主渲染循环
+    }
+};
+
 // ---- 渲染循环 ----
 SMTool._lt = 0;
 SMTool._fc = 0;
@@ -238,6 +318,9 @@ SMTool._loop = function (now) {
         state.update(dt);
         state.apply(skeleton);
         skeleton.updateWorldTransform(node._physParam);
+
+        // 绘制骨骼标记十字叉（在 Spine 画布上叠加）
+        try { SMTool._drawBoneMarks(node, skeleton); } catch (e) {}
 
         if ((node._spineVer === '4.3' || node._spineVer === '4.2') && node.sceneRenderer && node.sceneRenderer.begin) {
             // 4.x 渲染

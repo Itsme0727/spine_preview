@@ -76,6 +76,21 @@
         <span id="zoomLabel">100%</span>
     </div>
 
+    <!-- ===== 左侧数据浮窗面板 ===== -->
+    <div id="dataFloatPanel">
+        <div class="dfp-trigger-icon" title="固定面板">
+            <span class="dfp-pin">📌</span>
+        </div>
+        <div class="dfp-body">
+            <div class="dfp-header">
+                <span class="dfp-title">📋 动画数据</span>
+            </div>
+            <div class="dfp-content" id="dfpContent">
+                <div class="dfp-hint">点击一个 Spine 节点以查看其动画数据</div>
+            </div>
+        </div>
+    </div>
+
     <!-- ================================================================
          脚本加载顺序（依赖关系严格）:
          1. spine-loader.js — 从 CDN 加载三个版本 Spine 运行时

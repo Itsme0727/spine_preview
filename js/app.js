@@ -77,6 +77,7 @@ SMTool.copyNode = function (nid, offsetX, offsetY) {
     node._srcAtlasText = orig._srcAtlasText;
     node._srcTexDataUrl = orig._srcTexDataUrl;
     node._srcType = orig._srcType;
+    node._srcFileNames = orig._srcFileNames ? orig._srcFileNames.slice() : [];
     node.currentAnim = orig.currentAnim;
     node.animations = orig.animations.slice();
     node.skins = orig.skins.slice();
@@ -187,18 +188,18 @@ SMTool.init = function () {
     SMTool.resize();
     window.addEventListener('resize', function () { SMTool.resize(); });
 
-    // 鼠标事件
+    // 鼠标事件（数据面板内的操作不取消动画对象选中）
     document.addEventListener('mousedown', function (e) {
-        if (e.target.closest('#toolbar, #ctxMenu, #conditionEditor, #zoomControl, #statusBar')) return;
+        if (e.target.closest('#toolbar, #ctxMenu, #conditionEditor, #zoomControl, #statusBar, #dataFloatPanel')) return;
         if (e.target.closest('input, textarea, select, button')) return;
         SMTool._onMD(e);
     });
     window.addEventListener('mousemove', function (e) { SMTool._onMM(e); });
     window.addEventListener('mouseup', function (e) { SMTool._onMU(e); });
 
-    // 滚轮缩放
+    // 滚轮缩放（面板内滚动内容，不缩放画布）
     window.addEventListener('wheel', function (e) {
-        if (!e.target.closest('.state-list') && !e.target.closest('.anim-bar') && !e.target.closest('.anim-select') && !e.target.closest('.ip-body') && !e.target.closest('#conditionEditor')) {
+        if (!e.target.closest('.state-list') && !e.target.closest('.anim-bar') && !e.target.closest('.anim-select') && !e.target.closest('.ip-body') && !e.target.closest('#conditionEditor') && !e.target.closest('#dataFloatPanel')) {
             e.preventDefault();
             SMTool._onWheel(e);
         }
@@ -284,6 +285,11 @@ SMTool.init = function () {
     SMTool._fc = 0;
     SMTool._ft = performance.now();
     requestAnimationFrame(function (t) { SMTool._loop(t); });
+
+    // 初始化左侧浮窗面板
+    SMTool._initFloatPanel();
+    SMTool._initBoneLabelEvents();
+    SMTool._updateFloatPanel();   // 设置初始 inactive 状态 + 提示文字
 
     SMTool._updateSB();
 
