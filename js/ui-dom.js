@@ -85,14 +85,17 @@ SMTool._createEl = function (node) {
             '<select class="anim-select" onchange="SMTool._onAnimChange(' + node.id + ', this.value)">' + animOptionsHtml + '</select>' +
             '<div class="conn-dot output" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'' + SMTool._esc(curState) + '\',\'output\')" title="连线输出"></div>' +
         '</div>' +
-        '<div class="footer">' + skinsHtml +
-            '<label class="pma-toggle" title="预乘 Alpha"><input type="checkbox" onchange="SMTool._togglePMA(' + node.id + ',this.checked)"' + (node.premultipliedAlpha ? ' checked' : '') + '>预乘Alpha</label>' +
-            '<span class="badge" style="margin-left:auto">v' + SMTool._esc(node.version || '?') + '</span></div>' +
-        // ---- 面板外部：循环切换 + 骨骼标记 + 状态描述 ----
+        '<div class="footer">' +
+            '<div class="footer-skins"><span class="skin-label">皮肤</span>' + skinsHtml + '</div>' +
+            '<div class="footer-controls">' +
+                '<button class="loop-toggle' + (node.loop !== false ? ' active' : '') + '" onclick="event.stopPropagation();SMTool._toggleLoop(' + node.id + ')">' + (node.loop !== false ? '🔄 循环播放' : '▶ 单次播放') + '</button>' +
+                '<label class="pma-toggle" title="预乘 Alpha"><input type="checkbox" onchange="SMTool._togglePMA(' + node.id + ',this.checked)"' + (node.premultipliedAlpha ? ' checked' : '') + '>预乘Alpha</label>' +
+            '</div>' +
+        '</div>' +
         '<div class="node-extras">' +
-            '<button class="loop-toggle' + (node.loop !== false ? ' active' : '') + '" onclick="event.stopPropagation();SMTool._toggleLoop(' + node.id + ')">' + (node.loop !== false ? '🔄 循环播放' : '▶ 单次播放') + '</button>' +
             '<div class="bone-tags" id="boneTags-' + node.id + '"></div>' +
             '<textarea class="state-desc" placeholder="点击输入此状态的描述" oninput="SMTool._updateStateDesc(' + node.id + ',this.value)" onclick="event.stopPropagation()">' + SMTool._esc(node._stateDesc || '') + '</textarea>' +
+            '<span class="version-badge">v' + SMTool._esc(node.version || '?') + '</span>' +
         '</div>';
     }
 
@@ -138,16 +141,31 @@ SMTool._updateStateDesc = function (nid, value) {
 
 // ---- 骨骼标记 ----
 SMTool._toggleBoneTag = function (boneName) {
-    var node = SMData.nodes.get(SMData.selectedNode);
-    if (!node || node.nodeType !== 'spine') return;
-    if (!node._boneTags) node._boneTags = {};
-    if (node._boneTags[boneName]) {
-        delete node._boneTags[boneName];
+    // 多选时应用到所有选中节点
+    if (SMData.selectedNodes.size > 1) {
+        SMData.selectedNodes.forEach(function (nid) {
+            var n = SMData.nodes.get(nid);
+            if (!n || n.nodeType !== 'spine') return;
+            if (!n._boneTags) n._boneTags = {};
+            if (n._boneTags[boneName]) {
+                delete n._boneTags[boneName];
+            } else {
+                n._boneTags[boneName] = [];
+            }
+            SMTool._refreshBoneTagsUI(n);
+        });
     } else {
-        node._boneTags[boneName] = [];
+        var node = SMData.nodes.get(SMData.selectedNode);
+        if (!node || node.nodeType !== 'spine') return;
+        if (!node._boneTags) node._boneTags = {};
+        if (node._boneTags[boneName]) {
+            delete node._boneTags[boneName];
+        } else {
+            node._boneTags[boneName] = [];
+        }
+        SMTool._refreshBoneTagsUI(node);
     }
     SMTool._updateFloatPanel();
-    SMTool._refreshBoneTagsUI(node);
 };
 
 SMTool._addBoneTagState = function (nid, boneName, stateName) {
@@ -156,6 +174,7 @@ SMTool._addBoneTagState = function (nid, boneName, stateName) {
     if (node._boneTags[boneName].indexOf(stateName) < 0) {
         node._boneTags[boneName].push(stateName);
         SMTool._refreshBoneTagsUI(node);
+        SMTool._updateFloatPanel();
     }
 };
 
@@ -166,26 +185,53 @@ SMTool._refreshBoneTagsUI = function (node) {
         el.innerHTML = '';
         return;
     }
-    var html = '';
+    var html = '<span class="bone-tag-title">挂点</span>';
     var bones = Object.keys(node._boneTags);
     for (var b = 0; b < bones.length; b++) {
         var bn = bones[b];
         var states = node._boneTags[bn] || [];
-        html += '<div class="bone-tag-capsule">' +
-            '<div style="display:flex;align-items:center;justify-content:space-between">' +
-                '<span class="bone-tag-name">' + SMTool._esc(bn) + '</span>' +
-                '<span class="bone-tag-add" onclick="event.stopPropagation();SMTool._showBoneStateMenu(event,' + node.id + ',\'' + SMTool._esc(bn) + '\')">+</span>' +
-            '</div>';
-        if (states.length > 0) {
-            html += '<div class="bone-tag-states">';
-            for (var s = 0; s < states.length; s++) {
-                html += '<span class="bone-tag-state">' + SMTool._esc(states[s]) + '</span>';
-            }
-            html += '</div>';
+        html += '<div class="bone-tag-capsule" onclick="event.stopPropagation();SMTool._showBoneStateMenu(event,' + node.id + ',\'' + SMTool._esc(bn) + '\')">' +
+            '<span class="bone-tag-name">' + SMTool._esc(bn) + '</span>';
+        for (var s = 0; s < states.length; s++) {
+            html += '<div class="bone-tag-state-capsule">' + SMTool._esc(states[s]) + '</div>';
         }
         html += '</div>';
     }
+    html += '<button class="bone-tag-add-btn" onclick="event.stopPropagation();SMTool._showBoneAddMenu(event,' + node.id + ')" title="添加挂点">+</button>';
     el.innerHTML = html;
+};
+
+// ---- 挂点添加按钮：弹出骨骼选择菜单 ----
+SMTool._showBoneAddMenu = function (e, nid) {
+    e.stopPropagation();
+    var node = SMData.nodes.get(nid);
+    if (!node || node.bones.length === 0) return;
+    var menu = document.createElement('div');
+    menu.className = 'bone-state-menu';
+    menu.style.cssText = 'position:fixed;z-index:200;background:var(--panel-bg);border:1px solid var(--border);border-radius:8px;padding:4px;max-height:200px;overflow-y:auto;box-shadow:0 4px 16px rgba(0,0,0,0.5)';
+    menu.style.left = e.clientX + 'px';
+    menu.style.top = e.clientY + 'px';
+    for (var i = 0; i < node.bones.length; i++) {
+        var bn = node.bones[i];
+        var item = document.createElement('div');
+        item.className = 'bone-state-item';
+        item.textContent = bn;
+        item.onclick = (function (bn2) {
+            return function () {
+                if (menu.parentNode) document.body.removeChild(menu);
+                SMTool._toggleBoneTag(bn2);
+            };
+        })(bn);
+        menu.appendChild(item);
+    }
+    document.body.appendChild(menu);
+    setTimeout(function () {
+        var closeMenu = function (ev) {
+            if (!menu.parentNode) { document.removeEventListener('click', closeMenu); return; }
+            if (!menu.contains(ev.target)) { document.body.removeChild(menu); document.removeEventListener('click', closeMenu); }
+        };
+        document.addEventListener('click', closeMenu);
+    }, 0);
 };
 
 SMTool._showBoneStateMenu = function (e, nid, boneName) {
@@ -264,9 +310,22 @@ SMTool._updateEl = function (node) {
         for (var si = 0; si < node.skins.length; si++) {
             skinsHtml += '<span class="badge">' + SMTool._esc(node.skins[si]) + '</span>';
         }
-        ft.innerHTML = (skinsHtml || '<span class="badge">无皮肤</span>') +
-            '<label class="pma-toggle" title="预乘 Alpha"><input type="checkbox" onchange="SMTool._togglePMA(' + node.id + ',this.checked)"' + (node.premultipliedAlpha ? ' checked' : '') + '>预乘Alpha</label>' +
-            '<span class="badge" style="margin-left:auto">v' + SMTool._esc(node.version || '?') + '</span>';
+        ft.innerHTML =
+            '<div class="footer-skins"><span class="skin-label">皮肤</span>' + (skinsHtml || '<span class="badge">无皮肤</span>') + '</div>' +
+            '<div class="footer-controls">' +
+                '<button class="loop-toggle' + (node.loop !== false ? ' active' : '') + '" onclick="event.stopPropagation();SMTool._toggleLoop(' + node.id + ')">' + (node.loop !== false ? '🔄 循环播放' : '▶ 单次播放') + '</button>' +
+                '<label class="pma-toggle" title="预乘 Alpha"><input type="checkbox" onchange="SMTool._togglePMA(' + node.id + ',this.checked)"' + (node.premultipliedAlpha ? ' checked' : '') + '>预乘Alpha</label>' +
+            '</div>';
+        // 版本号
+        var vb = el.querySelector('.version-badge');
+        if (vb) vb.textContent = 'v' + (node.version || '?');
+    }
+    // 刷新骨骼标记和循环按钮
+    SMTool._refreshBoneTagsUI(node);
+    var loopBtn = el.querySelector('.loop-toggle');
+    if (loopBtn) {
+        loopBtn.textContent = node.loop !== false ? '🔄 循环播放' : '▶ 单次播放';
+        loopBtn.classList.toggle('active', node.loop !== false);
     }
 
     // 标题
@@ -437,10 +496,13 @@ SMTool._updateFloatPanel = function () {
                     '<span class="dfp-bone-label-del" data-bone="' + SMTool._esc(boneName) + '" title="删除标签">&times;</span>' +
                 '</span>';
             }
+            // 获取该骨骼被标记的状态
+            var taggedStates = (node._boneTags && node._boneTags[boneName]) ? node._boneTags[boneName].join(', ') : '';
+            var taggedHtml = taggedStates ? '<span class="dfp-bone-tagged">' + SMTool._esc(taggedStates) + '</span>' : '';
             boneRows += '<div class="dfp-row dfp-bone-row" data-bone="' + SMTool._esc(boneName) + '">' +
                 '<span>' + SMTool._esc(boneName) + '</span>' +
                     '<button class="dfp-bone-tag-btn" data-bone="' + SMTool._esc(boneName) + '" style="font-size:14px;cursor:pointer;background:none;border:1px solid #50c878;color:#50c878;border-radius:4px;padding:0 6px;margin-left:8px">标记</button>' +
-                    '<span class="dfp-bone-right" style="margin-left:auto">' + labelHtml + '</span></div>';
+                    '<span class="dfp-bone-right" style="margin-left:auto;display:flex;align-items:center;gap:6px">' + taggedHtml + labelHtml + '</span></div>';
         }
         if (!boneRows) boneRows = '<div class="dfp-row">无</div>';
 
@@ -513,7 +575,9 @@ SMTool._updateFloatPanel = function () {
                 var boneName2 = node.bones[bi2];
                 var label2 = boneLabels2[boneName2] || '';
                 var labelHtml2 = label2 ? '<span class="dfp-bone-label" data-bone="' + SMTool._esc(boneName2) + '">' + SMTool._esc(label2) + '<span class="dfp-bone-label-del" data-bone="' + SMTool._esc(boneName2) + '">&times;</span></span>' : '';
-                boneRows2 += '<div class="dfp-row dfp-bone-row" data-bone="' + SMTool._esc(boneName2) + '"><span>' + SMTool._esc(boneName2) + '</span><span class="dfp-bone-right">' + labelHtml2 + '</span></div>';
+                var taggedStates2 = (node._boneTags && node._boneTags[boneName2]) ? node._boneTags[boneName2].join(', ') : '';
+                var taggedHtml2 = taggedStates2 ? '<span class="dfp-bone-tagged">' + SMTool._esc(taggedStates2) + '</span>' : '';
+                boneRows2 += '<div class="dfp-row dfp-bone-row" data-bone="' + SMTool._esc(boneName2) + '"><span>' + SMTool._esc(boneName2) + '</span><button class="dfp-bone-tag-btn" data-bone="' + SMTool._esc(boneName2) + '" style="font-size:14px;cursor:pointer;background:none;border:1px solid #50c878;color:#50c878;border-radius:4px;padding:0 6px;margin-left:8px">标记</button><span class="dfp-bone-right" style="margin-left:auto;display:flex;align-items:center;gap:6px">' + taggedHtml2 + labelHtml2 + '</span></div>';
             }
             if (!boneRows2) boneRows2 = '<div class="dfp-row">无</div>';
 

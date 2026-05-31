@@ -381,23 +381,56 @@ body {
 /* 节点底部 */
 .spine-node .footer {
     display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 8px 10px;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 10px;
     border-top: 1px solid var(--border);
     font-size: 28px;
     color: var(--text2);
-    flex-wrap: wrap;
-    min-height: 24px;
 }
-.spine-node .footer .badge {
+.spine-node .footer-skins {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+}
+.spine-node .skin-label {
+    font-size: 28px;
+    color: var(--text2);
+    margin-right: 2px;
+}
+.spine-node .footer-skins .badge {
     background: var(--node-bg);
     padding: 2px 8px;
     border-radius: 10px;
     font-size: 28px;
 }
+.spine-node .footer-controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.spine-node .footer .loop-toggle {
+    border: none;
+    background: none;
+    color: var(--text2);
+    cursor: pointer;
+    font-size: 28px;
+    padding: 2px 0;
+}
+.spine-node .footer .loop-toggle.active {
+    color: #44aaff;
+    font-weight: 600;
+}
 .spine-node .footer .pma-toggle {
     font-size: 28px;
+}
+.spine-node .version-badge {
+    font-size: 22px;
+    color: #666;
+    text-align: right;
+    align-self: flex-end;
+    margin-top: 2px;
 }
 
 /* ===== 动画下拉选择栏 ===== */
@@ -588,49 +621,51 @@ body {
     flex-direction: column;
     gap: 4px;
 }
-.loop-toggle {
-    display: inline-block;
-    background: var(--node-bg);
-    border: 1px solid var(--border);
-    color: var(--text2);
-    padding: 3px 12px;
-    border-radius: 12px;
-    cursor: pointer;
-    font-size: 13px;
-    align-self: flex-start;
-}
-.loop-toggle.active {
-    color: #50c878;
-    border-color: #50c878;
-}
 .bone-tags {
     display: flex;
     flex-wrap: wrap;
+    align-items: center;
     gap: 4px;
+}
+.bone-tag-title {
+    font-size: 16px;
+    color: var(--text2);
+    margin-right: 2px;
+    font-weight: 600;
 }
 .bone-tag-capsule {
     display: inline-flex;
     flex-direction: column;
     border: 1px solid #50c878;
-    border-radius: 10px;
-    padding: 2px 6px;
-    font-size: 13px;
+    border-radius: 12px;
+    padding: 3px 8px;
+    font-size: 16px;
     color: #50c878;
-    gap: 2px;
+    gap: 3px;
 }
 .bone-tag-name {
     font-weight: 600;
+    font-size: 16px;
 }
-.bone-tag-states {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 3px;
+.bone-tag-state-capsule {
+    display: inline-flex;
+    border: 1px solid #50c878;
+    border-radius: 10px;
+    padding: 1px 7px;
+    font-size: 16px;
+    color: #50c878;
+    background: rgba(80,200,120,0.1);
 }
-.bone-tag-state {
-    background: rgba(80,200,120,0.15);
-    padding: 1px 6px;
-    border-radius: 8px;
-    font-size: 12px;
+.bone-tag-add-btn {
+    border: 1px solid #50c878;
+    background: none;
+    color: #50c878;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 18px;
+    padding: 0 8px;
+    line-height: 1.4;
+    margin-left: auto;
 }
 .bone-tag-add {
     color: #50c878;
@@ -645,12 +680,12 @@ body {
     background: var(--input-bg);
     border: 1px solid var(--border);
     color: var(--text2);
-    padding: 6px 8px;
-    font-size: 13px;
+    padding: 8px 10px;
+    font-size: 26px;
     font-family: inherit;
     border-radius: 6px;
     resize: none;
-    min-height: 32px;
+    min-height: 48px;
     height: auto;
     box-sizing: border-box;
 }
@@ -872,6 +907,17 @@ body {
     display: flex;
     align-items: center;
     gap: 4px;
+}
+#dataFloatPanel .dfp-bone-tagged {
+    font-size: 11px;
+    color: #50c878;
+    background: rgba(80,200,120,0.1);
+    padding: 1px 6px;
+    border-radius: 6px;
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* 骨骼标签框 */
