@@ -67,15 +67,25 @@
     <div id="statusBar">
         <span id="sbNodes">节点: 0</span>
         <span id="sbConns">连线: 0</span>
+        <span id="sbBones">骨骼: 0</span>
+        <span id="sbDraws">Draw call: 0</span>
         <span id="sbFPS">FPS: --</span>
+        <span id="sbMemory">内存: --</span>
         <span id="sbStatus"></span>
+    </div>
+
+    <!-- ===== 渲染模式切换 ===== -->
+    <div id="modeToggle">
+        <button id="modePerf" class="active" onclick="SMTool.setRenderMode('perf')">性能</button>
+        <button id="modeDyn" onclick="SMTool.setRenderMode('dyn')">动态</button>
     </div>
 
     <!-- ===== 缩放控件 ===== -->
     <div id="zoomControl">
-        <input type="range" id="zoomSlider" min="10" max="500" value="100" />
+        <input type="range" id="zoomSlider" min="0" max="200" value="100">
         <span id="zoomLabel">100%</span>
     </div>
+    <button id="zoomResetBtn" onclick="SMTool.resetView()" style="display:none" title="恢复到 100%">世界中心 100%</button>
 
     <!-- ===== 左侧数据浮窗面板 ===== -->
     <div id="dataFloatPanel">

@@ -214,8 +214,9 @@ SMTool.init = function () {
 
     // 鼠标事件（数据面板内的操作不取消动画对象选中）
     document.addEventListener('mousedown', function (e) {
-        if (e.target.closest('#toolbar, #ctxMenu, #conditionEditor, #zoomControl, #statusBar, #dataFloatPanel')) return;
-        if (e.target.closest('input, textarea, select, button')) return;
+        if (e.target.closest && e.target.closest('#toolbar, #ctxMenu, #conditionEditor, #zoomControl, #statusBar, #dataFloatPanel')) return;
+        if (e.target.closest && e.target.closest('input, textarea, select, button')) return;
+        if (e.shiftKey) e.preventDefault();
         SMTool._onMD(e);
     });
     window.addEventListener('mousemove', function (e) { SMTool._onMM(e); });
@@ -229,8 +230,9 @@ SMTool.init = function () {
         }
     }, { passive: false });
 
-    // 右键菜单
-    SMTool.gridCanvas.addEventListener('contextmenu', function (e) {
+    // 全局阻止浏览器右键菜单
+    document.addEventListener('contextmenu', function (e) {
+        if (e.target.closest('input, textarea, select')) return;  // 表单元素允许右键
         e.preventDefault();
         SMTool._showCtxMenu(e);
     });
@@ -303,6 +305,119 @@ SMTool.init = function () {
             }
         }, 150);
     });
+
+    // ---- 节点分组 ----
+    SMTool._groupColors = ['#4a90d9','#50c878','#f0a040','#e64980','#9b6dff','#38d9a9','#ff6b6b','#ffd43b'];
+
+    SMTool.groupSelection = function () {
+        if (SMData.selectedNodes.size < 2) return;
+        var ids = [];
+        SMData.selectedNodes.forEach(function (id) { ids.push(id); });
+        var g = {
+            id: SMData.nextGroupId++,
+            nodeIds: new Set(ids),
+            color: SMTool._groupColors[(SMData.nextGroupId - 1) % SMTool._groupColors.length]
+        };
+        SMData.groups.push(g);
+        document.getElementById('sbStatus').textContent = '已打组 (' + ids.length + ' 节点)';
+        setTimeout(function () { document.getElementById('sbStatus').textContent = ''; }, 2000);
+    };
+
+    SMTool.ungroupAt = function (worldX, worldY) {
+        for (var i = SMData.groups.length - 1; i >= 0; i--) {
+            var g = SMData.groups[i];
+            var bb = SMTool._getGroupBounds(g);
+            if (bb && worldX >= bb.left && worldX <= bb.right && worldY >= bb.top && worldY <= bb.bottom) {
+                SMData.groups.splice(i, 1);
+                document.getElementById('sbStatus').textContent = '已取消打组';
+                setTimeout(function () { document.getElementById('sbStatus').textContent = ''; }, 1500);
+                return true;
+            }
+        }
+        return false;
+    };
+
+    SMTool._getGroupBounds = function (g) {
+        var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        var any = false;
+        g.nodeIds.forEach(function (nid) {
+            var n = SMData.nodes.get(nid);
+            if (!n) return;
+            any = true;
+            minX = Math.min(minX, n.x);
+            minY = Math.min(minY, n.y);
+            maxX = Math.max(maxX, n.x + n.width);
+            maxY = Math.max(maxY, n.y + (n._canvasHeight || 200) + 100);
+        });
+        return any ? { left: minX, top: minY, right: maxX, bottom: maxY } : null;
+    };
+
+    SMTool._findGroupOf = function (nodeId) {
+        for (var i = 0; i < SMData.groups.length; i++) {
+            if (SMData.groups[i].nodeIds.has(nodeId)) return SMData.groups[i];
+        }
+        return null;
+    };
+
+    SMTool._renderGroupBoxes = function (ctx) {
+        for (var i = 0; i < SMData.groups.length; i++) {
+            var g = SMData.groups[i];
+            var bb = SMTool._getGroupBounds(g);
+            if (!bb) continue;
+            var tl = SMTool.worldToCanvas(bb.left, bb.top);
+            var br = SMTool.worldToCanvas(bb.right, bb.bottom);
+            ctx.save();
+            ctx.strokeStyle = g.color;
+            ctx.lineWidth = 1;
+            ctx.setLineDash([4, 3]);
+            ctx.strokeRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
+            ctx.restore();
+        }
+    };
+
+    // ---- 渲染模式切换 ----
+    SMTool.setRenderMode = function (mode) {
+        SMData.renderMode = mode;
+        document.getElementById('modePerf').classList.toggle('active', mode === 'perf');
+        document.getElementById('modeDyn').classList.toggle('active', mode === 'dyn');
+    };
+
+    // ---- 文本节点创建 ----
+    SMTool.createShortTextNode = function (wx, wy) {
+        var id = SMData.nextId++;
+        var node = new SpineNodeData(id);
+        node.nodeType = 'shortText';
+        node.name = '条件';
+        node.x = wx; node.y = wy;
+        node.width = 200;
+        node._textContent = '';
+        SMData.nodes.set(id, node);
+        SMTool._createEl(node);
+        SMTool._updatePos(node);
+        SMData.selectedNodes.clear();
+        SMData.selectedNodes.add(id);
+        SMData.selectedNode = id;
+        SMTool._updateSel();
+        SMTool._updateSB();
+    };
+
+    SMTool.createTextBoxNode = function (wx, wy) {
+        var id = SMData.nextId++;
+        var node = new SpineNodeData(id);
+        node.nodeType = 'textBox';
+        node.name = '文本框';
+        node.x = wx; node.y = wy;
+        node.width = 300;
+        node._textContent = '';
+        SMData.nodes.set(id, node);
+        SMTool._createEl(node);
+        SMTool._updatePos(node);
+        SMData.selectedNodes.clear();
+        SMData.selectedNodes.add(id);
+        SMData.selectedNode = id;
+        SMTool._updateSel();
+        SMTool._updateSB();
+    };
 
     // 启动渲染循环
     SMTool._lt = performance.now();

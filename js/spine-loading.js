@@ -100,9 +100,17 @@ SMTool._createNode = function (fileGroup, baseName, optX, optY) {
             // 串行创建克隆（逐个来，避免真实浏览器中并发 WebGL 上下文竞争导致首个节点画面丢失）
             function createNextClone() {
                 if (animIdx >= anims.length) {
-                    // 全部完成，自动布局（以首个节点的世界坐标为锚点）
+                    // 全部完成，自动布局并全选所有衍生节点
                     setTimeout(function () {
                         SMTool._autoLayoutNodes(allNodes, node.x, node.y);
+                        // 全选这批文件产生的所有节点
+                        SMData.selectedNodes.clear();
+                        for (var si = 0; si < allNodes.length; si++) {
+                            SMData.selectedNodes.add(allNodes[si].id);
+                        }
+                        SMData.selectedNode = allNodes[0].id;
+                        SMTool._updateSel();
+                        SMTool._updateSB();
                     }, 200);
                     return;
                 }

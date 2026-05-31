@@ -9,8 +9,6 @@ var SMTool = window.SMTool || {};
 // ---- 共享 WebGL 状态 ----
 SMTool._sharedCanvas = null;
 SMTool._sharedGL = null;
-SMTool._boneOverlay = null;
-SMTool._boneOverlayCtx = null;
 
 // ---- 纹理共享缓存 ----
 // 结构：{ "texDataUrl||pageIdx": { texture: GLTexture, refCount: number } }
@@ -85,16 +83,6 @@ SMTool._initSharedRenderer = function () {
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
-    // 骨骼标记叠加层（2D Canvas，在 Spine 画布上方）
-    var overlay = document.createElement('canvas');
-    overlay.id = 'boneOverlay';
-    overlay.style.cssText = 'position:absolute;top:0;left:0;z-index:4;pointer-events:none';
-    document.getElementById('app').appendChild(overlay);
-
-    SMTool._boneOverlay = overlay;
-    SMTool._boneOverlayCtx = overlay.getContext('2d');
-    SMTool._resizeSharedRenderer();
-
     console.log('[SharedRenderer] Initialized — all nodes will share 1 WebGL context');
 };
 
@@ -104,77 +92,6 @@ SMTool._resizeSharedRenderer = function () {
     if (c) {
         c.width = window.innerWidth;
         c.height = window.innerHeight;
-    }
-    var o = SMTool._boneOverlay;
-    if (o) {
-        o.width = window.innerWidth;
-        o.height = window.innerHeight;
-    }
-};
-
-// ---- 共享模式骨骼标记绘制（在 2D 叠加层上）----
-SMTool._drawBoneMarksShared = function (node, skeleton, screenX, screenY, screenW, screenH) {
-    try {
-        var marks = SMData._boneMarkStore;
-        if (!marks) return;
-
-        var key = node.sourceFile + '||' + (node.currentAnim || '');
-        var boneSet = marks[key];
-        if (!boneSet) return;
-
-        var boneNames = Object.keys(boneSet);
-        if (!boneNames.length) return;
-
-        var ctx = SMTool._boneOverlayCtx;
-        if (!ctx) return;
-
-        var cw = node._canvasWidth;
-        var ch = node._canvasHeight;
-        var sz = SMData.view.zoom;
-        var is4x = node._spineVer === '4.3' || node._spineVer === '4.2';
-
-        for (var i = 0; i < boneNames.length; i++) {
-            var bone = skeleton.findBone(boneNames[i]);
-            if (!bone) continue;
-            if (typeof bone.getWorldX !== 'function' || typeof bone.getWorldY !== 'function') continue;
-
-            var wx = bone.getWorldX();
-            var wy = bone.getWorldY();
-            if (isNaN(wx) || isNaN(wy)) continue;
-
-            // 骨骼世界坐标 → 骨架本地像素 → 屏幕像素
-            var sx = skeleton.x + wx;
-            var sy = is4x ? (skeleton.y + wy) : (ch - (skeleton.y + wy));
-
-            // 映射到屏幕
-            var bx = screenX + sx * sz;
-            var by = screenY + sy * sz;
-
-            if (bx < screenX || bx > screenX + screenW || by < screenY || by > screenY + screenH) continue;
-
-            // 绘制红色十字叉
-            var size = Math.max(4, 6 * sz);
-            ctx.save();
-            ctx.strokeStyle = '#ff3333';
-            ctx.lineWidth = Math.max(1, 1.5 * sz);
-            ctx.shadowColor = 'rgba(255,0,0,0.6)';
-            ctx.shadowBlur = 4;
-            ctx.beginPath();
-            ctx.moveTo(bx - size, by);
-            ctx.lineTo(bx + size, by);
-            ctx.moveTo(bx, by - size);
-            ctx.lineTo(bx, by + size);
-            ctx.stroke();
-
-            ctx.fillStyle = '#ff3333';
-            ctx.shadowBlur = 0;
-            ctx.beginPath();
-            ctx.arc(bx, by, Math.max(1.5, 2 * sz), 0, Math.PI * 2);
-            ctx.fill();
-            ctx.restore();
-        }
-    } catch (e) {
-        // 骨骼标记绘制失败不影响渲染
     }
 };
 
@@ -259,6 +176,7 @@ SMTool._setupWebGLRenderer = function (node, SP, WGL, atlas, img, useVer) {
                 ph.style.height = ch + 'px';
                 ph.style.padding = '0';
                 ph.style.display = 'block';
+                ph.textContent = '';  // 隐藏"拖入 Spine 文件"
             }
             wrap.style.width = cw + 'px';
             wrap.style.height = ch + 'px';
@@ -371,6 +289,25 @@ SMTool._loop = function (now) {
     SMTool._fc++;
     if (now - SMTool._ft >= 1000) {
         document.getElementById('sbFPS').textContent = 'FPS: ' + Math.round(SMTool._fc * 1000 / (now - SMTool._ft));
+        // 内存（Chrome only，含 JS 堆 + DOM 等）
+        if (performance.memory) {
+            var mb = (performance.memory.totalJSHeapSize / 1048576).toFixed(1);
+            document.getElementById('sbMemory').textContent = '内存: ' + mb + 'MB';
+        }
+        // 统计全局 Draw 和骨骼数
+        var totalDraws = 0, totalBones = 0;
+        var nodesIter2 = SMData.nodes.values();
+        var r2 = nodesIter2.next();
+        while (!r2.done) {
+            var nd = r2.value;
+            if (nd.skeleton) {
+                totalBones += nd.bones.length;
+                totalDraws += (nd.skeleton.drawOrder ? nd.skeleton.drawOrder.length : 0);
+            }
+            r2 = nodesIter2.next();
+        }
+        document.getElementById('sbBones').textContent = '骨骼: ' + totalBones;
+        document.getElementById('sbDraws').textContent = 'Draw call: ' + totalDraws;
         SMTool._fc = 0;
         SMTool._ft = now;
     }
@@ -386,13 +323,6 @@ SMTool._loop = function (now) {
     // 不清空全屏！共享画布在节点上方，全屏清除会遮盖所有 UI 面板
     // 改为只在每个节点的 canvas-wrap 区域做 scissor 清除+绘制
     // 画布未绘制区域保持透明，让下层节点面板和网格透出
-
-    // 清空骨骼标记叠加层
-    var bctx = SMTool._boneOverlayCtx;
-    var bo = SMTool._boneOverlay;
-    if (bctx && bo) {
-        bctx.clearRect(0, 0, bo.width, bo.height);
-    }
 
     // ---- 视口裁剪：计算当前可见的世界坐标范围 ----
     var z = SMData.view.zoom;
@@ -449,8 +379,8 @@ SMTool._loop = function (now) {
 
         if (sw < 4 || sh < 4) { result = nodesIter.next(); continue; }
 
-        // 缩放 >= 20%：正常动画；< 20%：冻结动画（静态图跟随面板）
-        if (z >= 0.20) {
+        // 动画更新：动态模式始终 60fps，性能模式 <20% 冻结
+        if (SMData.renderMode === 'dyn' || z >= 0.20) {
             node.state.update(dt);
             node.state.apply(node.skeleton);
         }
@@ -482,7 +412,6 @@ SMTool._loop = function (now) {
             node.shader.unbind();
         }
 
-        SMTool._drawBoneMarksShared(node, node.skeleton, sx, sy, sw, sh);
         result = nodesIter.next();
     }
 
@@ -490,6 +419,7 @@ SMTool._loop = function (now) {
 
     // 绘制网格和连线（2D Canvas，不受 WebGL 影响）
     SMTool._renderGrid();
+    SMTool._renderGroupBoxes(SMTool.gridCtx);
     SMTool._renderConnections();
 };
 
@@ -522,7 +452,13 @@ SMTool._syncZoomUI = function () {
     var pct = Math.round(SMData.view.zoom * 100);
     document.getElementById('zoomLabel').textContent = pct + '%';
     var slider = document.getElementById('zoomSlider');
-    if (Math.abs(parseInt(slider.value) - pct) > 1) slider.value = pct;
+    var sliderVal = Math.round(pct);
+    if (sliderVal < 0) sliderVal = 0;
+    if (sliderVal > 200) sliderVal = 200;
+    if (Math.abs(parseInt(slider.value) - sliderVal) > 1) slider.value = sliderVal;
+    // 非 100% 时显示恢复按钮
+    var btn = document.getElementById('zoomResetBtn');
+    if (btn) btn.style.display = (pct !== 100) ? '' : 'none';
 };
 
 // ---- 适合视图 / 重置视图 ----

@@ -10,8 +10,10 @@ var SMTool = window.SMTool || {};
 SMTool._createEl = function (node) {
     var el = document.createElement('div');
     el.className = 'spine-node';
+    if (node.nodeType === 'textBox') el.classList.add('text-box-node');
+    if (node.nodeType === 'shortText') el.classList.add('short-text-node');
     el.id = 'sn-' + node.id;
-    el.style.minWidth = '260px';
+    el.style.minWidth = '200px';
 
     // 动画下拉框选项
     var missingForFile = (SMData._missingStates && node.sourceFile) ? (SMData._missingStates[node.sourceFile] || null) : null;
@@ -35,6 +37,35 @@ SMTool._createEl = function (node) {
     }
     if (!skinsHtml) skinsHtml = '<span class="badge">无皮肤</span>';
 
+    if (node.nodeType === 'shortText' || node.nodeType === 'textBox') {
+        var textContent = SMTool._esc(node._textContent || '');
+        if (node.nodeType === 'shortText') {
+            el.innerHTML =
+                '<div class="header" onmousedown="event.stopPropagation();SMTool._onHD(event,' + node.id + ')">' +
+                    '<span class="name" style="font-size:39px">' + SMTool._esc(node.name) + '</span>' +
+                    '<button onclick="event.stopPropagation();SMTool.deleteNode(' + node.id + ')" style="background:none;border:none;color:var(--text2);cursor:pointer;font-size:14px">✕</button>' +
+                '</div>' +
+                '<textarea class="text-node-input" oninput="SMTool._updateTextNode(' + node.id + ',this.value);this.style.height=\'auto\';this.style.height=this.scrollHeight+\'px\'" onclick="event.stopPropagation()" placeholder="输入条件...">' + textContent + '</textarea>' +
+                '<div class="anim-bar" style="margin-top:4px">' +
+                    '<div class="conn-dot input" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'text\',\'input\')" title="连线输入"></div>' +
+                    '<span style="flex:1"></span>' +
+                    '<div class="conn-dot output" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'text\',\'output\')" title="连线输出"></div>' +
+                '</div>';
+        } else {
+            // textBox
+            el.innerHTML =
+                '<div class="header" onmousedown="event.stopPropagation();SMTool._onHD(event,' + node.id + ')">' +
+                    '<input class="text-box-title" value="' + SMTool._esc(node.name) + '" oninput="SMTool._updateTextNodeName(' + node.id + ',this.value)" onclick="event.stopPropagation()" style="width:0;flex:1;min-width:0;background:transparent;border:none;color:var(--text);font-size:39px;font-weight:600;outline:none">' +
+                    '<button onclick="event.stopPropagation();SMTool.deleteNode(' + node.id + ')" style="background:none;border:none;color:var(--text2);cursor:pointer;font-size:14px">✕</button>' +
+                '</div>' +
+                '<div class="text-box-area" contenteditable="true" oninput="SMTool._updateTextNode(' + node.id + ',this.innerText)" onclick="event.stopPropagation()">' + textContent + '</div>' +
+                '<div class="anim-bar" style="margin-top:4px">' +
+                    '<div class="conn-dot input" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'text\',\'input\')" title="连线输入"></div>' +
+                    '<span style="flex:1"></span>' +
+                    '<div class="conn-dot output" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'text\',\'output\')" title="连线输出"></div>' +
+                '</div>';
+        }
+    } else {
     el.innerHTML =
         '<div class="header" onmousedown="event.stopPropagation();SMTool._onHD(event,' + node.id + ')">' +
             '<div class="header-titles">' +
@@ -54,15 +85,146 @@ SMTool._createEl = function (node) {
             '<select class="anim-select" onchange="SMTool._onAnimChange(' + node.id + ', this.value)">' + animOptionsHtml + '</select>' +
             '<div class="conn-dot output" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'' + SMTool._esc(curState) + '\',\'output\')" title="连线输出"></div>' +
         '</div>' +
-        '<div class="footer">' + skinsHtml + '<span class="badge" style="margin-left:auto">v' + SMTool._esc(node.version || '?') + '</span></div>';
+        '<div class="footer">' + skinsHtml +
+            '<label class="pma-toggle" title="预乘 Alpha"><input type="checkbox" onchange="SMTool._togglePMA(' + node.id + ',this.checked)"' + (node.premultipliedAlpha ? ' checked' : '') + '>预乘Alpha</label>' +
+            '<span class="badge" style="margin-left:auto">v' + SMTool._esc(node.version || '?') + '</span></div>' +
+        // ---- 面板外部：循环切换 + 骨骼标记 + 状态描述 ----
+        '<div class="node-extras">' +
+            '<button class="loop-toggle' + (node.loop !== false ? ' active' : '') + '" onclick="event.stopPropagation();SMTool._toggleLoop(' + node.id + ')">' + (node.loop !== false ? '🔄 循环播放' : '▶ 单次播放') + '</button>' +
+            '<div class="bone-tags" id="boneTags-' + node.id + '"></div>' +
+            '<textarea class="state-desc" placeholder="点击输入此状态的描述" oninput="SMTool._updateStateDesc(' + node.id + ',this.value)" onclick="event.stopPropagation()">' + SMTool._esc(node._stateDesc || '') + '</textarea>' +
+        '</div>';
+    }
 
     SMTool.nodesLayer.appendChild(el);
+};
+
+// ---- 文本节点内容更新 ----
+SMTool._updateTextNode = function (nid, value) {
+    var node = SMData.nodes.get(nid);
+    if (node) node._textContent = value;
+};
+SMTool._updateTextNodeName = function (nid, value) {
+    var node = SMData.nodes.get(nid);
+    if (node) node.name = value;
+};
+
+// ---- 循环/单次切换 ----
+SMTool._toggleLoop = function (nid) {
+    var node = SMData.nodes.get(nid);
+    if (!node) return;
+    node.loop = !node.loop;
+    if (node.state) {
+        // 更新当前动画的循环模式
+        var track = node.state.getCurrent(0);
+        if (track && track.animation) {
+            node.state.setAnimation(0, track.animation.name, node.loop);
+        }
+    }
+    var btn = document.querySelector('#sn-' + nid + ' .loop-toggle');
+    if (btn) {
+        btn.textContent = node.loop ? '🔄 循环播放' : '▶ 单次播放';
+        btn.classList.toggle('active', node.loop);
+    }
+};
+
+// ---- 状态描述更新 ----
+SMTool._updateStateDesc = function (nid, value) {
+    var node = SMData.nodes.get(nid);
+    if (node) node._stateDesc = value;
+    var ta = document.querySelector('#sn-' + nid + ' .state-desc');
+    if (ta) { ta.style.height = 'auto'; ta.style.height = Math.max(32, ta.scrollHeight) + 'px'; }
+};
+
+// ---- 骨骼标记 ----
+SMTool._toggleBoneTag = function (boneName) {
+    var node = SMData.nodes.get(SMData.selectedNode);
+    if (!node || node.nodeType !== 'spine') return;
+    if (!node._boneTags) node._boneTags = {};
+    if (node._boneTags[boneName]) {
+        delete node._boneTags[boneName];
+    } else {
+        node._boneTags[boneName] = [];
+    }
+    SMTool._updateFloatPanel();
+    SMTool._refreshBoneTagsUI(node);
+};
+
+SMTool._addBoneTagState = function (nid, boneName, stateName) {
+    var node = SMData.nodes.get(nid);
+    if (!node || !node._boneTags || !node._boneTags[boneName]) return;
+    if (node._boneTags[boneName].indexOf(stateName) < 0) {
+        node._boneTags[boneName].push(stateName);
+        SMTool._refreshBoneTagsUI(node);
+    }
+};
+
+SMTool._refreshBoneTagsUI = function (node) {
+    var el = document.getElementById('boneTags-' + node.id);
+    if (!el) return;
+    if (!node._boneTags || Object.keys(node._boneTags).length === 0) {
+        el.innerHTML = '';
+        return;
+    }
+    var html = '';
+    var bones = Object.keys(node._boneTags);
+    for (var b = 0; b < bones.length; b++) {
+        var bn = bones[b];
+        var states = node._boneTags[bn] || [];
+        html += '<div class="bone-tag-capsule">' +
+            '<div style="display:flex;align-items:center;justify-content:space-between">' +
+                '<span class="bone-tag-name">' + SMTool._esc(bn) + '</span>' +
+                '<span class="bone-tag-add" onclick="event.stopPropagation();SMTool._showBoneStateMenu(event,' + node.id + ',\'' + SMTool._esc(bn) + '\')">+</span>' +
+            '</div>';
+        if (states.length > 0) {
+            html += '<div class="bone-tag-states">';
+            for (var s = 0; s < states.length; s++) {
+                html += '<span class="bone-tag-state">' + SMTool._esc(states[s]) + '</span>';
+            }
+            html += '</div>';
+        }
+        html += '</div>';
+    }
+    el.innerHTML = html;
+};
+
+SMTool._showBoneStateMenu = function (e, nid, boneName) {
+    e.stopPropagation();
+    var node = SMData.nodes.get(nid);
+    if (!node) return;
+    var menu = document.createElement('div');
+    menu.className = 'bone-state-menu';
+    menu.style.cssText = 'position:fixed;z-index:200;background:var(--panel-bg);border:1px solid var(--border);border-radius:8px;padding:4px;max-height:200px;overflow-y:auto;box-shadow:0 4px 16px rgba(0,0,0,0.5)';
+    menu.style.left = e.clientX + 'px';
+    menu.style.top = e.clientY + 'px';
+    for (var i = 0; i < node.animations.length; i++) {
+        var an = node.animations[i].name;
+        var item = document.createElement('div');
+        item.className = 'bone-state-item';
+        item.textContent = an;
+        item.style.cssText = 'padding:4px 10px;cursor:pointer;font-size:13px;color:var(--text);border-radius:4px';
+        item.onmouseover = function () { this.style.background = 'var(--node-bg)'; };
+        item.onmouseout = function () { this.style.background = 'transparent'; };
+        (function (an2) {
+            item.onclick = function () {
+                SMTool._addBoneTagState(nid, boneName, an2);
+                menu.remove();
+            };
+        })(an);
+        menu.appendChild(item);
+    }
+    document.body.appendChild(menu);
+    var close = function (ev) {
+        if (!menu.contains(ev.target)) { menu.remove(); document.removeEventListener('click', close); }
+    };
+    setTimeout(function () { document.addEventListener('click', close); }, 0);
 };
 
 // ---- 更新节点 DOM ----
 SMTool._updateEl = function (node) {
     var el = SMTool._getEl(node.id);
     if (!el) return;
+    if (node.nodeType !== 'spine') return;  // 文本节点无需刷新
 
     // 动画下拉框
     var sel = el.querySelector('.anim-select');
@@ -102,7 +264,9 @@ SMTool._updateEl = function (node) {
         for (var si = 0; si < node.skins.length; si++) {
             skinsHtml += '<span class="badge">' + SMTool._esc(node.skins[si]) + '</span>';
         }
-        ft.innerHTML = (skinsHtml || '<span class="badge">无皮肤</span>') + '<span class="badge" style="margin-left:auto">v' + SMTool._esc(node.version || '?') + '</span>';
+        ft.innerHTML = (skinsHtml || '<span class="badge">无皮肤</span>') +
+            '<label class="pma-toggle" title="预乘 Alpha"><input type="checkbox" onchange="SMTool._togglePMA(' + node.id + ',this.checked)"' + (node.premultipliedAlpha ? ' checked' : '') + '>预乘Alpha</label>' +
+            '<span class="badge" style="margin-left:auto">v' + SMTool._esc(node.version || '?') + '</span>';
     }
 
     // 标题
@@ -263,11 +427,9 @@ SMTool._updateFloatPanel = function () {
         var curAnim = node.currentAnim || '';
         var storeKey = (node.sourceFile || node.name) + '||' + curAnim;
         var boneLabels = SMData._boneLabelStore[storeKey] || {};
-        var boneMarks = SMData._boneMarkStore[storeKey] || {};
         for (var bi = 0; bi < node.bones.length; bi++) {
             var boneName = node.bones[bi];
             var label = boneLabels[boneName] || '';
-            var isMarked = !!boneMarks[boneName];
             var labelHtml = '';
             if (label) {
                 labelHtml = '<span class="dfp-bone-label" data-bone="' + SMTool._esc(boneName) + '" title="点击编辑标签">' +
@@ -276,9 +438,9 @@ SMTool._updateFloatPanel = function () {
                 '</span>';
             }
             boneRows += '<div class="dfp-row dfp-bone-row" data-bone="' + SMTool._esc(boneName) + '">' +
-                '<span class="dfp-bone-mark' + (isMarked ? ' active' : '') + '" data-bone="' + SMTool._esc(boneName) + '" title="标记骨骼位置">✚</span>' +
                 '<span>' + SMTool._esc(boneName) + '</span>' +
-                '<span class="dfp-bone-right">' + labelHtml + '</span></div>';
+                    '<button class="dfp-bone-tag-btn" data-bone="' + SMTool._esc(boneName) + '" style="font-size:14px;cursor:pointer;background:none;border:1px solid #50c878;color:#50c878;border-radius:4px;padding:0 6px;margin-left:8px">标记</button>' +
+                    '<span class="dfp-bone-right" style="margin-left:auto">' + labelHtml + '</span></div>';
         }
         if (!boneRows) boneRows = '<div class="dfp-row">无</div>';
 
@@ -309,8 +471,71 @@ SMTool._updateFloatPanel = function () {
             '<div class="dfp-section"><div class="dfp-section-title">🔧 插槽 (' + node.slots.length + ')</div>' + slotRows + '</div>' +
             '<div class="dfp-section"><div class="dfp-check-row"><input type="checkbox" id="dfpPma" ' + (node.premultipliedAlpha ? 'checked' : '') + ' onchange="SMTool._togglePMA(' + node.id + ',this.checked)"><label for="dfpPma">预乘 Alpha 通道</label></div></div>';
     } else if (SMData.selectedNodes.size > 1) {
-        panel.classList.add('inactive');
-        content.innerHTML = '<div class="dfp-hint">已多选 ' + SMData.selectedNodes.size + ' 个节点</div>';
+        // 多选时，检查是否同一源文件
+        var sampleNode = null;
+        var sameFile = true;
+        var firstFile = null;
+        var activeAnims = {};  // { animName: true }
+        var allPma = null;
+        SMData.selectedNodes.forEach(function (nid) {
+            var n = SMData.nodes.get(nid);
+            if (!n) return;
+            if (!sampleNode) { sampleNode = n; firstFile = n.sourceFile; }
+            if (n.sourceFile !== firstFile) sameFile = false;
+            if (n.currentAnim) activeAnims[n.currentAnim] = true;
+            if (allPma === null) allPma = n.premultipliedAlpha;
+            else if (allPma !== n.premultipliedAlpha) allPma = 'mixed';
+        });
+
+        if (sameFile && sampleNode && sampleNode.sourceFile) {
+            panel.classList.remove('inactive');
+            var node = sampleNode;
+
+            var animsHtml2 = '';
+            for (var ai2 = 0; ai2 < node.animations.length; ai2++) {
+                var a2 = node.animations[ai2];
+                var isActive2 = !!activeAnims[a2.name];
+                animsHtml2 += '<div class="dfp-row' + (isActive2 ? ' active' : '') + '"><span>' + SMTool._esc(a2.name) + '</span><span>' + a2.duration.toFixed(2) + 's</span></div>';
+            }
+            if (!animsHtml2) animsHtml2 = '<div class="dfp-row">无</div>';
+
+            var skinRows2 = '';
+            for (var si2 = 0; si2 < node.skins.length; si2++) {
+                skinRows2 += '<div class="dfp-row">' + SMTool._esc(node.skins[si2]) + '</div>';
+            }
+            if (!skinRows2) skinRows2 = '<div class="dfp-row">default</div>';
+
+            var boneRows2 = '';
+            var curAnim2 = node.currentAnim || '';
+            var storeKey2 = (node.sourceFile || node.name) + '||' + curAnim2;
+            var boneLabels2 = SMData._boneLabelStore[storeKey2] || {};
+            for (var bi2 = 0; bi2 < node.bones.length; bi2++) {
+                var boneName2 = node.bones[bi2];
+                var label2 = boneLabels2[boneName2] || '';
+                var labelHtml2 = label2 ? '<span class="dfp-bone-label" data-bone="' + SMTool._esc(boneName2) + '">' + SMTool._esc(label2) + '<span class="dfp-bone-label-del" data-bone="' + SMTool._esc(boneName2) + '">&times;</span></span>' : '';
+                boneRows2 += '<div class="dfp-row dfp-bone-row" data-bone="' + SMTool._esc(boneName2) + '"><span>' + SMTool._esc(boneName2) + '</span><span class="dfp-bone-right">' + labelHtml2 + '</span></div>';
+            }
+            if (!boneRows2) boneRows2 = '<div class="dfp-row">无</div>';
+
+            var slotRows2 = '';
+            for (var sli2 = 0; sli2 < node.slots.length; sli2++) {
+                slotRows2 += '<div class="dfp-row">' + SMTool._esc(node.slots[sli2]) + '</div>';
+            }
+            if (!slotRows2) slotRows2 = '<div class="dfp-row">无</div>';
+
+            var checkedStr = (allPma === true) ? 'checked' : '';
+            content.innerHTML =
+                '<div class="dfp-section"><div class="dfp-section-title">🏷️ 已选 ' + SMData.selectedNodes.size + ' 个节点（同源）</div></div>' +
+                '<div class="dfp-section"><div class="dfp-section-title">📦 Spine 版本</div><div class="dfp-row"><span>版本</span><span>' + SMTool._esc(node.version || '未知') + '</span></div></div>' +
+                '<div class="dfp-section"><div class="dfp-section-title">🎬 动画 (' + node.animations.length + ')</div>' + animsHtml2 + '</div>' +
+                '<div class="dfp-section"><div class="dfp-section-title">🎨 皮肤 (' + node.skins.length + ')</div>' + skinRows2 + '</div>' +
+                '<div class="dfp-section"><div class="dfp-section-title">🦴 骨骼 (' + node.bones.length + ')</div>' + boneRows2 + '</div>' +
+                '<div class="dfp-section"><div class="dfp-section-title">🔧 插槽 (' + node.slots.length + ')</div>' + slotRows2 + '</div>' +
+                '<div class="dfp-section"><div class="dfp-check-row"><input type="checkbox" id="dfpPma" ' + checkedStr + ' onchange="SMTool._toggleMultiPMA(this.checked)"><label for="dfpPma">预乘 Alpha 通道</label></div></div>';
+        } else {
+            panel.classList.add('inactive');
+            content.innerHTML = '<div class="dfp-hint">已多选 ' + SMData.selectedNodes.size + ' 个节点</div>';
+        }
     } else {
         panel.classList.add('inactive');
         content.innerHTML = '<div class="dfp-hint">点击一个 Spine 节点以查看其动画数据</div>';
@@ -377,11 +602,24 @@ SMTool._updateStateRowColors = function () {
 // ---- PMA 切换 ----
 SMTool._togglePMA = function (nid, v) {
     var node = SMData.nodes.get(nid);
-    if (node) node.premultipliedAlpha = v;
+    if (!node) return;
+    node.premultipliedAlpha = v;
+    SMTool._updateEl(node);
+    SMTool._updateFloatPanel();
+};
+
+// 多选时批量切换 PMA
+SMTool._toggleMultiPMA = function (v) {
+    SMData.selectedNodes.forEach(function (nid) {
+        var n = SMData.nodes.get(nid);
+        if (n) { n.premultipliedAlpha = v; SMTool._updateEl(n); }
+    });
+    SMTool._updateFloatPanel();
 };
 
 // ---- 重复节点红色高亮检测 ----
 SMTool._updateDuplicateHighlights = function () {
+    // 按 sourceFile + currentAnim 分组
     var groups = new Map();
     var nodesIter = SMData.nodes.values();
     var result = nodesIter.next();
@@ -395,31 +633,49 @@ SMTool._updateDuplicateHighlights = function () {
         result = nodesIter.next();
     }
 
-    var duplicateIds = new Set();
-    var groupEntriesIter = groups.values();
+    // 为每个重复组分配不同颜色
+    var dupColors = [
+        '#ff4444', '#ff8c00', '#ffd700', '#44bb44', '#44aaff',
+        '#8844ff', '#ff44aa', '#44dddd', '#ff8844', '#88ff44',
+        '#ee3333', '#cc6600', '#eebb00', '#228833', '#3377cc',
+        '#6633cc', '#cc2277', '#229999', '#dd5522', '#55aa22'
+    ];
+    var groupColorMap = {};  // "sourceFile|anim" → color
+    var nextColor = 0;
+
+    var groupEntriesIter = groups.entries();
     var gResult = groupEntriesIter.next();
     while (!gResult.done) {
-        if (gResult.value.length > 1) {
-            for (var i = 0; i < gResult.value.length; i++) {
-                duplicateIds.add(gResult.value[i]);
-            }
+        var key = gResult.value[0];
+        var ids = gResult.value[1];
+        if (ids.length > 1) {
+            groupColorMap[key] = dupColors[nextColor % dupColors.length];
+            nextColor++;
         }
         gResult = groupEntriesIter.next();
     }
 
-    var count = 0;
+    // 应用高亮颜色
     var nodesIter2 = SMData.nodes.values();
     var result2 = nodesIter2.next();
     while (!result2.done) {
         var el2 = SMTool._getEl(result2.value.id);
         if (el2) {
-            var isDup = duplicateIds.has(result2.value.id);
+            var n2 = result2.value;
+            var key2 = n2.sourceFile + '|' + n2.currentAnim;
+            var dupList = groups.get(key2);
+            var isDup = dupList && dupList.length > 1;
             el2.classList.toggle('duplicate-highlight', isDup);
-            if (isDup) count++;
+            if (isDup && groupColorMap[key2]) {
+                el2.style.setProperty('--dup-color', groupColorMap[key2]);
+                el2.style.setProperty('--dup-glow', groupColorMap[key2] + '80');
+            } else {
+                el2.style.removeProperty('--dup-color');
+                el2.style.removeProperty('--dup-glow');
+            }
         }
         result2 = nodesIter2.next();
     }
-    console.log('[DupCheck] 检测完成：' + SMData.nodes.size + ' 个节点，' + count + ' 个重复高亮');
 };
 
 // ---- 缺失状态检测 + 通知面板 ----

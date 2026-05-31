@@ -151,9 +151,10 @@ SMTool._renderConnections = function () {
             ctx.stroke();
         }
 
-        // 条件标签（带换行/截断）—— 尺寸随画布缩放
-        var rawLabel = conn.condition || '条件';
-        var maxCharsPerLine = 20;
+        // 条件标签（文本节点连线不显示条件框）
+        if (conn.fromState !== 'text' && conn.toState !== 'text') {
+            var rawLabel = conn.condition || '条件';
+            var maxCharsPerLine = 20;
         var maxTotalChars = 50;
         var truncated = rawLabel.length > maxTotalChars;
         var displayText = truncated ? rawLabel.substring(0, maxTotalChars) + '...' : rawLabel;
@@ -228,6 +229,7 @@ SMTool._renderConnections = function () {
         for (var li2 = 0; li2 < lines.length; li2++) {
             ctx.fillText(lines[li2], mx, rectY + textOffY + li2 * lineHeight);
         }
+        }  // end if (!textNode)
     }
 
     // 正在连线时的预览

@@ -51,8 +51,12 @@ var SMData = {
     // 骨骼标签全局存储：{ "源文件名||动画名": { "骨骼名": "标签文本" } }
     _boneLabelStore: {},
 
-    // 骨骼标记全局存储：{ "源文件名||动画名": { "骨骼名": true } }
-    _boneMarkStore: {}
+    // 节点分组
+    groups: [],          // [{ id, nodeIds: Set, color }]
+    nextGroupId: 1,
+
+    // 渲染模式：'perf' | 'dyn'
+    renderMode: 'perf'
 };
 
 // ---- Spine 节点数据类 ----
@@ -60,6 +64,7 @@ var SpineNodeData = (function () {
     function SpineNodeData(id) {
         this.id = id;
         this.name = 'Node_' + id;
+        this.nodeType = 'spine';  // 'spine' | 'shortText' | 'textBox'
         this.x = Math.random() * 200 - 100 + window.innerWidth / 2;
         this.y = Math.random() * 200 - 100 + window.innerHeight / 2;
         this.width = 300;
@@ -105,6 +110,11 @@ var SpineNodeData = (function () {
         this._SP = null;
         this._physParam = undefined;
         this.sceneRenderer = null;
+
+        // 播放模式
+        this.loop = true;           // true=循环, false=单次
+        this._boneTags = {};        // { boneName: [animState1, animState2] }
+        this._stateDesc = '';       // 状态描述文本
     }
     return SpineNodeData;
 })();

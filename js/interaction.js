@@ -52,12 +52,13 @@ SMTool._onMD = function (e) {
     // 中键/右键/Alt+左键 → 平移
     if (e.button === 2) {
         SMTool._onPanStart(e);
-        SMTool.gridCanvas.style.cursor = 'grabbing';
+        SMTool.gridCanvas.style.cursor = 'grab';
         return;
     }
     if (e.button === 1 || (e.button === 0 && e.altKey)) {
+        e.preventDefault();
         SMTool._onPanStart(e);
-        SMTool.gridCanvas.style.cursor = 'grabbing';
+        SMTool.gridCanvas.style.cursor = 'grab';
         return;
     }
 
@@ -78,13 +79,27 @@ SMTool._onMD = function (e) {
 
         if (found) {
             if (e.ctrlKey || e.metaKey) {
-                // Ctrl+点击：切换选中状态
+                // Ctrl+点击：切换选中
                 if (SMData.selectedNodes.has(found.id)) {
                     SMData.selectedNodes.delete(found.id);
                 } else {
                     SMData.selectedNodes.add(found.id);
                 }
-                SMData.selectedNode = SMData.selectedNodes.size > 0 ? found.id : null;
+                SMData.selectedNode = null;
+                if (SMData.selectedNodes.size > 0) {
+                    SMData.selectedNode = SMData.selectedNodes.values().next().value;
+                }
+                SMData.selectedConnection = null;
+                SMData.draggedNode = null;
+                SMData.isMultiDragging = false;
+                SMTool._updateStateRowColors();
+                SMTool._updateSel();
+            } else if (e.shiftKey) {
+                // Shift+点击：只增不减
+                if (!SMData.selectedNodes.has(found.id)) {
+                    SMData.selectedNodes.add(found.id);
+                }
+                SMData.selectedNode = found.id;
                 SMData.selectedConnection = null;
                 SMData.draggedNode = null;
                 SMData.isMultiDragging = false;
@@ -108,24 +123,40 @@ SMTool._onMD = function (e) {
                 SMTool._updateStateRowColors();
                 SMTool._updateSel();
             } else {
-                // 普通点击：单选
+                // 普通点击：单选，如在组内则全选整组
                 SMData.selectedNodes.clear();
-                SMData.selectedNodes.add(found.id);
+                var grp = SMTool._findGroupOf(found.id);
+                if (grp) {
+                    grp.nodeIds.forEach(function (gid) { SMData.selectedNodes.add(gid); });
+                    SMData.isMultiDragging = true;
+                    SMData.draggedNode = null;
+                    SMData.multiDragOffsets.clear();
+                    grp.nodeIds.forEach(function (gid) {
+                        var gn = SMData.nodes.get(gid);
+                        if (gn) SMData.multiDragOffsets.set(gid, { x: wp.x - gn.x, y: wp.y - gn.y });
+                    });
+                } else {
+                    SMData.selectedNodes.add(found.id);
+                    SMData.draggedNode = found;
+                    SMData.isMultiDragging = false;
+                    SMData.dragOffset = { x: wp.x - found.x, y: wp.y - found.y };
+                }
                 SMData.selectedNode = found.id;
                 SMData.selectedConnection = null;
-                SMData.draggedNode = found;
-                SMData.isMultiDragging = false;
                 SMTool._updateStateRowColors();
-                SMData.dragOffset = { x: wp.x - found.x, y: wp.y - found.y };
                 SMTool._updateSel();
             }
         } else {
             // 点击空白 → 开始框选
-            SMData.selectedNode = null;
+            if (!e.shiftKey) {
+                SMData.selectedNode = null;
+                SMData.selectedNodes.clear();
+            }
             SMData.selectedConnection = null;
             SMData.draggedNode = null;
             SMData.isMultiDragging = false;
             SMData.marqueeActive = true;
+            SMData.marqueeShift = !!e.shiftKey;
             SMData.marqueeStart.x = e.clientX;
             SMData.marqueeStart.y = e.clientY;
             SMData.marqueeEnd.x = e.clientX;
@@ -213,7 +244,7 @@ SMTool._onMM = function (e) {
         SMTool._onPanMove(e);
     }
 
-    // 拖拽节点（单拖拽或多拖拽）
+    // 拖拽节点（单拖拽）
     if (SMData.draggedNode) {
         var wp2 = SMTool.canvasToWorld(e.clientX, e.clientY);
         SMData.draggedNode.x = wp2.x - SMData.dragOffset.x;
@@ -221,7 +252,7 @@ SMTool._onMM = function (e) {
         SMTool._updatePos(SMData.draggedNode);
     }
 
-    // 多节点拖拽
+    // 多节点拖拽（含组拖拽）
     if (SMData.isMultiDragging) {
         var wp3 = SMTool.canvasToWorld(e.clientX, e.clientY);
         var nodesIter3 = SMData.nodes.values();
@@ -326,8 +357,10 @@ SMTool._onMU = function (e) {
         var minSize = 5; // 最小框选尺寸，小于此值为点击
 
         if ((mx2 - mx1) > minSize || (my2 - my1) > minSize) {
-            SMData.selectedNodes.clear();
-            SMData.selectedNode = null;
+            if (!SMData.marqueeShift) {
+                SMData.selectedNodes.clear();
+                SMData.selectedNode = null;
+            }
             var nodesIter4 = SMData.nodes.values();
             var result4 = nodesIter4.next();
             while (!result4.done) {
@@ -348,9 +381,11 @@ SMTool._onMU = function (e) {
                 SMData.selectedNode = first;
             }
         } else {
-            // 微小移动视为空白点击：取消所有选中
-            SMData.selectedNodes.clear();
-            SMData.selectedNode = null;
+            // 微小移动视为空白点击：无 Shift 时取消选中
+            if (!SMData.marqueeShift) {
+                SMData.selectedNodes.clear();
+                SMData.selectedNode = null;
+            }
         }
         SMData.draggedNode = null;
         SMData.isMultiDragging = false;
@@ -468,18 +503,46 @@ SMTool._onKD = function (e) {
         return;
     }
     if (e.key === 'Delete') {
+        // 优先删除选中的连线
+        if (SMData.selectedConnection) {
+            SMData.connections = SMData.connections.filter(function (x) {
+                return x.id !== SMData.selectedConnection;
+            });
+            SMData.selectedConnection = null;
+            SMTool._updateSB();
+            SMTool._updateStateRowColors();
+            return;
+        }
         if (SMData.selectedNodes.size > 1) {
-            // 删除所有选中的节点
             var toDelete = [];
             SMData.selectedNodes.forEach(function (id) { toDelete.push(id); });
-            for (var i = 0; i < toDelete.length; i++) {
-                SMTool.deleteNode(toDelete[i]);
-            }
+            for (var i = 0; i < toDelete.length; i++) SMTool.deleteNode(toDelete[i]);
             SMData.selectedNodes.clear();
             SMData.selectedNode = null;
+            SMTool._updateSel(); SMTool._updateSB();
+            SMTool._updateStateRowColors(); SMTool._updateDuplicateHighlights(); SMTool._checkMissingStates();
         } else if (SMData.selectedNode) {
             SMTool.deleteNode(SMData.selectedNode);
         }
+    }
+    // Ctrl+G：打组
+    if (e.ctrlKey && !e.shiftKey && e.key === 'g') {
+        SMTool.groupSelection();
+        e.preventDefault();
+    }
+    // Ctrl+Shift+G：取消选中节点所在组
+    if (e.ctrlKey && e.shiftKey && e.key === 'G') {
+        if (SMData.selectedNode) {
+            var ug = SMTool._findGroupOf(SMData.selectedNode);
+            if (ug) {
+                for (var ugi = 0; ugi < SMData.groups.length; ugi++) {
+                    if (SMData.groups[ugi].id === ug.id) { SMData.groups.splice(ugi, 1); break; }
+                }
+                document.getElementById('sbStatus').textContent = '已取消打组';
+                setTimeout(function () { document.getElementById('sbStatus').textContent = ''; }, 1500);
+            }
+        }
+        e.preventDefault();
     }
     if (e.key === 'Escape') {
         SMData.connecting = null;
@@ -752,16 +815,49 @@ SMTool._showCtxMenu = function (e) {
         SMData.selectedNode = found.id;
         SMTool._updateSel();
         var menu = document.getElementById('ctxMenu');
+        var ungroupItem = menu.querySelector('.ctx-ungroup');
+        if (ungroupItem) ungroupItem.remove();
         menu.style.display = 'block';
         menu.style.left = e.clientX + 'px';
         menu.style.top = e.clientY + 'px';
     } else {
-        // 右键空白区域：取消所有选中
-        SMData.selectedNode = null;
-        SMData.selectedNodes.clear();
-        SMData.selectedConnection = null;
-        SMTool._updateSel();
-        SMTool._updateStateRowColors();
+        // 检查是否右键在分组区域内
+        var ungrouped = SMTool.ungroupAt(wp.x, wp.y);
+        if (!ungrouped) {
+            SMData.selectedNode = null;
+            SMData.selectedNodes.clear();
+            SMData.selectedConnection = null;
+            SMTool._updateSel();
+            SMTool._updateStateRowColors();
+        }
+        // 空白区域右键菜单：创建文本节点 + 打组
+        var menu3 = document.getElementById('ctxMenu');
+        menu3.querySelectorAll('.ctx-text-node').forEach(function (el) { el.remove(); });
+        var item1 = document.createElement('div');
+        item1.className = 'ctx-item ctx-text-node';
+        item1.textContent = '📝 创建短文本节点';
+        item1.onclick = function () { SMTool.createShortTextNode(wp.x, wp.y); menu3.style.display = 'none'; };
+        menu3.appendChild(item1);
+        var item2 = document.createElement('div');
+        item2.className = 'ctx-item ctx-text-node';
+        item2.textContent = '📄 创建文本框节点';
+        item2.onclick = function () { SMTool.createTextBoxNode(wp.x, wp.y); menu3.style.display = 'none'; };
+        menu3.appendChild(item2);
+        // 检查分组区域
+        for (var g = 0; g < SMData.groups.length; g++) {
+            var bb = SMTool._getGroupBounds(SMData.groups[g]);
+            if (bb && wp.x >= bb.left && wp.x <= bb.right && wp.y >= bb.top && wp.y <= bb.bottom) {
+                var item3 = document.createElement('div');
+                item3.className = 'ctx-item ctx-ungroup';
+                item3.textContent = '🔓 取消打组';
+                item3.onclick = function () { SMTool.ungroupAt(wp.x, wp.y); menu3.style.display = 'none'; };
+                menu3.appendChild(item3);
+                break;
+            }
+        }
+        menu3.style.display = 'block';
+        menu3.style.left = e.clientX + 'px';
+        menu3.style.top = e.clientY + 'px';
     }
 };
 
@@ -905,12 +1001,12 @@ SMTool._initBoneLabelEvents = function () {
     if (!content) return;
 
     content.addEventListener('click', function (e) {
-        // 标记骨骼（✚ 按钮）
-        var markEl = e.target.closest('.dfp-bone-mark');
-        if (markEl) {
+        // 骨骼标记按钮
+        var tagBtn = e.target.closest('.dfp-bone-tag-btn');
+        if (tagBtn) {
             e.stopPropagation();
-            var boneName = markEl.getAttribute('data-bone');
-            SMTool._toggleBoneMark(boneName);
+            var boneName = tagBtn.getAttribute('data-bone');
+            SMTool._toggleBoneTag(boneName);
             return;
         }
 
@@ -1018,24 +1114,5 @@ SMTool._removeBoneLabel = function (boneName) {
         }
     }
 
-    SMTool._updateFloatPanel();
-};
-
-// 切换骨骼标记（在动画画布上显示红色十字叉）
-SMTool._toggleBoneMark = function (boneName) {
-    var node = SMData.nodes.get(SMData.selectedNode);
-    if (!node) return;
-
-    var storeKey = (node.sourceFile || node.name) + '||' + (node.currentAnim || '');
-    if (!SMData._boneMarkStore[storeKey]) SMData._boneMarkStore[storeKey] = {};
-
-    if (SMData._boneMarkStore[storeKey][boneName]) {
-        delete SMData._boneMarkStore[storeKey][boneName];
-        if (Object.keys(SMData._boneMarkStore[storeKey]).length === 0) {
-            delete SMData._boneMarkStore[storeKey];
-        }
-    } else {
-        SMData._boneMarkStore[storeKey][boneName] = true;
-    }
     SMTool._updateFloatPanel();
 };
