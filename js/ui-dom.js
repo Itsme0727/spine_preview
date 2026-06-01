@@ -371,14 +371,6 @@ SMTool._updatePos = function (node) {
     el.style.transform = 'scale(' + z + ')';
     el.style.transformOrigin = 'top left';
 
-    // 标题（中/英文）按正常缩放 0.3 倍，即抵消大部分父级缩放
-    var titleScale = Math.pow(z, -0.7);
-    var titles = el.querySelectorAll('.header-titles');
-    for (var ti = 0; ti < titles.length; ti++) {
-        titles[ti].style.transform = 'scale(' + titleScale + ')';
-        titles[ti].style.transformOrigin = 'top left';
-    }
-
     SMTool._updateFloatLabels();
 };
 
@@ -463,13 +455,18 @@ SMTool._updateFloatLabels = function () {
 SMTool._updateSel = function () {
     // 计算焦点集合：选中节点 + 直接连线节点
     var focusSet = new Set();
-    if (SMData.selectedNodes.size === 1 && SMData.selectedNode) {
-        var selId = SMData.selectedNode;
-        focusSet.add(selId);
-        for (var ci = 0; ci < SMData.connections.length; ci++) {
-            var c = SMData.connections[ci];
-            if (c.fromNode === selId) focusSet.add(c.toNode);
-            if (c.toNode === selId) focusSet.add(c.fromNode);
+    if (SMData.selectedNodes.size >= 1) {
+        var selIter = SMData.selectedNodes.values();
+        var sr = selIter.next();
+        while (!sr.done) {
+            var selId = sr.value;
+            focusSet.add(selId);
+            for (var ci = 0; ci < SMData.connections.length; ci++) {
+                var c = SMData.connections[ci];
+                if (c.fromNode === selId) focusSet.add(c.toNode);
+                if (c.toNode === selId) focusSet.add(c.fromNode);
+            }
+            sr = selIter.next();
         }
     }
     SMData._focusNodes = focusSet;
@@ -481,7 +478,15 @@ SMTool._updateSel = function () {
         var el = SMTool._getEl(n.id);
         if (el) {
             el.classList.toggle('selected', SMData.selectedNodes.has(n.id));
-            el.classList.toggle('dimmed', focusSet.size > 0 && !focusSet.has(n.id));
+            var isDimmed = focusSet.size > 0 && !focusSet.has(n.id);
+            var overlay = el.querySelector('.dim-overlay');
+            if (isDimmed && !overlay) {
+                overlay = document.createElement('div');
+                overlay.className = 'dim-overlay';
+                el.appendChild(overlay);
+            } else if (!isDimmed && overlay) {
+                overlay.remove();
+            }
             if (SMData.connecting && SMData.connecting.nodeId === n.id) {
                 el.classList.add('connecting');
             } else {
@@ -490,7 +495,6 @@ SMTool._updateSel = function () {
         }
         result = nodesIter.next();
     }
-    // 更新浮窗面板数据
     SMTool._updateFloatPanel();
 };
 

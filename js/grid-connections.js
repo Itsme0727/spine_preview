@@ -99,9 +99,12 @@ SMTool._renderConnections = function () {
         var isActive = isSelected || isDragged;
         var z = SMData.view.zoom;  // 缩放因子
 
-        // 焦点模式：非直接连线贝塞尔曲线置灰
+        // 焦点模式：仅高亮与选中节点直接相关的连线
         var focusNodes = SMData._focusNodes;
-        var inFocus = !focusNodes || !focusNodes.size || (focusNodes.has(conn.fromNode) && focusNodes.has(conn.toNode));
+        var inFocus = !focusNodes || !focusNodes.size || (
+            focusNodes.has(conn.fromNode) && focusNodes.has(conn.toNode) &&
+            (SMData.selectedNodes.has(conn.fromNode) || SMData.selectedNodes.has(conn.toNode))
+        );
 
         // 绘制贝塞尔曲线
         ctx.globalAlpha = inFocus ? 1 : 0.12;
@@ -124,7 +127,7 @@ SMTool._renderConnections = function () {
         ctx.stroke();
         ctx.globalAlpha = 1;
 
-        // 方向箭头（1/3 和 2/3 位置）
+        // 方向箭头
         if (!inFocus) ctx.globalAlpha = 0.12;
         SMTool._drawBezierArrows(ctx, fs.x, fs.y, cp1s.x, cp1s.y, cp2s.x, cp2s.y, ts.x, ts.y, inFocus ? connColor : '#888', isActive, z);
         ctx.globalAlpha = 1;
@@ -159,11 +162,10 @@ SMTool._renderConnections = function () {
             ctx.stroke();
         }
 
-        // 条件标签（文本节点连线不显示条件框）
-        if (conn.fromState !== 'text' && conn.toState !== 'text') {
-            if (!inFocus) ctx.globalAlpha = 0.12;
-            var rawLabel = conn.condition || '条件';
-            var maxCharsPerLine = 20;
+        // 条件标签（带换行/截断）—— 尺寸随画布缩放
+        if (!inFocus) ctx.globalAlpha = 0.12;
+        var rawLabel = conn.condition || '条件';
+        var maxCharsPerLine = 20;
         var maxTotalChars = 50;
         var truncated = rawLabel.length > maxTotalChars;
         var displayText = truncated ? rawLabel.substring(0, maxTotalChars) + '...' : rawLabel;
@@ -238,9 +240,8 @@ SMTool._renderConnections = function () {
         for (var li2 = 0; li2 < lines.length; li2++) {
             ctx.fillText(lines[li2], mx, rectY + textOffY + li2 * lineHeight);
         }
-        }  // end if (!textNode)
-        ctx.globalAlpha = 1;
     }
+    ctx.globalAlpha = 1;
 
     // 正在连线时的预览
     if (SMData.connecting) {
@@ -300,7 +301,6 @@ SMTool._getStateConnectorPos = function (node, stateName, type) {
 // 在 t=1/6 和 t=4/6 位置绘制箭头，避免被条件框遮挡
 SMTool._drawBezierArrows = function (ctx, x0, y0, x1, y1, x2, y2, x3, y3, color, isActive, z) {
     z = z || 1;
-    // 100%缩放保持原始大小，缩小时箭头轻微反向放大
     var arrowSize = (isActive ? 26 : 21) * z;
     var positions = [1 / 6, 5 / 6];
     for (var p = 0; p < positions.length; p++) {

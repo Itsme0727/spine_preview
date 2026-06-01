@@ -320,9 +320,11 @@ SMTool._loop = function (now) {
     var cwFull = sharedCanvas.width;
     var chFull = sharedCanvas.height;
 
-    // 不清空全屏！共享画布在节点上方，全屏清除会遮盖所有 UI 面板
-    // 改为只在每个节点的 canvas-wrap 区域做 scissor 清除+绘制
-    // 画布未绘制区域保持透明，让下层节点面板和网格透出
+    // 每帧全清画布为透明，确保非渲染区域不会残留旧像素
+    gl.disable(gl.SCISSOR_TEST);
+    gl.viewport(0, 0, cwFull, chFull);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
 
     // ---- 视口裁剪：计算当前可见的世界坐标范围 ----
     var z = SMData.view.zoom;
@@ -376,6 +378,16 @@ SMTool._loop = function (now) {
         var sp = SMTool.worldToCanvas(node.x, node.y);
         var sx = Math.round(sp.x), sy = Math.round(sp.y);
         var sw = Math.round(nodeW * z), sh = Math.round(nodeH * z);
+
+        // 跳过 header 区域，scissor 从 canvas-wrap 位置开始
+        if (!node._headerH || node._headerH <= 0) {
+            var el = SMTool._getEl(node.id);
+            var hdr = el ? el.querySelector('.header') : null;
+            var measured = hdr ? hdr.offsetHeight : 0;
+            node._headerH = measured > 0 ? measured : 70;
+        }
+        var headerOffset = Math.round(node._headerH * z);
+        sy += headerOffset;
 
         if (sw < 4 || sh < 4) { result = nodesIter.next(); continue; }
 

@@ -46,6 +46,7 @@ body {
     top: 0; left: 0;
     z-index: 3;
     pointer-events: none;
+    background: transparent;
 }
 #boneOverlay {
     position: absolute;
@@ -219,15 +220,13 @@ body {
     border-color: var(--accent);
     box-shadow: 0 0 24px rgba(233, 69, 96, 0.3);
 }
-/* 未直接连线节点置灰（通过遮罩层实现，不影响层叠上下文） */
-.spine-node.dimmed::after {
-    content: '';
+/* 未直接连线节点置灰（JS 动态插入遮罩 div） */
+.spine-node .dim-overlay {
     position: absolute;
     top: 0; left: 0; right: 0; bottom: 0;
     background: rgba(0, 0, 0, 0.55);
     border-radius: inherit;
     pointer-events: none;
-    z-index: 100;
 }
 /* 重复节点高亮：按文件组不同颜色 */
 .spine-node.duplicate-highlight {
