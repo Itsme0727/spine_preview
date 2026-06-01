@@ -236,6 +236,7 @@ SMTool._createCloneNode = function (sourceNode, animName, index, total, callback
     node._srcType = sourceNode._srcType;
     node._srcFileNames = sourceNode._srcFileNames ? sourceNode._srcFileNames.slice() : [];
     node.currentAnim = animName;
+    node.currentSkin = sourceNode.currentSkin;
     node.animations = sourceNode.animations.slice();
     node.skins = sourceNode.skins.slice();
     node.slots = sourceNode.slots.slice();
@@ -547,6 +548,7 @@ SMTool._parseSpineData = function (node, SP, WGL, atlasText, pngUrl, skelJson, s
             // 创建 Skeleton 实例
             var sk = new SP.Skeleton(sd);
             if (sd.defaultSkin) sk.setSkin(sd.defaultSkin);
+            node.currentSkin = (sd.defaultSkin && sd.defaultSkin.name) || '';
             sk.setToSetupPose();
             if (atlas.pages.length > 0 && (atlas.pages[0].pma || atlas.pages[0].premultipliedAlpha)) {
                 node.premultipliedAlpha = true;
@@ -668,6 +670,7 @@ SMTool._loadFromSourceData = function (node) {
 
                 var sk = new SP.Skeleton(sd);
                 if (sd.defaultSkin) sk.setSkin(sd.defaultSkin);
+                node.currentSkin = (sd.defaultSkin && sd.defaultSkin.name) || '';
                 sk.setToSetupPose();
                 if (atlas.pages.length > 0 && atlas.pages[0].pma) node.premultipliedAlpha = true;
                 node.skeleton = sk;

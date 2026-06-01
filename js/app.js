@@ -100,6 +100,7 @@ SMTool.copyNode = function (nid, offsetX, offsetY) {
     node._srcType = orig._srcType;
     node._srcFileNames = orig._srcFileNames ? orig._srcFileNames.slice() : [];
     node.currentAnim = orig.currentAnim;
+    node.currentSkin = orig.currentSkin;
     node.animations = orig.animations.slice();
     node.skins = orig.skins.slice();
     node.slots = orig.slots.slice();
@@ -140,6 +141,54 @@ SMTool.ctxDuplicateNode = function () {
     SMTool._updateDuplicateHighlights();
     SMTool._checkMissingStates();
     document.getElementById('ctxMenu').style.display = 'none';
+};
+
+// 切换皮肤（同步同归属文件的所有节点）
+SMTool._setSkin = function (nid, skinName) {
+    var clickedNode = SMData.nodes.get(nid);
+    if (!clickedNode || !clickedNode.skeleton || !clickedNode.skeletonData) return;
+
+    var sourceFile = clickedNode.sourceFile;
+
+    // 遍历所有节点，找到同归属文件的节点一起切换皮肤
+    var nodesIter = SMData.nodes.values();
+    var result = nodesIter.next();
+    while (!result.done) {
+        var node = result.value;
+        if (node.sourceFile === sourceFile && node.skeleton && node.skeletonData) {
+            // 从 skeletonData 中找到对应皮肤对象
+            var skin = null;
+            var sd = node.skeletonData;
+            for (var i = 0; i < sd.skins.length; i++) {
+                if (sd.skins[i].name === skinName) {
+                    skin = sd.skins[i];
+                    break;
+                }
+            }
+            if (skin) {
+                node.skeleton.setSkin(skin);
+                node.skeleton.setSlotsToSetupPose();
+                node.currentSkin = skinName;
+            }
+
+            // 刷新该节点 UI 高亮
+            var el = SMTool._getEl(node.id);
+            if (el) {
+                var badges = el.querySelectorAll('.skin-badge');
+                for (var b = 0; b < badges.length; b++) {
+                    if (badges[b].textContent === skinName) {
+                        badges[b].classList.add('active');
+                    } else {
+                        badges[b].classList.remove('active');
+                    }
+                }
+            }
+        }
+        result = nodesIter.next();
+    }
+
+    // 同步刷新数据面板高亮
+    SMTool._updateFloatPanel();
 };
 
 // 切换连线模式

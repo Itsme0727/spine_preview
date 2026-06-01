@@ -99,8 +99,13 @@ SMTool._renderConnections = function () {
         var isActive = isSelected || isDragged;
         var z = SMData.view.zoom;  // 缩放因子
 
+        // 焦点模式：非直接连线贝塞尔曲线置灰
+        var focusNodes = SMData._focusNodes;
+        var inFocus = !focusNodes || !focusNodes.size || (focusNodes.has(conn.fromNode) && focusNodes.has(conn.toNode));
+
         // 绘制贝塞尔曲线
-        ctx.strokeStyle = connColor;
+        ctx.globalAlpha = inFocus ? 1 : 0.12;
+        ctx.strokeStyle = inFocus ? connColor : '#888';
         ctx.lineWidth = Math.max(1.5, (isActive ? 3.5 : 2.5) * z);
         ctx.shadowColor = isActive ? connColor : 'transparent';
         ctx.shadowBlur = isActive ? 8 * z : 0;
@@ -112,14 +117,17 @@ SMTool._renderConnections = function () {
 
         // 端点圆（随缩放）
         var dotR = Math.round((isActive ? 14 : 10) * z);
-        ctx.fillStyle = connColor;
+        ctx.fillStyle = inFocus ? connColor : '#888';
         ctx.beginPath(); ctx.arc(fs.x, fs.y, dotR, 0, Math.PI * 2); ctx.fill();
         ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(1, 2 * z); ctx.stroke();
         ctx.beginPath(); ctx.arc(ts.x, ts.y, dotR, 0, Math.PI * 2); ctx.fill();
         ctx.stroke();
+        ctx.globalAlpha = 1;
 
         // 方向箭头（1/3 和 2/3 位置）
-        SMTool._drawBezierArrows(ctx, fs.x, fs.y, cp1s.x, cp1s.y, cp2s.x, cp2s.y, ts.x, ts.y, connColor, isActive, z);
+        if (!inFocus) ctx.globalAlpha = 0.12;
+        SMTool._drawBezierArrows(ctx, fs.x, fs.y, cp1s.x, cp1s.y, cp2s.x, cp2s.y, ts.x, ts.y, inFocus ? connColor : '#888', isActive, z);
+        ctx.globalAlpha = 1;
 
         // 控制手柄（仅选中/拖拽时可见）
         if (isActive) {
@@ -153,6 +161,7 @@ SMTool._renderConnections = function () {
 
         // 条件标签（文本节点连线不显示条件框）
         if (conn.fromState !== 'text' && conn.toState !== 'text') {
+            if (!inFocus) ctx.globalAlpha = 0.12;
             var rawLabel = conn.condition || '条件';
             var maxCharsPerLine = 20;
         var maxTotalChars = 50;
@@ -230,6 +239,7 @@ SMTool._renderConnections = function () {
             ctx.fillText(lines[li2], mx, rectY + textOffY + li2 * lineHeight);
         }
         }  // end if (!textNode)
+        ctx.globalAlpha = 1;
     }
 
     // 正在连线时的预览
@@ -290,6 +300,7 @@ SMTool._getStateConnectorPos = function (node, stateName, type) {
 // 在 t=1/6 和 t=4/6 位置绘制箭头，避免被条件框遮挡
 SMTool._drawBezierArrows = function (ctx, x0, y0, x1, y1, x2, y2, x3, y3, color, isActive, z) {
     z = z || 1;
+    // 100%缩放保持原始大小，缩小时箭头轻微反向放大
     var arrowSize = (isActive ? 26 : 21) * z;
     var positions = [1 / 6, 5 / 6];
     for (var p = 0; p < positions.length; p++) {

@@ -31,9 +31,12 @@ SMTool._createEl = function (node) {
 
     var curState = node.currentAnim || (node.animations[0] && node.animations[0].name) || '';
 
+    var currentSkin = node.currentSkin || (node.skeletonData && node.skeletonData.defaultSkin && node.skeletonData.defaultSkin.name) || (node.skins[0] || '');
     var skinsHtml = '';
     for (var si = 0; si < node.skins.length; si++) {
-        skinsHtml += '<span class="badge">' + SMTool._esc(node.skins[si]) + '</span>';
+        var skinName = node.skins[si];
+        var isActive = skinName === currentSkin ? ' active' : '';
+        skinsHtml += '<span class="badge skin-badge' + isActive + '" onclick="event.stopPropagation();SMTool._setSkin(' + node.id + ',\'' + SMTool._esc(skinName) + '\')" title="切换皮肤: ' + SMTool._esc(skinName) + '">' + SMTool._esc(skinName) + '</span>';
     }
     if (!skinsHtml) skinsHtml = '<span class="badge">无皮肤</span>';
 
@@ -306,9 +309,12 @@ SMTool._updateEl = function (node) {
     // 底部信息
     var ft = el.querySelector('.footer');
     if (ft) {
+        var currentSkin2 = node.currentSkin || (node.skeletonData && node.skeletonData.defaultSkin && node.skeletonData.defaultSkin.name) || (node.skins[0] || '');
         var skinsHtml = '';
         for (var si = 0; si < node.skins.length; si++) {
-            skinsHtml += '<span class="badge">' + SMTool._esc(node.skins[si]) + '</span>';
+            var skinName = node.skins[si];
+            var isActive = skinName === currentSkin2 ? ' active' : '';
+            skinsHtml += '<span class="badge skin-badge' + isActive + '" onclick="event.stopPropagation();SMTool._setSkin(' + node.id + ',\'' + SMTool._esc(skinName) + '\')" title="切换皮肤: ' + SMTool._esc(skinName) + '">' + SMTool._esc(skinName) + '</span>';
         }
         ft.innerHTML =
             '<div class="footer-skins"><span class="skin-label">皮肤</span>' + (skinsHtml || '<span class="badge">无皮肤</span>') + '</div>' +
@@ -364,6 +370,15 @@ SMTool._updatePos = function (node) {
     el.style.top = s.y + 'px';
     el.style.transform = 'scale(' + z + ')';
     el.style.transformOrigin = 'top left';
+
+    // 标题（中/英文）按正常缩放 0.3 倍，即抵消大部分父级缩放
+    var titleScale = Math.pow(z, -0.7);
+    var titles = el.querySelectorAll('.header-titles');
+    for (var ti = 0; ti < titles.length; ti++) {
+        titles[ti].style.transform = 'scale(' + titleScale + ')';
+        titles[ti].style.transformOrigin = 'top left';
+    }
+
     SMTool._updateFloatLabels();
 };
 
@@ -374,6 +389,15 @@ SMTool._updateAllPos = function () {
         SMTool._updatePos(result.value);
         result = nodesIter.next();
     }
+
+    // 连线端口：画布缩小时放大，最大2倍
+    var z = SMData.view.zoom;
+    var dotScale = Math.min(2, 2 - z);
+    var dots = document.querySelectorAll('.spine-node .conn-dot');
+    for (var i = 0; i < dots.length; i++) {
+        dots[i].style.transform = 'scale(' + dotScale + ')';
+    }
+
     SMTool._updateFloatLabels();
 };
 
@@ -437,6 +461,19 @@ SMTool._updateFloatLabels = function () {
 
 // ---- 更新选中状态 ----
 SMTool._updateSel = function () {
+    // 计算焦点集合：选中节点 + 直接连线节点
+    var focusSet = new Set();
+    if (SMData.selectedNodes.size === 1 && SMData.selectedNode) {
+        var selId = SMData.selectedNode;
+        focusSet.add(selId);
+        for (var ci = 0; ci < SMData.connections.length; ci++) {
+            var c = SMData.connections[ci];
+            if (c.fromNode === selId) focusSet.add(c.toNode);
+            if (c.toNode === selId) focusSet.add(c.fromNode);
+        }
+    }
+    SMData._focusNodes = focusSet;
+
     var nodesIter = SMData.nodes.values();
     var result = nodesIter.next();
     while (!result.done) {
@@ -444,6 +481,7 @@ SMTool._updateSel = function () {
         var el = SMTool._getEl(n.id);
         if (el) {
             el.classList.toggle('selected', SMData.selectedNodes.has(n.id));
+            el.classList.toggle('dimmed', focusSet.size > 0 && !focusSet.has(n.id));
             if (SMData.connecting && SMData.connecting.nodeId === n.id) {
                 el.classList.add('connecting');
             } else {
@@ -476,11 +514,14 @@ SMTool._updateFloatPanel = function () {
         }
         if (!animsHtml) animsHtml = '<div class="dfp-row">无</div>';
 
+        var currentSkin = node.currentSkin || (node.skeletonData && node.skeletonData.defaultSkin && node.skeletonData.defaultSkin.name) || (node.skins[0] || '');
         var skinRows = '';
         for (var si = 0; si < node.skins.length; si++) {
-            skinRows += '<div class="dfp-row">' + SMTool._esc(node.skins[si]) + '</div>';
+            var skName = node.skins[si];
+            var isActiveSkin = skName === currentSkin ? ' active' : '';
+            skinRows += '<span class="dfp-skin-badge' + isActiveSkin + '" onclick="event.stopPropagation();SMTool._setSkin(' + node.id + ',\'' + SMTool._esc(skName) + '\')" title="切换皮肤: ' + SMTool._esc(skName) + '">' + SMTool._esc(skName) + '</span>';
         }
-        if (!skinRows) skinRows = '<div class="dfp-row">default</div>';
+        if (!skinRows) skinRows = '<span class="dfp-skin-badge">default</span>';
 
         var boneRows = '';
         var curAnim = node.currentAnim || '';
@@ -561,11 +602,14 @@ SMTool._updateFloatPanel = function () {
             }
             if (!animsHtml2) animsHtml2 = '<div class="dfp-row">无</div>';
 
+            var currentSkin2 = node.currentSkin || (node.skeletonData && node.skeletonData.defaultSkin && node.skeletonData.defaultSkin.name) || (node.skins[0] || '');
             var skinRows2 = '';
             for (var si2 = 0; si2 < node.skins.length; si2++) {
-                skinRows2 += '<div class="dfp-row">' + SMTool._esc(node.skins[si2]) + '</div>';
+                var skName2 = node.skins[si2];
+                var isActiveSkin2 = skName2 === currentSkin2 ? ' active' : '';
+                skinRows2 += '<span class="dfp-skin-badge' + isActiveSkin2 + '" onclick="event.stopPropagation();SMTool._setSkin(' + node.id + ',\'' + SMTool._esc(skName2) + '\')" title="切换皮肤: ' + SMTool._esc(skName2) + '">' + SMTool._esc(skName2) + '</span>';
             }
-            if (!skinRows2) skinRows2 = '<div class="dfp-row">default</div>';
+            if (!skinRows2) skinRows2 = '<span class="dfp-skin-badge">default</span>';
 
             var boneRows2 = '';
             var curAnim2 = node.currentAnim || '';

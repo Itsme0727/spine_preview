@@ -84,6 +84,7 @@ var SpineNodeData = (function () {
         this.bones = [];
         this.version = '';
         this.currentAnim = '';
+        this.currentSkin = '';
         this.premultipliedAlpha = false;
 
         // 原始源数据（用于导出/导入往返）

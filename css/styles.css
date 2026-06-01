@@ -219,6 +219,16 @@ body {
     border-color: var(--accent);
     box-shadow: 0 0 24px rgba(233, 69, 96, 0.3);
 }
+/* 未直接连线节点置灰（通过遮罩层实现，不影响层叠上下文） */
+.spine-node.dimmed::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0, 0, 0, 0.55);
+    border-radius: inherit;
+    pointer-events: none;
+    z-index: 100;
+}
 /* 重复节点高亮：按文件组不同颜色 */
 .spine-node.duplicate-highlight {
     border-color: var(--dup-color, #ff4444) !important;
@@ -405,6 +415,28 @@ body {
     border-radius: 10px;
     font-size: 28px;
 }
+.spine-node .footer-skins .skin-badge {
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 112px;
+    height: 56px;
+    padding: 0 20px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    font-size: 24px;
+    transition: color 0.15s, border-color 0.15s;
+}
+.spine-node .footer-skins .skin-badge:hover {
+    color: #f06292;
+    border-color: #f06292;
+}
+.spine-node .footer-skins .skin-badge.active {
+    background: transparent;
+    color: #f06292;
+    border-color: #f06292;
+}
 .spine-node .footer-controls {
     display: flex;
     align-items: center;
@@ -514,14 +546,14 @@ body {
 /* 连线圆点 */
 .spine-node .state-row .conn-dot,
 .spine-node .anim-bar .conn-dot {
-    width: 30px;
-    height: 30px;
+    width: 60px;
+    height: 60px;
     border-radius: 50%;
     background: var(--connector);
     border: 2px solid #fff;
     cursor: crosshair;
     opacity: 0;
-    transition: opacity 0.2s, transform 0.2s;
+    transition: opacity 0.2s, transform 0.15s;
     flex-shrink: 0;
 }
 .spine-node .state-row:hover .conn-dot,
@@ -861,6 +893,31 @@ body {
 #dataFloatPanel .dfp-row.active {
     color: var(--success);
     font-weight: 600;
+}
+
+/* 数据面板皮肤按钮 */
+#dataFloatPanel .dfp-skin-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 78px;
+    height: 40px;
+    padding: 0 14px;
+    margin: 2px 4px 2px 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 17px;
+    color: var(--text2);
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+}
+#dataFloatPanel .dfp-skin-badge:hover {
+    color: #f06292;
+    border-color: #f06292;
+}
+#dataFloatPanel .dfp-skin-badge.active {
+    color: #f06292;
+    border-color: #f06292;
 }
 
 /* PMA 勾选行 */
