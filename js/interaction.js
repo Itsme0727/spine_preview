@@ -78,6 +78,49 @@ SMTool._onMD = function (e) {
         }
 
         if (found) {
+            // 连线模式：点击节点自身等同于点击其左侧端点完成连线
+            if (SMData.connecting && found.id !== SMData.connecting.nodeId) {
+                var alreadyExists2 = false;
+                for (var ci3 = 0; ci3 < SMData.connections.length; ci3++) {
+                    var ec2 = SMData.connections[ci3];
+                    if (ec2.fromNode === SMData.connecting.nodeId && ec2.toNode === found.id) {
+                        alreadyExists2 = true;
+                        break;
+                    }
+                }
+                if (!alreadyExists2) {
+                    var ffn = SMData.nodes.get(SMData.connecting.nodeId);
+                    var ttn = SMData.nodes.get(found.id);
+                    var ffp = SMTool._getStateConnectorPos(ffn, SMData.connecting.stateName, 'output');
+                    var ttp = SMTool._getStateConnectorPos(ttn, ttn.currentAnim || '', 'input');
+                    var ddef = ffp && ttp ? SMTool._defaultCPOffsets(ffp, ttp) : { cp1x: 50, cp1y: 0, cp2x: -50, cp2y: 0 };
+                    var cclrIdx = SMData.connections.length;
+                    SMData.connections.push({
+                        id: SMData.nextConnId++,
+                        fromNode: SMData.connecting.nodeId,
+                        fromState: SMData.connecting.stateName,
+                        toNode: found.id,
+                        toState: ttn ? (ttn.currentAnim || '') : '',
+                        condition: '',
+                        cp1x: ddef.cp1x, cp1y: ddef.cp1y,
+                        cp2x: ddef.cp2x, cp2y: ddef.cp2y,
+                        color: _connColor(cclrIdx)
+                    });
+                }
+                SMData.connecting = null;
+                // 清除所有连线状态残留
+                var allDims = document.querySelectorAll('.spine-node .dim-overlay');
+                for (var di2 = 0; di2 < allDims.length; di2++) { allDims[di2].remove(); }
+                var allTargets = document.querySelectorAll('.spine-node .anim-bar .conn-dot.connecting-target, .spine-node .anim-bar .conn-dot.connecting-shrink');
+                for (var dt = 0; dt < allTargets.length; dt++) {
+                    allTargets[dt].classList.remove('connecting-target', 'connecting-shrink');
+                }
+                SMTool._updateSel();
+                SMTool._updateSB();
+                SMTool._updateStateRowColors();
+                return;
+            }
+
             if (e.ctrlKey || e.metaKey) {
                 // Ctrl+点击：切换选中
                 if (SMData.selectedNodes.has(found.id)) {
@@ -667,6 +710,9 @@ SMTool._onDot = function (nid, name, type) {
             });
         }
         SMData.connecting = null;
+        // 清除连线状态残留
+        var allDims2 = document.querySelectorAll('.spine-node .dim-overlay');
+        for (var di3 = 0; di3 < allDims2.length; di3++) { allDims2[di3].remove(); }
         SMTool._updateSel();
         SMTool._updateSB();
         SMTool._updateStateRowColors();

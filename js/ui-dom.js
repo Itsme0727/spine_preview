@@ -421,7 +421,7 @@ SMTool._updateFloatLabels = function () {
             label.style.display = '';
 
             var sp = SMTool.worldToCanvas(node.x, node.y);
-            var fontSize = 22;
+            var fontSize = 15;
             label.style.left = sp.x + 'px';
             label.style.top = (sp.y - fontSize * 2) + 'px';
             label.style.fontSize = fontSize + 'px';
@@ -453,9 +453,12 @@ SMTool._updateFloatLabels = function () {
 
 // ---- 更新选中状态 ----
 SMTool._updateSel = function () {
-    // 计算焦点集合：选中节点 + 直接连线节点
+    // 计算焦点集合
     var focusSet = new Set();
-    if (SMData.selectedNodes.size >= 1) {
+    if (SMData.connecting) {
+        // 连线模式：仅高亮源节点
+        focusSet.add(SMData.connecting.nodeId);
+    } else if (SMData.selectedNodes.size >= 1) {
         var selIter = SMData.selectedNodes.values();
         var sr = selIter.next();
         while (!sr.done) {
@@ -470,6 +473,28 @@ SMTool._updateSel = function () {
         }
     }
     SMData._focusNodes = focusSet;
+
+    // 连线时 input 端点变绿放大，output 端点缩小
+    var alreadyConnected = new Set();
+    if (SMData.connecting) {
+        alreadyConnected.add(SMData.connecting.nodeId);
+        for (var ci2 = 0; ci2 < SMData.connections.length; ci2++) {
+            var c2 = SMData.connections[ci2];
+            if (c2.fromNode === SMData.connecting.nodeId) alreadyConnected.add(c2.toNode);
+        }
+    }
+    var allInputDots = document.querySelectorAll('.spine-node .anim-bar .conn-dot.input');
+    for (var di = 0; di < allInputDots.length; di++) {
+        var dot = allInputDots[di];
+        var nodeEl = dot.closest('.spine-node');
+        var nodeId = nodeEl ? parseInt(nodeEl.id.replace('sn-', '')) : 0;
+        var shouldHighlight = !!SMData.connecting && !alreadyConnected.has(nodeId);
+        dot.classList.toggle('connecting-target', shouldHighlight);
+    }
+    var allOutputDots = document.querySelectorAll('.spine-node .anim-bar .conn-dot.output');
+    for (var do2 = 0; do2 < allOutputDots.length; do2++) {
+        allOutputDots[do2].classList.toggle('connecting-shrink', !!SMData.connecting);
+    }
 
     var nodesIter = SMData.nodes.values();
     var result = nodesIter.next();
