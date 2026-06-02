@@ -391,8 +391,13 @@ SMTool._loop = function (now) {
 
         if (sw < 4 || sh < 4) { result = nodesIter.next(); continue; }
 
-        // 动画更新：动态模式始终 60fps，性能模式 <20% 冻结
-        if (SMData.renderMode === 'dyn' || z >= 0.20) {
+        // 动画更新：动态模式始终 60fps，性能模式 <20% 冻结（但播放中的动画组节点不受限）
+        var isFlowPlaying = SMData._fullPlayback && SMData._fullPlayback.isPlaying;
+        var isPlayingNode = isFlowPlaying && SMData._fullPlayback.activePathIdx >= 0 &&
+            SMData._fullPaths[SMData._fullPlayback.activePathIdx] &&
+            SMData._fullPaths[SMData._fullPlayback.activePathIdx].nodes[SMData._fullPlayback.currentStep] &&
+            SMData._fullPaths[SMData._fullPlayback.activePathIdx].nodes[SMData._fullPlayback.currentStep].id === node.id;
+        if (SMData.renderMode === 'dyn' || z >= 0.20 || isPlayingNode) {
             node.state.update(dt);
             node.state.apply(node.skeleton);
         }

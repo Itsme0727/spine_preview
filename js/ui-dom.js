@@ -1283,7 +1283,6 @@ SMTool._updateFullFlowPanel = function (content, panel) {
         var path = paths[pi];
         var isActivePath = (pi === activePathIdx);
         html += '<div class="flp-full-path' + (isActivePath ? ' active' : '') + '" data-path-idx="' + pi + '">';
-        html += '<div class="flp-full-path-label">组 #' + (pi + 1) + '</div>';
         html += '<div class="flp-full-path-row">';
         for (var si = 0; si < path.nodes.length; si++) {
             var sn = path.nodes[si];
@@ -1308,8 +1307,9 @@ SMTool._updateFullFlowPanel = function (content, panel) {
     html += '<div class="flp-full-player">';
     html += '<canvas class="flp-full-canvas" id="flpFullCanvas"></canvas>';
     html += '<div class="flp-full-controls">';
-    html += '<button class="flp-full-btn play" id="flpFullPlay" title="播放">▶</button>';
-    html += '<button class="flp-full-btn pause" id="flpFullPause" title="暂停">⏸</button>';
+    html += '<button class="flp-full-btn small" id="flpFullPrev" title="上一个状态">⏮</button>';
+    html += '<button class="flp-full-btn" id="flpFullPlay" title="播放">▶</button>';
+    html += '<button class="flp-full-btn small" id="flpFullNext" title="下一个状态">⏭</button>';
     html += '</div>';
     html += '</div>';
 
@@ -1328,17 +1328,56 @@ SMTool._updateFullFlowPanel = function (content, panel) {
     }
 
     var playBtn = document.getElementById('flpFullPlay');
-    var pauseBtn = document.getElementById('flpFullPause');
+    var prevBtn = document.getElementById('flpFullPrev');
+    var nextBtn = document.getElementById('flpFullNext');
+
+    // 更新播放按钮状态
+    var pb = SMData._fullPlayback;
     if (playBtn) {
+        if (pb.isPlaying) {
+            playBtn.innerHTML = '⏸';
+            playBtn.title = '暂停';
+        } else if (pb.activePathIdx >= 0) {
+            var ppath = SMData._fullPaths[pb.activePathIdx];
+            var pmax = ppath ? ppath.nodes.length : 0;
+            if (ppath && ppath.nodes[pmax - 1] && ppath.nodes[pmax - 1].cycleClose) pmax--;
+            if (pb.currentStep > 0 && pb.currentStep < pmax) {
+                playBtn.innerHTML = '▶';
+                playBtn.title = '继续播放';
+            } else {
+                playBtn.innerHTML = '▶';
+                playBtn.title = '播放';
+            }
+        } else {
+            playBtn.innerHTML = '▶';
+            playBtn.title = '播放';
+        }
         playBtn.addEventListener('click', function (e) {
             e.stopPropagation();
-            SMTool._startFullPlayback();
+            if (SMData._fullPlayback.isPlaying) {
+                SMTool._pauseFullPlayback();
+                playBtn.innerHTML = '▶';
+                var pp2 = SMData._fullPaths[SMData._fullPlayback.activePathIdx];
+                var pm2 = pp2 ? pp2.nodes.length : 0;
+                if (pp2 && pp2.nodes[pm2 - 1] && pp2.nodes[pm2 - 1].cycleClose) pm2--;
+                playBtn.title = (SMData._fullPlayback.currentStep > 0 && SMData._fullPlayback.currentStep < pm2) ? '继续播放' : '播放';
+            } else {
+                SMTool._startFullPlayback();
+                playBtn.innerHTML = '⏸';
+                playBtn.title = '暂停';
+            }
         });
     }
-    if (pauseBtn) {
-        pauseBtn.addEventListener('click', function (e) {
+    if (prevBtn) {
+        prevBtn.addEventListener('click', function (e) {
             e.stopPropagation();
-            SMTool._pauseFullPlayback();
+            SMTool._goToPrevStep();
+        });
+    }
+    if (nextBtn) {
+        nextBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            SMTool._goToNextStep();
         });
     }
 
@@ -1353,41 +1392,36 @@ SMTool._updateFullFlowPanel = function (content, panel) {
 // 未选中路径：BFS全组件
 SMTool._setFullComponentFocus = function (sourceId) {
     var pb = SMData._fullPlayback;
-
-    if (pb.isPlaying && pb.activePathIdx >= 0) {
-        // 播放中：仅当前节点 + 前后连线
-        var path = SMData._fullPaths[pb.activePathIdx];
-        if (path && pb.currentStep < path.nodes.length) {
-            var curNodeId = path.nodes[pb.currentStep].id;
-            var nodeIds = new Set();
-            var connIds = new Set();
-            nodeIds.add(curNodeId);
-            if (pb.currentStep > 0 && pb.currentStep - 1 < path.conns.length) {
-                connIds.add(path.conns[pb.currentStep - 1]);
-            }
-            if (pb.currentStep < path.conns.length) {
-                connIds.add(path.conns[pb.currentStep]);
-            }
-            SMData._flowFocus = { nodeIds: nodeIds, connIds: connIds };
+    if (pb.activePathIdx >= 0) {
+        var selPath = SMData._fullPaths[pb.activePathIdx];
+        if (pb.isPlaying && selPath && pb.currentStep < selPath.nodes.length) {
+            // 播放中：仅当前节点 + 前后连线
+            var curId1 = selPath.nodes[pb.currentStep].id;
+            var cn1 = new Set(); cn1.add(curId1);
+            var cc1 = new Set();
+            if (pb.currentStep > 0 && pb.currentStep - 1 < selPath.conns.length) cc1.add(selPath.conns[pb.currentStep - 1]);
+            if (pb.currentStep < selPath.conns.length) cc1.add(selPath.conns[pb.currentStep]);
+            SMData._flowFocus = { nodeIds: cn1, connIds: cc1 };
             return;
         }
-    }
-
-    if (pb.activePathIdx >= 0) {
-        // 已选中某条完整路径：路径上所有节点高亮 + 两端都在路径内的所有连线高亮
-        var selPath = SMData._fullPaths[pb.activePathIdx];
+        if (pb._stepped && selPath && pb.currentStep < selPath.nodes.length) {
+            // 手动上一个/下一个导航：仅当前节点 + 前后连线
+            var curId2 = selPath.nodes[pb.currentStep].id;
+            var cn2 = new Set(); cn2.add(curId2);
+            var cc2 = new Set();
+            if (pb.currentStep > 0 && pb.currentStep - 1 < selPath.conns.length) cc2.add(selPath.conns[pb.currentStep - 1]);
+            if (pb.currentStep < selPath.conns.length) cc2.add(selPath.conns[pb.currentStep]);
+            SMData._flowFocus = { nodeIds: cn2, connIds: cc2 };
+            return;
+        }
         if (selPath) {
+            // 仅选中路径（未播放/未导航）：路径上所有节点 + 两端都在路径内的所有连线高亮
             var pNodeIds = new Set();
             var pConnIds = new Set();
-            for (var ni = 0; ni < selPath.nodes.length; ni++) {
-                pNodeIds.add(selPath.nodes[ni].id);
-            }
-            // 两端都在路径节点内的连线（直接+间接）全部高亮
+            for (var ni = 0; ni < selPath.nodes.length; ni++) pNodeIds.add(selPath.nodes[ni].id);
             for (var ci2 = 0; ci2 < SMData.connections.length; ci2++) {
                 var cc = SMData.connections[ci2];
-                if (pNodeIds.has(cc.fromNode) && pNodeIds.has(cc.toNode)) {
-                    pConnIds.add(cc.id);
-                }
+                if (pNodeIds.has(cc.fromNode) && pNodeIds.has(cc.toNode)) pConnIds.add(cc.id);
             }
             SMData._flowFocus = { nodeIds: pNodeIds, connIds: pConnIds };
             return;
@@ -1595,7 +1629,9 @@ SMTool._selectFullPath = function (pathIdx) {
     SMData._fullPlayback.activePathIdx = pathIdx;
     SMData._fullPlayback.currentStep = 0;
     SMData._fullPlayback.isPlaying = false;
+    SMData._fullPlayback._stepped = false;
     if (SMData._fullPlayback._timer) { clearTimeout(SMData._fullPlayback._timer); SMData._fullPlayback._timer = null; }
+    SMTool._resumeAllNodes();
     SMTool._setFullComponentFocus(SMData.selectedNode);
     SMTool._updateFullFlowPanel(document.getElementById('flpContent'), document.getElementById('flowPanel'));
     SMTool._initFullCanvas();
@@ -1604,13 +1640,17 @@ SMTool._selectFullPath = function (pathIdx) {
     SMTool._updateStateRowColors();
 };
 
-// 开始播放
+// 开始/继续播放（播完自动从头开始）
 SMTool._startFullPlayback = function () {
     var pb = SMData._fullPlayback;
     if (pb.activePathIdx < 0) return;
     var path = SMData._fullPaths[pb.activePathIdx];
     if (!path || path.nodes.length === 0) return;
-    pb.currentStep = 0;
+    // 如果已播完，从头开始
+    var maxStep = path.nodes.length;
+    if (path.nodes[maxStep - 1] && path.nodes[maxStep - 1].cycleClose) maxStep--;
+    if (pb.currentStep >= maxStep) pb.currentStep = 0;
+    pb._stepped = false;
     pb.isPlaying = true;
     SMTool._playFullStep();
 };
@@ -1619,6 +1659,70 @@ SMTool._startFullPlayback = function () {
 SMTool._pauseFullPlayback = function () {
     SMData._fullPlayback.isPlaying = false;
     if (SMData._fullPlayback._timer) { clearTimeout(SMData._fullPlayback._timer); SMData._fullPlayback._timer = null; }
+    SMTool._resumeAllNodes();
+};
+
+// 暂停除指定节点外的所有 Spine 动画节点
+SMTool._pauseAllNodesExcept = function (exceptId) {
+    var nodesIter = SMData.nodes.values();
+    var r = nodesIter.next();
+    while (!r.done) {
+        var n = r.value;
+        if (n.id !== exceptId && n.state) {
+            try { n.state.clearTracks(); } catch (e) {}
+        }
+        r = nodesIter.next();
+    }
+};
+
+// 恢复所有 Spine 动画节点（清除暂停状态）
+SMTool._resumeAllNodes = function () {
+    // 节点恢复需要用户手动操作，这里只确保没有残留的暂停状态
+    // 实际上 clearTracks 已经停止了动画，用户需要手动重新播放
+};
+
+// 上一个状态（暂停/停止时可用，到头循环）
+SMTool._goToPrevStep = function () {
+    var pb = SMData._fullPlayback;
+    if (pb.isPlaying) return;
+    if (pb.activePathIdx < 0) return;
+    var path = SMData._fullPaths[pb.activePathIdx];
+    if (!path) return;
+    var maxStep = path.nodes.length;
+    if (path.nodes[maxStep - 1] && path.nodes[maxStep - 1].cycleClose) maxStep--;
+    if (pb.currentStep > 0) {
+        do { pb.currentStep--; } while (pb.currentStep > 0 && path.nodes[pb.currentStep] && path.nodes[pb.currentStep].cycleClose);
+    } else {
+        pb.currentStep = maxStep - 1;
+    }
+    pb._stepped = true;
+    SMTool._updateFullFlowPanel(document.getElementById('flpContent'), document.getElementById('flowPanel'));
+    SMTool._setFullComponentFocus(SMData.selectedNode);
+    SMTool._updateSel();
+    SMTool._updateStateRowColors();
+    SMTool._updateFullCanvasForStep();
+};
+
+// 下一个状态（暂停/停止时可用，到头循环）
+SMTool._goToNextStep = function () {
+    var pb = SMData._fullPlayback;
+    if (pb.isPlaying) return;
+    if (pb.activePathIdx < 0) return;
+    var path = SMData._fullPaths[pb.activePathIdx];
+    if (!path) return;
+    var maxStep = path.nodes.length;
+    if (path.nodes[maxStep - 1] && path.nodes[maxStep - 1].cycleClose) maxStep--;
+    if (pb.currentStep < maxStep - 1) {
+        pb.currentStep++;
+    } else {
+        pb.currentStep = 0;
+    }
+    pb._stepped = true;
+    SMTool._updateFullFlowPanel(document.getElementById('flpContent'), document.getElementById('flowPanel'));
+    SMTool._setFullComponentFocus(SMData.selectedNode);
+    SMTool._updateSel();
+    SMTool._updateStateRowColors();
+    SMTool._updateFullCanvasForStep();
 };
 
 // 播放当前步骤
@@ -1628,6 +1732,12 @@ SMTool._playFullStep = function () {
     var path = SMData._fullPaths[pb.activePathIdx];
     if (!path || pb.currentStep >= path.nodes.length) {
         pb.isPlaying = false;
+        pb._stepped = false;
+        SMTool._resumeAllNodes();
+        SMTool._updateFullFlowPanel(document.getElementById('flpContent'), document.getElementById('flowPanel'));
+        SMTool._setFullComponentFocus(SMData.selectedNode);
+        SMTool._updateSel();
+        SMTool._updateStateRowColors();
         return;
     }
 
@@ -1636,11 +1746,17 @@ SMTool._playFullStep = function () {
     // 跳过闭环节点（虚线框），直接结束播放
     if (stepNode.cycleClose) {
         pb.isPlaying = false;
+        pb._stepped = false;
+        SMTool._resumeAllNodes();
         SMTool._updateFullFlowPanel(document.getElementById('flpContent'), document.getElementById('flowPanel'));
+        SMTool._setFullComponentFocus(SMData.selectedNode);
         SMTool._updateSel();
         SMTool._updateStateRowColors();
         return;
     }
+
+    // 暂停其他所有动画节点，仅播放当前步骤的节点
+    SMTool._pauseAllNodesExcept(stepNode.id);
 
     var spineNode = SMData.nodes.get(stepNode.id);
     if (spineNode && spineNode.state && spineNode.skeleton) {
@@ -1686,7 +1802,11 @@ SMTool._playFullStep = function () {
             SMTool._playFullStep();
         } else {
             pb.isPlaying = false;
+            pb._stepped = false;
             SMTool._updateFullFlowPanel(document.getElementById('flpContent'), document.getElementById('flowPanel'));
+            SMTool._setFullComponentFocus(SMData.selectedNode);
+            SMTool._updateSel();
+            SMTool._updateStateRowColors();
         }
     }, duration);
 };

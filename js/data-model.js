@@ -84,6 +84,7 @@ var SMData = {
         activePathIdx: -1,   // 当前播放的路径索引
         currentStep: 0,      // 当前播放到第几个节点
         isPlaying: false,
+        _stepped: false,     // 是否手动导航过（prev/next）
         _timer: null
     }
 };

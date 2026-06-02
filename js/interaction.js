@@ -1190,6 +1190,7 @@ SMTool._initFlowPanel = function () {
                 SMData._fullPlayback.currentStep = 0;
                 SMData._fullPlayback.isPlaying = false;
                 if (SMData._fullPlayback._timer) { clearTimeout(SMData._fullPlayback._timer); SMData._fullPlayback._timer = null; }
+                SMTool._resumeAllNodes();
                 SMData._flowFocus = null;
                 SMTool._updateFlowPanel();
                 SMTool._updateSel();
@@ -1279,6 +1280,7 @@ SMTool._collapseFlowPanel = function () {
     SMData._fullPlayback.activePathIdx = -1;
     SMData._fullPlayback.currentStep = 0;
     if (SMData._fullPlayback._timer) { clearTimeout(SMData._fullPlayback._timer); SMData._fullPlayback._timer = null; }
+    SMTool._resumeAllNodes();
     SMTool._updateSel();
     SMTool._updateStateRowColors();
     var panel = document.getElementById('flowPanel');

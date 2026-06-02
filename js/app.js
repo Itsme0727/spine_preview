@@ -367,6 +367,7 @@ SMTool.init = function () {
         SMData._fullPlayback.currentStep = 0;
         SMData._fullPlayback.isPlaying = false;
         if (SMData._fullPlayback._timer) { clearTimeout(SMData._fullPlayback._timer); SMData._fullPlayback._timer = null; }
+        SMTool._resumeAllNodes();
         // 清除全画布缓存
         SMData._fullCanvasGL = null;
         SMData._fullCanvasContext = null;
