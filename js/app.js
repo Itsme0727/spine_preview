@@ -210,6 +210,7 @@ SMTool.saveCondition = function () {
         }
     }
     ed.classList.remove('show');
+    SMTool._updateFlowPanel();
 };
 
 // 删除连线
@@ -263,7 +264,7 @@ SMTool.init = function () {
 
     // 鼠标事件（数据面板内的操作不取消动画对象选中）
     document.addEventListener('mousedown', function (e) {
-        if (e.target.closest && e.target.closest('#toolbar, #ctxMenu, #conditionEditor, #zoomControl, #statusBar, #dataFloatPanel')) return;
+        if (e.target.closest && e.target.closest('#toolbar, #ctxMenu, #conditionEditor, #zoomControl, #statusBar, #dataFloatPanel, #flowPanel')) return;
         if (e.target.closest && e.target.closest('input, textarea, select, button')) return;
         if (e.shiftKey) e.preventDefault();
         SMTool._onMD(e);
@@ -468,6 +469,93 @@ SMTool.init = function () {
         SMTool._updateSB();
     };
 
+    // ---- 入口/出口节点创建 ----
+    SMTool.addEntryNode = function () {
+        var id = SMData.nextId++;
+        var node = new SpineNodeData(id);
+        node.nodeType = 'entry';
+        node.name = '入口';
+        node.x = Math.random() * 200 - 100 + window.innerWidth / 2;
+        node.y = Math.random() * 200 - 100 + window.innerHeight / 2;
+        node.width = 260;
+        SMData.nodes.set(id, node);
+        SMTool._createEl(node);
+        SMTool._updatePos(node);
+        SMData.selectedNodes.clear();
+        SMData.selectedNodes.add(id);
+        SMData.selectedNode = id;
+        SMTool._updateSel();
+        SMTool._updateSB();
+    };
+
+    SMTool.addExitNode = function () {
+        var id = SMData.nextId++;
+        var node = new SpineNodeData(id);
+        node.nodeType = 'exit';
+        node.name = '出口';
+        node.x = Math.random() * 200 - 100 + window.innerWidth / 2;
+        node.y = Math.random() * 200 - 100 + window.innerHeight / 2;
+        node.width = 300;
+        node._exitText = '';
+        SMData.nodes.set(id, node);
+        SMTool._createEl(node);
+        SMTool._updatePos(node);
+        SMData.selectedNodes.clear();
+        SMData.selectedNodes.add(id);
+        SMData.selectedNode = id;
+        SMTool._updateSel();
+        SMTool._updateSB();
+    };
+
+    // 在指定位置添加入口/出口节点
+    SMTool.addEntryNodeAt = function (wx, wy) {
+        var id = SMData.nextId++;
+        var node = new SpineNodeData(id);
+        node.nodeType = 'entry';
+        node.name = '入口';
+        node.x = wx; node.y = wy;
+        node.width = 260;
+        SMData.nodes.set(id, node);
+        SMTool._createEl(node);
+        SMTool._updatePos(node);
+        SMData.selectedNodes.clear();
+        SMData.selectedNodes.add(id);
+        SMData.selectedNode = id;
+        SMTool._updateSel();
+        SMTool._updateSB();
+    };
+
+    SMTool.addExitNodeAt = function (wx, wy) {
+        var id = SMData.nextId++;
+        var node = new SpineNodeData(id);
+        node.nodeType = 'exit';
+        node.name = '出口';
+        node.x = wx; node.y = wy;
+        node.width = 300;
+        node._exitText = '';
+        SMData.nodes.set(id, node);
+        SMTool._createEl(node);
+        SMTool._updatePos(node);
+        SMData.selectedNodes.clear();
+        SMData.selectedNodes.add(id);
+        SMData.selectedNode = id;
+        SMTool._updateSel();
+        SMTool._updateSB();
+    };
+
+    // 右键菜单：添加入口/出口
+    SMTool.ctxAddEntry = function () {
+        var wp = SMTool.canvasToWorld(window.innerWidth / 2, window.innerHeight / 2);
+        SMTool.addEntryNodeAt(wp.x, wp.y);
+        document.getElementById('ctxMenu').style.display = 'none';
+    };
+
+    SMTool.ctxAddExit = function () {
+        var wp = SMTool.canvasToWorld(window.innerWidth / 2, window.innerHeight / 2);
+        SMTool.addExitNodeAt(wp.x, wp.y);
+        document.getElementById('ctxMenu').style.display = 'none';
+    };
+
     // 启动渲染循环
     SMTool._lt = performance.now();
     SMTool._fc = 0;
@@ -478,6 +566,10 @@ SMTool.init = function () {
     SMTool._initFloatPanel();
     SMTool._initBoneLabelEvents();
     SMTool._updateFloatPanel();   // 设置初始 inactive 状态 + 提示文字
+
+    // 初始化底部动画组合浮窗面板
+    SMTool._initFlowPanel();
+    SMTool._updateFlowPanel();    // 设置初始 inactive 状态 + 提示文字
 
     SMTool._updateSB();
 

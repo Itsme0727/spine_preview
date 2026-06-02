@@ -898,6 +898,7 @@ SMTool._refreshAllTranslations = function () {
 };
 
 // ---- 查找翻译（缓存优先） ----
+// 禁用翻译，直接返回原始名称
 SMTool._translateName = function (name) {
-    return SMData._transCache[name] || name;
+    return name;
 };

@@ -99,12 +99,19 @@ SMTool._renderConnections = function () {
         var isActive = isSelected || isDragged;
         var z = SMData.view.zoom;  // 缩放因子
 
-        // 焦点模式：仅高亮与选中节点直接相关的连线
+        // 焦点模式：流程面板高亮 > 选中节点直接相关连线
         var focusNodes = SMData._focusNodes;
-        var inFocus = !focusNodes || !focusNodes.size || (
-            focusNodes.has(conn.fromNode) && focusNodes.has(conn.toNode) &&
-            (SMData.selectedNodes.has(conn.fromNode) || SMData.selectedNodes.has(conn.toNode))
-        );
+        var flowFocus = SMData._flowFocus;
+        var inFocus;
+        if (flowFocus) {
+            // 流程面板高亮模式：仅高亮指定连线
+            inFocus = flowFocus.connIds.has(conn.id);
+        } else {
+            inFocus = !focusNodes || !focusNodes.size || (
+                focusNodes.has(conn.fromNode) && focusNodes.has(conn.toNode) &&
+                (SMData.selectedNodes.has(conn.fromNode) || SMData.selectedNodes.has(conn.toNode))
+            );
+        }
 
         // 绘制贝塞尔曲线
         ctx.globalAlpha = inFocus ? 1 : 0.12;
@@ -163,6 +170,9 @@ SMTool._renderConnections = function () {
         }
 
         // 条件标签（带换行/截断）—— 尺寸随画布缩放
+        // 入口/出口节点的连线不显示条件标签
+        var isEntryExitConn = (fn.nodeType === 'entry' || fn.nodeType === 'exit' || tn.nodeType === 'entry' || tn.nodeType === 'exit');
+        if (!isEntryExitConn) {
         if (!inFocus) ctx.globalAlpha = 0.12;
         var rawLabel = conn.condition || '条件';
         var maxCharsPerLine = 20;
@@ -240,6 +250,7 @@ SMTool._renderConnections = function () {
         for (var li2 = 0; li2 < lines.length; li2++) {
             ctx.fillText(lines[li2], mx, rectY + textOffY + li2 * lineHeight);
         }
+        }  // closes if (!isEntryExitConn)
     }
     ctx.globalAlpha = 1;
 
@@ -281,6 +292,26 @@ SMTool._renderConnections = function () {
 SMTool._getStateConnectorPos = function (node, stateName, type) {
     var el = SMTool._getEl(node.id);
     if (!el) return null;
+
+    // 入口节点只有 output，出口节点只有 input
+    if (node.nodeType === 'entry') {
+        if (type === 'input') return null;
+        var dotE = el.querySelector('.anim-bar .conn-dot.output');
+        if (dotE) {
+            var rE = dotE.getBoundingClientRect();
+            return SMTool.canvasToWorld(rE.left + rE.width / 2, rE.top + rE.height / 2);
+        }
+        return null;
+    }
+    if (node.nodeType === 'exit') {
+        if (type === 'output') return null;
+        var dotX = el.querySelector('.anim-bar .conn-dot.input');
+        if (dotX) {
+            var rX = dotX.getBoundingClientRect();
+            return SMTool.canvasToWorld(rX.left + rX.width / 2, rX.top + rX.height / 2);
+        }
+        return null;
+    }
 
     // 在新布局中，连接点在 anim-bar 上
     var bar = el.querySelector('.anim-bar');

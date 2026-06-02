@@ -659,6 +659,144 @@ body {
     border-radius: 0 0 14px 14px;
 }
 
+/* ===== 入口节点 ===== */
+.spine-node.entry-node {
+    width: 640px;
+    min-width: 560px;
+}
+.spine-node.entry-node .entry-header {
+    background: linear-gradient(135deg, #e03131, #c92a2a);
+    border-radius: 20px 20px 0 0;
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.spine-node.entry-node .entry-title {
+    font-size: 52px;
+    font-weight: 800;
+    color: #fff;
+    letter-spacing: 8px;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+.spine-node.entry-node .entry-body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px;
+    background: var(--node-bg);
+    gap: 16px;
+}
+.spine-node.entry-node .entry-icon {
+    font-size: 80px;
+    line-height: 1;
+    filter: drop-shadow(0 4px 12px rgba(224, 49, 49, 0.5));
+}
+.spine-node.entry-node .entry-text-input {
+    width: 100%;
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    color: #fff;
+    padding: 12px 16px;
+    font-size: 48px;
+    font-weight: 600;
+    font-family: inherit;
+    border-radius: 12px;
+    outline: none;
+    resize: vertical;
+    min-height: 70px;
+    box-sizing: border-box;
+    text-align: center;
+    transition: border-color 0.2s;
+}
+.spine-node.entry-node .entry-text-input:focus {
+    border-color: #e03131;
+    box-shadow: 0 0 12px rgba(224, 49, 49, 0.3);
+}
+.spine-node.entry-node .entry-text-input::placeholder {
+    color: #666;
+    font-weight: 400;
+}
+.spine-node.entry-node .anim-bar {
+    border-radius: 0 0 20px 20px;
+    border-top: 1px solid var(--border);
+    background: var(--node-bg);
+    padding: 10px 12px;
+}
+/* 入口节点只有右侧输出端点 */
+.spine-node.entry-node .anim-bar .conn-dot.output {
+    right: -100px;
+}
+
+/* ===== 出口节点 ===== */
+.spine-node.exit-node {
+    width: 640px;
+    min-width: 560px;
+}
+.spine-node.exit-node .exit-header {
+    background: linear-gradient(135deg, #4a90d9, #228be6);
+    border-radius: 20px 20px 0 0;
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.spine-node.exit-node .exit-title {
+    font-size: 52px;
+    font-weight: 800;
+    color: #fff;
+    letter-spacing: 8px;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+.spine-node.exit-node .exit-body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px;
+    background: var(--node-bg);
+    gap: 16px;
+}
+.spine-node.exit-node .exit-icon {
+    font-size: 80px;
+    line-height: 1;
+    filter: drop-shadow(0 4px 12px rgba(74, 144, 217, 0.5));
+}
+.spine-node.exit-node .exit-text-input {
+    width: 100%;
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    color: #fff;
+    padding: 12px 16px;
+    font-size: 48px;
+    font-weight: 600;
+    font-family: inherit;
+    border-radius: 12px;
+    outline: none;
+    resize: vertical;
+    min-height: 70px;
+    box-sizing: border-box;
+    text-align: center;
+    transition: border-color 0.2s;
+}
+.spine-node.exit-node .exit-text-input:focus {
+    border-color: #4a90d9;
+    box-shadow: 0 0 12px rgba(74, 144, 217, 0.3);
+}
+.spine-node.exit-node .exit-text-input::placeholder {
+    color: #666;
+    font-weight: 400;
+}
+.spine-node.exit-node .anim-bar {
+    border-radius: 0 0 20px 20px;
+    border-top: 1px solid var(--border);
+    background: var(--node-bg);
+    padding: 10px 12px;
+}
+/* 出口节点只有左侧输入端点 */
+.spine-node.exit-node .anim-bar .conn-dot.input {
+    left: -100px;
+}
+
 /* ---- 面板外部扩展区 ---- */
 .node-extras {
     padding: 4px 6px 0;
@@ -1272,4 +1410,285 @@ body {
 }
 .connecting {
     animation: pulse 0.8s infinite;
+}
+
+/* ================================================================
+   底部动画流程浮窗面板 (Flow Panel)
+   ================================================================ */
+#flowPanel {
+    position: fixed;
+    bottom: 0;
+    left: 50%;
+    transform: translate(-50%, calc(100% - 28px));
+    z-index: 500;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 90vw;
+    transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+    pointer-events: none;
+}
+#flowPanel.expanded {
+    transform: translate(-50%, 0);
+}
+#flowPanel.pinned {
+    /* pinned 状态视觉上无变化，仅交互逻辑不同 */
+}
+/* 未选中任何节点 → 置灰不可展开 */
+#flowPanel.inactive .flp-trigger-bar {
+    filter: grayscale(0.7) brightness(0.5);
+    cursor: not-allowed;
+    box-shadow: none;
+}
+
+/* 触发器（顶部窄条） */
+#flowPanel .flp-trigger-bar {
+    flex-shrink: 0;
+    width: 180px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, var(--accent2), var(--accent));
+    border-radius: 12px 12px 0 0;
+    cursor: pointer;
+    pointer-events: all;
+    transition: filter 0.35s, box-shadow 0.35s, background 0.3s, border-radius 0.3s, width 0.3s;
+    box-shadow: 0 -4px 20px rgba(155, 109, 255, 0.35);
+    user-select: none;
+}
+#flowPanel.expanded .flp-trigger-bar {
+    border-radius: 12px 12px 0 0;
+    box-shadow: none;
+    background: var(--node-bg);
+    width: 120px;
+}
+#flowPanel .flp-trigger-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #fff;
+    white-space: nowrap;
+}
+#flowPanel.expanded .flp-trigger-label {
+    color: var(--text2);
+    font-size: 11px;
+}
+
+/* 面板主体 */
+#flowPanel .flp-body {
+    width: 100%;
+    height: 300px;
+    background: var(--panel-bg);
+    border-top: 1px solid var(--border);
+    border-left: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+    border-radius: 12px 12px 0 0;
+    box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.55);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    pointer-events: all;
+    transition: height 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+/* 最大化状态 */
+#flowPanel.maximized .flp-body {
+    height: 80vh;
+}
+
+/* 面板头部 */
+#flowPanel .flp-header {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 8px 16px;
+    background: var(--node-bg);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+#flowPanel .flp-title {
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--text);
+}
+
+/* 最大化/还原按钮（header 中，居中） */
+#flowPanel .flp-maximize {
+    font-size: 28px;
+    cursor: pointer;
+    user-select: none;
+    transition: transform 0.25s, filter 0.25s;
+    filter: grayscale(0.4) brightness(0.7);
+    line-height: 1;
+    padding: 4px 6px;
+}
+#flowPanel .flp-maximize:hover {
+    transform: scale(1.2);
+    filter: none;
+}
+#flowPanel.maximized .flp-maximize {
+    filter: none;
+    text-shadow: 0 0 12px rgba(100, 200, 255, 0.8);
+}
+
+/* 铆钉图标（header 中，居中） */
+#flowPanel .flp-pin {
+    font-size: 26px;
+    cursor: pointer;
+    user-select: none;
+    transition: transform 0.25s, filter 0.25s;
+    filter: grayscale(0.4) brightness(0.8);
+    line-height: 1;
+    padding: 4px 6px;
+}
+#flowPanel .flp-pin:hover {
+    transform: scale(1.2);
+    filter: none;
+}
+#flowPanel .flp-pin.active {
+    filter: none;
+    transform: rotate(-45deg);
+    text-shadow: 0 0 12px rgba(255, 180, 50, 0.8);
+}
+
+/* 面板内容区 */
+#flowPanel .flp-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 16px;
+}
+
+/* 提示文字 */
+#flowPanel .flp-hint {
+    color: var(--text2);
+    font-size: 13px;
+    text-align: center;
+    padding: 30px 0;
+    line-height: 1.6;
+}
+
+/* 流程链容器 */
+#flowPanel .flp-chain-group {
+    margin-bottom: 14px;
+}
+#flowPanel .flp-chain-group:last-child {
+    margin-bottom: 0;
+}
+
+/* 流程链标签 */
+#flowPanel .flp-chain-label {
+    font-size: 11px;
+    color: var(--text2);
+    margin-bottom: 6px;
+    padding-left: 4px;
+}
+
+/* 流程链行 */
+#flowPanel .flp-chain-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 4px;
+    flex-wrap: wrap;
+    padding: 10px 14px;
+    background: var(--node-bg);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    font-size: 13px;
+    line-height: 1.8;
+    cursor: pointer;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+#flowPanel .flp-chain-row:hover {
+    border-color: var(--accent2);
+    box-shadow: 0 0 8px rgba(155, 109, 255, 0.25);
+}
+#flowPanel .flp-chain-row.active {
+    border-color: var(--accent2);
+    box-shadow: 0 0 16px rgba(155, 109, 255, 0.5);
+    background: rgba(155, 109, 255, 0.08);
+}
+
+/* 流程节点名称 — 第一级（上游/父级）最透明 */
+#flowPanel .flp-node-l1 {
+    font-weight: 700;
+    color: #fff;
+    padding: 3px 10px;
+    background: rgba(74, 144, 217, 0.35);
+    border-radius: 5px;
+    white-space: nowrap;
+}
+
+/* 流程节点名称 — 第二级（当前选中）中等透明 */
+#flowPanel .flp-node-l2 {
+    font-weight: 700;
+    color: #fff;
+    padding: 3px 10px;
+    background: rgba(74, 144, 217, 0.7);
+    border-radius: 5px;
+    white-space: nowrap;
+    box-shadow: 0 0 14px rgba(74, 144, 217, 0.55);
+}
+
+/* 流程节点名称 — 第三级（下游/子级）完全不透明 */
+#flowPanel .flp-node-l3 {
+    font-weight: 700;
+    color: #fff;
+    padding: 3px 10px;
+    background: rgba(74, 144, 217, 1);
+    border-radius: 5px;
+    white-space: nowrap;
+}
+
+/* 流程条件文本 */
+#flowPanel .flp-condition {
+    color: var(--warn);
+    font-style: italic;
+    padding: 3px 8px;
+    background: rgba(240, 160, 64, 0.1);
+    border-radius: 5px;
+    white-space: normal;
+    word-break: break-all;
+}
+
+/* 流程箭头 */
+#flowPanel .flp-arrow {
+    color: var(--accent2);
+    font-weight: 900;
+    margin: 0 4px;
+    font-size: 22px;
+    user-select: none;
+    line-height: 1;
+    padding-top: 2px;
+    flex-shrink: 0;
+    text-shadow: 0 0 8px rgba(155, 109, 255, 0.5);
+}
+
+/* 流程节点（当前选中）高亮 — 已废弃，改用 flp-node-l2 */
+#flowPanel .flp-node-current {
+    font-weight: 700;
+    color: #fff;
+    padding: 3px 10px;
+    background: rgba(74, 144, 217, 0.7);
+    border-radius: 5px;
+    white-space: nowrap;
+    box-shadow: 0 0 14px rgba(74, 144, 217, 0.55);
+}
+
+/* 条件文本为空时的样式 */
+#flowPanel .flp-condition-empty {
+    color: var(--text2);
+    font-style: italic;
+    padding: 3px 8px;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 5px;
+    white-space: normal;
+    word-break: break-all;
+}
+
+/* 无流程链时的提示 */
+#flowPanel .flp-no-chain {
+    color: var(--text2);
+    font-size: 13px;
+    text-align: center;
+    padding: 10px;
 }

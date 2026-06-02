@@ -62,8 +62,9 @@ SMTool._onMD = function (e) {
         return;
     }
 
-    // 左键
+    // 左键 — 画布点击，取消动画组合面板的选中高亮
     if (e.button === 0) {
+        SMData._flowFocus = null;
         // 检测条件标签点击
         if (SMTool._checkConditionClick(e.clientX, e.clientY)) return;
 
@@ -91,8 +92,9 @@ SMTool._onMD = function (e) {
                 if (!alreadyExists2) {
                     var ffn = SMData.nodes.get(SMData.connecting.nodeId);
                     var ttn = SMData.nodes.get(found.id);
+                    var toState = (ttn && ttn.nodeType === 'exit') ? 'exit' : (ttn && ttn.nodeType === 'entry') ? 'entry' : (ttn ? (ttn.currentAnim || '') : '');
                     var ffp = SMTool._getStateConnectorPos(ffn, SMData.connecting.stateName, 'output');
-                    var ttp = SMTool._getStateConnectorPos(ttn, ttn.currentAnim || '', 'input');
+                    var ttp = SMTool._getStateConnectorPos(ttn, toState, 'input');
                     var ddef = ffp && ttp ? SMTool._defaultCPOffsets(ffp, ttp) : { cp1x: 50, cp1y: 0, cp2x: -50, cp2y: 0 };
                     var cclrIdx = SMData.connections.length;
                     SMData.connections.push({
@@ -100,7 +102,7 @@ SMTool._onMD = function (e) {
                         fromNode: SMData.connecting.nodeId,
                         fromState: SMData.connecting.stateName,
                         toNode: found.id,
-                        toState: ttn ? (ttn.currentAnim || '') : '',
+                        toState: toState,
                         condition: '',
                         cp1x: ddef.cp1x, cp1y: ddef.cp1y,
                         cp2x: ddef.cp2x, cp2y: ddef.cp2y,
@@ -676,6 +678,7 @@ SMTool._onDot = function (nid, name, type) {
         var node = SMData.nodes.get(nid);
         if (!node) return;
         var pos = SMTool._getStateConnectorPos(node, name, 'output');
+        if (!pos) return;
         var sp = SMTool.worldToCanvas(pos.x, pos.y);
         SMData.connecting = { nodeId: nid, stateName: name, sx: pos.x, sy: pos.y, mx: sp.x, my: sp.y };
         SMTool._updateSel();
@@ -735,8 +738,14 @@ SMTool._findTarget = function (mx, my) {
                     var dx = mx - r.left - r.width / 2;
                     var dy = my - r.top - r.height / 2;
                     if (Math.sqrt(dx * dx + dy * dy) < 24) {
-                        var node = SMData.nodes.get(n.id);
-                        var curState = node ? (node.currentAnim || '') : '';
+                        var curState = '';
+                        if (n.nodeType === 'exit') {
+                            curState = 'exit';
+                        } else if (n.nodeType === 'entry') {
+                            curState = 'entry';
+                        } else {
+                            curState = n.currentAnim || '';
+                        }
                         return { nodeId: n.id, stateName: curState, type: 'input' };
                     }
                 }
@@ -780,6 +789,9 @@ SMTool._checkConditionClick = function (mx, my) {
         var tn = SMData.nodes.get(c.toNode);
         if (!fn || !tn) continue;
 
+        // 入口/出口节点的连线不弹出条件编辑器
+        var isEntryExitConn = (fn.nodeType === 'entry' || fn.nodeType === 'exit' || tn.nodeType === 'entry' || tn.nodeType === 'exit');
+
         var fp = SMTool._getStateConnectorPos(fn, c.fromState, 'output');
         var tp = SMTool._getStateConnectorPos(tn, c.toState, 'input');
         if (!fp || !tp) continue;
@@ -802,10 +814,12 @@ SMTool._checkConditionClick = function (mx, my) {
         var distLabel = Math.sqrt((mx - lx) * (mx - lx) + (my - ly) * (my - ly));
 
         if (distLabel < 30) {
-            // 点击了标签 → 选中连线 + 弹出条件编辑器
+            // 点击了标签 → 选中连线 + 弹出条件编辑器（入口/出口连线不弹编辑器）
             SMData.selectedConnection = c.id;
             SMTool._updateStateRowColors();
-            SMTool._showCond(c, mx, my);
+            if (!isEntryExitConn) {
+                SMTool._showCond(c, mx, my);
+            }
             return true;
         }
 
@@ -876,9 +890,23 @@ SMTool._showCtxMenu = function (e) {
             SMTool._updateSel();
             SMTool._updateStateRowColors();
         }
-        // 空白区域右键菜单：创建文本节点 + 打组
+        // 空白区域右键菜单：创建各种节点
         var menu3 = document.getElementById('ctxMenu');
         menu3.querySelectorAll('.ctx-text-node').forEach(function (el) { el.remove(); });
+        var item0a = document.createElement('div');
+        item0a.className = 'ctx-item ctx-text-node';
+        item0a.textContent = '🚪 添加入口节点';
+        item0a.onclick = function () { SMTool.addEntryNodeAt(wp.x, wp.y); menu3.style.display = 'none'; };
+        menu3.appendChild(item0a);
+        var item0b = document.createElement('div');
+        item0b.className = 'ctx-item ctx-text-node';
+        item0b.textContent = '🏁 添加出口节点';
+        item0b.onclick = function () { SMTool.addExitNodeAt(wp.x, wp.y); menu3.style.display = 'none'; };
+        menu3.appendChild(item0b);
+        var sep0 = document.createElement('div');
+        sep0.className = 'ctx-sep';
+        sep0.style.cssText = 'height:1px;background:var(--border);margin:4px 8px';
+        menu3.appendChild(sep0);
         var item1 = document.createElement('div');
         item1.className = 'ctx-item ctx-text-node';
         item1.textContent = '📝 创建短文本节点';
@@ -1033,6 +1061,245 @@ SMTool._scheduleFloatPanelCollapse = function (e) {
                 var mx = SMData._mx || 0;
                 if (mx > panelRight + 50 || mx < rect.left) {
                     SMTool._collapseFloatPanel();
+                }
+            }
+        }
+    }, 150);
+};
+
+// ================================================================
+// 底部动画组合浮窗面板交互 — 边缘检测 / 铆钉 / 离开收起 / 最大化
+// ================================================================
+SMTool._initFlowPanel = function () {
+    var panel = document.getElementById('flowPanel');
+    var pinBtn = panel.querySelector('.flp-pin');
+    var maxBtn = panel.querySelector('.flp-maximize');
+    var triggerBar = panel.querySelector('.flp-trigger-bar');
+    var body = panel.querySelector('.flp-body');
+
+    function onPanelAreaEnter() {
+        SMData._flowPanel.hovered = true;
+        SMData._flowPanel._justUnmaximized = false;
+        if (SMData._flowPanel._collapseTimer) {
+            clearTimeout(SMData._flowPanel._collapseTimer);
+            SMData._flowPanel._collapseTimer = null;
+        }
+        if (!SMData._flowPanel.expanded) {
+            SMTool._expandFlowPanel();
+        }
+    }
+    function onPanelAreaLeave(e) {
+        SMData._flowPanel.hovered = false;
+        SMTool._scheduleFlowPanelCollapse(e);
+    }
+
+    triggerBar.addEventListener('mouseenter', onPanelAreaEnter);
+    triggerBar.addEventListener('mouseleave', onPanelAreaLeave);
+    body.addEventListener('mouseenter', onPanelAreaEnter);
+    body.addEventListener('mouseleave', onPanelAreaLeave);
+
+    // 点击铆钉图标切换固定状态
+    pinBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        e.preventDefault();
+        SMData._flowPanel.pinned = !SMData._flowPanel.pinned;
+        if (SMData._flowPanel.pinned) {
+            pinBtn.classList.add('active');
+            pinBtn.title = '取消固定';
+            panel.classList.add('pinned');
+        } else {
+            pinBtn.classList.remove('active');
+            pinBtn.title = '固定面板';
+            panel.classList.remove('pinned');
+        }
+    });
+
+    // 点击最大化按钮切换面板高度
+    maxBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        e.preventDefault();
+        if (SMData._flowPanel.maximized) {
+            // 当前全屏 → 还原
+            if (!SMData._flowPanel.pinned) {
+                // 未锚定：直接完全收起到底部
+                SMTool._collapseFlowPanel();
+            } else {
+                // 已锚定：还原到短屏 300px
+                SMData._flowPanel.maximized = false;
+                panel.classList.remove('maximized');
+                maxBtn.innerHTML = '▲';
+                maxBtn.title = '最大化面板';
+                SMData._flowPanel._justUnmaximized = true;
+            }
+        } else {
+            // 当前短屏 → 全屏
+            SMData._flowPanel.maximized = true;
+            panel.classList.add('maximized');
+            maxBtn.innerHTML = '▼';
+            maxBtn.title = '还原面板';
+        }
+    });
+
+    // 点击触发器条也能展开/收起（锚钉激活时不可收起）
+    triggerBar.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (SMData._flowPanel.expanded) {
+            if (!SMData._flowPanel.pinned) {
+                SMTool._collapseFlowPanel();
+            }
+        } else {
+            SMTool._expandFlowPanel();
+        }
+    });
+
+    // 全局鼠标移动 — 检测靠近底部边缘
+    document.addEventListener('mousemove', function (e) {
+        if (SMData._flowPanel.pinned || SMData._flowPanel.expanded) return;
+        if (e.clientY >= window.innerHeight - 65) {
+            SMTool._expandFlowPanel();
+        }
+    });
+
+    // 全局鼠标移动 — 检测是否远离面板（50px 阈值，全屏时不触发自动收起）
+    document.addEventListener('mousemove', function (e) {
+        if (SMData._flowPanel.pinned) return;
+        if (SMData._flowPanel.maximized) return;
+        if (SMData._flowPanel._justUnmaximized) return;
+        if (!SMData._flowPanel.expanded) return;
+        var rect = panel.getBoundingClientRect();
+        if (e.clientY < rect.top - 50 || e.clientY > rect.bottom + 50) {
+            SMTool._collapseFlowPanel();
+        }
+    });
+
+    // 全局点击 — 面板外点击：全屏→短屏，短屏→收起
+    document.addEventListener('mousedown', function (e) {
+        if (!SMData._flowPanel.expanded) return;
+        // 检查点击是否在面板内部
+        if (e.target.closest && e.target.closest('#flowPanel')) return;
+
+        if (SMData._flowPanel.maximized) {
+            if (SMData._flowPanel.pinned) {
+                // 全屏+已锚定：面板外点击 → 还原到短屏（300px）
+                SMTool._unmaximizeFlowPanel();
+            } else {
+                // 全屏+未锚定：面板外点击 → 完全收起
+                SMTool._collapseFlowPanel();
+            }
+        } else if (!SMData._flowPanel.pinned) {
+            // 短屏未锚定：面板外点击 → 收起
+            SMTool._collapseFlowPanel();
+        }
+        // 短屏已锚定：不收起
+    });
+
+    // 面板内容区滚轮事件 — 阻止冒泡到画布（避免缩放）
+    body.addEventListener('wheel', function (e) {
+        e.stopPropagation();
+    });
+
+    // 流程链行点击 — 高亮对应节点和连线
+    var flpContent = document.getElementById('flpContent');
+    if (flpContent) {
+        flpContent.addEventListener('click', function (e) {
+            var row = e.target.closest('.flp-chain-row');
+            if (!row) return;
+            e.stopPropagation();
+
+            var nodesStr = row.getAttribute('data-flow-nodes');
+            var connsStr = row.getAttribute('data-flow-conns');
+            if (!nodesStr || !connsStr) return;
+
+            // 切换：如果已激活则取消高亮
+            if (row.classList.contains('active')) {
+                row.classList.remove('active');
+                SMData._flowFocus = null;
+            } else {
+                // 取消其他行的激活状态
+                var allRows = flpContent.querySelectorAll('.flp-chain-row');
+                for (var ri = 0; ri < allRows.length; ri++) {
+                    allRows[ri].classList.remove('active');
+                }
+                row.classList.add('active');
+
+                // 设置流程焦点
+                var nodeIdArr = nodesStr.split(',');
+                var connIdArr = connsStr.split(',');
+                var nodeIds = new Set();
+                var connIds = new Set();
+                for (var ni = 0; ni < nodeIdArr.length; ni++) {
+                    nodeIds.add(parseInt(nodeIdArr[ni]));
+                }
+                for (var ci = 0; ci < connIdArr.length; ci++) {
+                    connIds.add(parseInt(connIdArr[ci]));
+                }
+                SMData._flowFocus = { nodeIds: nodeIds, connIds: connIds };
+            }
+            SMTool._updateSel();
+            SMTool._updateStateRowColors();
+        });
+    }
+};
+
+// 展开底部流程面板
+SMTool._expandFlowPanel = function () {
+    if (SMData._flowPanel.expanded) return;
+    SMData._flowPanel.expanded = true;
+    var panel = document.getElementById('flowPanel');
+    if (panel) panel.classList.add('expanded');
+};
+
+// 收起底部流程面板
+SMTool._collapseFlowPanel = function () {
+    if (!SMData._flowPanel.expanded) return;
+    SMData._flowPanel.expanded = false;
+    // 收起时也还原最大化状态和焦点高亮
+    SMData._flowPanel.maximized = false;
+    SMData._flowFocus = null;
+    SMTool._updateSel();
+    SMTool._updateStateRowColors();
+    var panel = document.getElementById('flowPanel');
+    if (panel) {
+        panel.classList.remove('expanded');
+        panel.classList.remove('maximized');
+        var maxBtn = panel.querySelector('.flp-maximize');
+        if (maxBtn) {
+            maxBtn.innerHTML = '▲';
+            maxBtn.title = '最大化面板';
+        }
+    }
+};
+
+// 从全屏还原到短屏（不收起面板）
+SMTool._unmaximizeFlowPanel = function () {
+    if (!SMData._flowPanel.maximized) return;
+    SMData._flowPanel.maximized = false;
+    var panel = document.getElementById('flowPanel');
+    if (panel) {
+        panel.classList.remove('maximized');
+        var maxBtn = panel.querySelector('.flp-maximize');
+        if (maxBtn) {
+            maxBtn.innerHTML = '▲';
+            maxBtn.title = '最大化面板';
+        }
+    }
+    // 面板缩小中，鼠标可能落在面板外 → 阻止自动收起，等鼠标重新进入面板再恢复
+    SMData._flowPanel._justUnmaximized = true;
+};
+
+// 延迟收起底部流程面板
+SMTool._scheduleFlowPanelCollapse = function (e) {
+    if (SMData._flowPanel._collapseTimer) {
+        clearTimeout(SMData._flowPanel._collapseTimer);
+    }
+    SMData._flowPanel._collapseTimer = setTimeout(function () {
+        if (!SMData._flowPanel.hovered && !SMData._flowPanel.pinned && !SMData._flowPanel.maximized && !SMData._flowPanel._justUnmaximized) {
+            var panel = document.getElementById('flowPanel');
+            if (panel) {
+                var rect = panel.getBoundingClientRect();
+                var my = SMData._my || 0;
+                if (my < rect.top - 50 || my > rect.bottom) {
+                    SMTool._collapseFlowPanel();
                 }
             }
         }

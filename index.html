@@ -102,6 +102,23 @@
         </div>
     </div>
 
+    <!-- ===== 底部动画组合浮窗面板 ===== -->
+    <div id="flowPanel">
+        <div class="flp-trigger-bar" title="展开/收起动画组合">
+            <span class="flp-trigger-label">动画组合</span>
+        </div>
+        <div class="flp-body">
+            <div class="flp-header">
+                <span class="flp-maximize" title="最大化面板">▲</span>
+                <span class="flp-title">🔗 动画组合</span>
+                <span class="flp-pin" title="固定面板">📌</span>
+            </div>
+            <div class="flp-content" id="flpContent">
+                <div class="flp-hint">点击选中一个动画节点，查看其上下游动画组合</div>
+            </div>
+        </div>
+    </div>
+
     <!-- ================================================================
          脚本加载顺序（依赖关系严格）:
          1. spine-loader.js — 从 CDN 加载三个版本 Spine 运行时

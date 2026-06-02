@@ -39,6 +39,7 @@ SMTool.exportData = function () {
         data.nodes.push({
             id: n.id,
             name: n.name,
+            nodeType: n.nodeType,
             x: n.x,
             y: n.y,
             animations: n.animations,
@@ -52,7 +53,9 @@ SMTool.exportData = function () {
             _srcSkelBinBase64: n._srcSkelBinBase64,
             _srcAtlasText: n._srcAtlasText,
             _srcTexDataUrl: n._srcTexDataUrl,
-            _srcType: n._srcType
+            _srcType: n._srcType,
+            _textContent: n._textContent,
+            _exitText: n._exitText
         });
         result = nodesIter.next();
     }
@@ -94,6 +97,7 @@ SMTool.importData = function () {
                     var nd = nodeList[i];
                     var node = new SpineNodeData(nd.id);
                     node.name = nd.name;
+                    node.nodeType = nd.nodeType || 'spine';
                     node.x = nd.x || 0;
                     node.y = nd.y || 0;
                     node.animations = nd.animations || [];
@@ -108,6 +112,8 @@ SMTool.importData = function () {
                     node._srcAtlasText = nd._srcAtlasText || '';
                     node._srcTexDataUrl = nd._srcTexDataUrl || '';
                     node._srcType = nd._srcType || '';
+                    node._textContent = nd._textContent || '';
+                    node._exitText = nd._exitText || '';
 
                     SMData.nodes.set(nd.id, node);
                     SMData.nextId = Math.max(SMData.nextId, nd.id + 1);

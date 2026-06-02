@@ -68,6 +68,36 @@ SMTool._createEl = function (node) {
                     '<div class="conn-dot output" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'text\',\'output\')" title="连线输出"></div>' +
                 '</div>';
         }
+    } else if (node.nodeType === 'entry') {
+        el.classList.add('entry-node');
+        var entryText = SMTool._esc(node._exitText || '');
+        el.innerHTML =
+            '<div class="header entry-header" onmousedown="event.stopPropagation();SMTool._onHD(event,' + node.id + ')">' +
+                '<span class="entry-title">🚪 入口</span>' +
+                '<button onclick="event.stopPropagation();SMTool.deleteNode(' + node.id + ')" style="background:none;border:none;color:var(--text2);cursor:pointer;font-size:14px;flex-shrink:0">✕</button>' +
+            '</div>' +
+            '<div class="entry-body">' +
+                '<div class="entry-icon">🚪</div>' +
+                '<textarea class="entry-text-input" oninput="SMTool._updateExitText(' + node.id + ',this.value);this.style.height=\'auto\';this.style.height=this.scrollHeight+\'px\'" onclick="event.stopPropagation()" placeholder="输入入口条件...">' + entryText + '</textarea>' +
+            '</div>' +
+            '<div class="anim-bar" style="display:flex;justify-content:flex-end">' +
+                '<div class="conn-dot output" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'entry\',\'output\')" title="连线输出"></div>' +
+            '</div>';
+    } else if (node.nodeType === 'exit') {
+        el.classList.add('exit-node');
+        var exitText = SMTool._esc(node._exitText || '');
+        el.innerHTML =
+            '<div class="header exit-header" onmousedown="event.stopPropagation();SMTool._onHD(event,' + node.id + ')">' +
+                '<span class="exit-title">🏁 出口</span>' +
+                '<button onclick="event.stopPropagation();SMTool.deleteNode(' + node.id + ')" style="background:none;border:none;color:var(--text2);cursor:pointer;font-size:14px;flex-shrink:0">✕</button>' +
+            '</div>' +
+            '<div class="exit-body">' +
+                '<div class="exit-icon">🏁</div>' +
+                '<textarea class="exit-text-input" oninput="SMTool._updateExitText(' + node.id + ',this.value);this.style.height=\'auto\';this.style.height=this.scrollHeight+\'px\'" onclick="event.stopPropagation()" placeholder="输入出口条件...">' + exitText + '</textarea>' +
+            '</div>' +
+            '<div class="anim-bar" style="display:flex;justify-content:flex-start">' +
+                '<div class="conn-dot input" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'exit\',\'input\')" title="连线输入"></div>' +
+            '</div>';
     } else {
     el.innerHTML =
         '<div class="header" onmousedown="event.stopPropagation();SMTool._onHD(event,' + node.id + ')">' +
@@ -113,6 +143,10 @@ SMTool._updateTextNode = function (nid, value) {
 SMTool._updateTextNodeName = function (nid, value) {
     var node = SMData.nodes.get(nid);
     if (node) node.name = value;
+};
+SMTool._updateExitText = function (nid, value) {
+    var node = SMData.nodes.get(nid);
+    if (node) node._exitText = value;
 };
 
 // ---- 循环/单次切换 ----
@@ -455,7 +489,10 @@ SMTool._updateFloatLabels = function () {
 SMTool._updateSel = function () {
     // 计算焦点集合
     var focusSet = new Set();
-    if (SMData.connecting) {
+    if (SMData._flowFocus) {
+        // 流程面板高亮模式：使用流程焦点节点
+        SMData._flowFocus.nodeIds.forEach(function (nid) { focusSet.add(nid); });
+    } else if (SMData.connecting) {
         // 连线模式：仅高亮源节点
         focusSet.add(SMData.connecting.nodeId);
     } else if (SMData.selectedNodes.size >= 1) {
@@ -521,6 +558,7 @@ SMTool._updateSel = function () {
         result = nodesIter.next();
     }
     SMTool._updateFloatPanel();
+    SMTool._updateFlowPanel();
 };
 
 // ---- 更新左侧浮窗面板数据 ----
@@ -534,6 +572,21 @@ SMTool._updateFloatPanel = function () {
         panel.classList.remove('inactive');
         var node = SMData.nodes.get(SMData.selectedNode);
         if (!node) { content.innerHTML = '<div class="dfp-hint">未找到节点数据</div>'; return; }
+
+        // 入口/出口节点显示简化面板
+        if (node.nodeType === 'entry') {
+            content.innerHTML =
+                '<div class="dfp-section"><div class="dfp-section-title">🚪 入口节点</div><div class="dfp-row">' + SMTool._esc(node.name) + '</div></div>' +
+                '<div class="dfp-section"><div class="dfp-section-title">📌 说明</div><div class="dfp-row">状态机的起始入口，从此节点开始连线到其他状态。</div></div>';
+            return;
+        }
+        if (node.nodeType === 'exit') {
+            content.innerHTML =
+                '<div class="dfp-section"><div class="dfp-section-title">🏁 出口节点</div><div class="dfp-row">' + SMTool._esc(node.name) + '</div></div>' +
+                '<div class="dfp-section"><div class="dfp-section-title">📝 出口文本</div><div class="dfp-row">' + SMTool._esc(node._exitText || '(空)') + '</div></div>' +
+                '<div class="dfp-section"><div class="dfp-section-title">📌 说明</div><div class="dfp-row">状态机的结束节点，其他状态可连线到此。</div></div>';
+            return;
+        }
 
         var animsHtml = '';
         for (var ai = 0; ai < node.animations.length; ai++) {
@@ -720,7 +773,12 @@ SMTool._updateStateRowColors = function () {
             if (bar) {
                 // 获取当前动画名来匹配连接
                 var node = SMData.nodes.get(nid);
-                var curState = node ? node.currentAnim : '';
+                var curState = '';
+                if (node) {
+                    if (node.nodeType === 'entry') curState = 'entry';
+                    else if (node.nodeType === 'exit') curState = 'exit';
+                    else curState = node.currentAnim || '';
+                }
                 var infos = stateMap.get(curState);
                 if (infos && infos.length > 0) {
                     var info = infos[0];
@@ -952,4 +1010,201 @@ SMTool._createMissingNode = function (sourceFile, animName) {
     SMTool._updateSB();
     document.getElementById('sbStatus').textContent = '已创建: ' + animName;
     setTimeout(function () { document.getElementById('sbStatus').textContent = ''; }, 2000);
+};
+
+// ================================================================
+// 更新底部动画组合浮窗面板
+// ================================================================
+SMTool._updateFlowPanel = function () {
+    var content = document.getElementById('flpContent');
+    var panel = document.getElementById('flowPanel');
+    if (!content || !panel) return;
+
+    // 仅当单选一个节点且该节点有连接时显示
+    if (SMData.selectedNodes.size === 1 && SMData.selectedNode) {
+        var selNodeId = SMData.selectedNode;
+        var selNode = SMData.nodes.get(selNodeId);
+        if (!selNode) {
+            panel.classList.add('inactive');
+            content.innerHTML = '<div class="flp-hint">点击选中一个动画节点，查看其上下游动画组合</div>';
+            return;
+        }
+
+        // 收集上游连接（selected node 作为 toNode，即左端点被连入）
+        var upstreamConns = [];
+        // 收集下游连接（selected node 作为 fromNode，即右端点连出）
+        var downstreamConns = [];
+
+        for (var i = 0; i < SMData.connections.length; i++) {
+            var c = SMData.connections[i];
+            if (c.toNode === selNodeId) {
+                upstreamConns.push(c);
+            }
+            if (c.fromNode === selNodeId) {
+                downstreamConns.push(c);
+            }
+        }
+
+        // 没有任何连接
+        if (upstreamConns.length === 0 && downstreamConns.length === 0) {
+            panel.classList.remove('inactive');
+            content.innerHTML = '<div class="flp-no-chain">🔗 节点 "' + SMTool._esc(selNode.name || '') + '" 暂无上下游连线<br/><span style="font-size:11px;color:var(--text2)">使用连线模式连接动画节点即可生成流程</span></div>';
+            return;
+        }
+
+        panel.classList.remove('inactive');
+
+        // 辅助：将内部标识转为显示名
+        var _disp = function (s) {
+            if (s === 'entry') return '入口';
+            if (s === 'exit') return '出口';
+            return s;
+        };
+
+        // 获取节点的动画名（优先使用 currentAnim，否则用第一个动画）
+        var selAnim = _disp(selNode.currentAnim) || (selNode.animations.length > 0 ? selNode.animations[0].name : selNode.name);
+
+        // 生成流程链 HTML
+        var chainsHtml = '';
+        var chainIndex = 1;
+
+        // 情况1：有上游也有下游 → 组合成完整链
+        if (upstreamConns.length > 0 && downstreamConns.length > 0) {
+            for (var u = 0; u < upstreamConns.length; u++) {
+                var uc = upstreamConns[u];
+                var upNode = SMData.nodes.get(uc.fromNode);
+                if (!upNode) continue;
+                var upAnimName = _disp(uc.fromState) || (upNode.currentAnim || (upNode.animations.length > 0 ? upNode.animations[0].name : upNode.name));
+                var upCond = uc.condition || '';
+
+                for (var d = 0; d < downstreamConns.length; d++) {
+                    var dc = downstreamConns[d];
+                    var downNode = SMData.nodes.get(dc.toNode);
+                    if (!downNode) continue;
+                    var downAnimName = _disp(dc.toState) || (downNode.currentAnim || (downNode.animations.length > 0 ? downNode.animations[0].name : downNode.name));
+                    var downCond = dc.condition || '';
+
+                    var nodeIds = [upNode.id, selNodeId, downNode.id].join(',');
+                    var connIds = [uc.id, dc.id].join(',');
+                    chainsHtml += '<div class="flp-chain-group">';
+                    chainsHtml += '<div class="flp-chain-row" data-flow-nodes="' + nodeIds + '" data-flow-conns="' + connIds + '">';
+
+                    // 上游节点（第一级）
+                    chainsHtml += '<span class="flp-node-l1" title="' + SMTool._esc(upNode.name) + '">' + SMTool._esc(upAnimName) + '</span>';
+
+                    // 箭头 + 上游条件
+                    chainsHtml += '<span class="flp-arrow">→</span>';
+                    if (upCond) {
+                        chainsHtml += '<span class="flp-condition" title="' + SMTool._esc(upCond) + '">条件：' + SMTool._esc(upCond) + '</span>';
+                    } else {
+                        chainsHtml += '<span class="flp-condition-empty">条件：（空）</span>';
+                    }
+
+                    // 箭头 + 当前选中节点（第二级）
+                    chainsHtml += '<span class="flp-arrow">→</span>';
+                    chainsHtml += '<span class="flp-node-l2" title="' + SMTool._esc(selNode.name) + '">' + SMTool._esc(selAnim) + '</span>';
+
+                    // 箭头 + 下游条件
+                    chainsHtml += '<span class="flp-arrow">→</span>';
+                    if (downCond) {
+                        chainsHtml += '<span class="flp-condition" title="' + SMTool._esc(downCond) + '">条件：' + SMTool._esc(downCond) + '</span>';
+                    } else {
+                        chainsHtml += '<span class="flp-condition-empty">条件：（空）</span>';
+                    }
+
+                    // 箭头 + 下游节点（第三级）
+                    chainsHtml += '<span class="flp-arrow">→</span>';
+                    chainsHtml += '<span class="flp-node-l3" title="' + SMTool._esc(downNode.name) + '">' + SMTool._esc(downAnimName) + '</span>';
+
+                    chainsHtml += '</div></div>';
+                    chainIndex++;
+                }
+            }
+        }
+        // 情况2：只有上游
+        else if (upstreamConns.length > 0) {
+            for (var u2 = 0; u2 < upstreamConns.length; u2++) {
+                var uc2 = upstreamConns[u2];
+                var upNode2 = SMData.nodes.get(uc2.fromNode);
+                if (!upNode2) continue;
+                var upAnimName2 = _disp(uc2.fromState) || (upNode2.currentAnim || (upNode2.animations.length > 0 ? upNode2.animations[0].name : upNode2.name));
+                var upCond2 = uc2.condition || '';
+
+                var nodeIds2 = [upNode2.id, selNodeId].join(',');
+                var connIds2 = String(uc2.id);
+                chainsHtml += '<div class="flp-chain-group">';
+                chainsHtml += '<div class="flp-chain-row" data-flow-nodes="' + nodeIds2 + '" data-flow-conns="' + connIds2 + '">';
+
+                chainsHtml += '<span class="flp-node-l1" title="' + SMTool._esc(upNode2.name) + '">' + SMTool._esc(upAnimName2) + '</span>';
+                chainsHtml += '<span class="flp-arrow">→</span>';
+                if (upCond2) {
+                    chainsHtml += '<span class="flp-condition" title="' + SMTool._esc(upCond2) + '">条件：' + SMTool._esc(upCond2) + '</span>';
+                } else {
+                    chainsHtml += '<span class="flp-condition-empty">条件：（空）</span>';
+                }
+                chainsHtml += '<span class="flp-arrow">→</span>';
+                chainsHtml += '<span class="flp-node-l2" title="' + SMTool._esc(selNode.name) + '">' + SMTool._esc(selAnim) + '</span>';
+
+                chainsHtml += '</div></div>';
+                chainIndex++;
+            }
+        }
+        // 情况3：只有下游
+        else if (downstreamConns.length > 0) {
+            for (var d2 = 0; d2 < downstreamConns.length; d2++) {
+                var dc2 = downstreamConns[d2];
+                var downNode2 = SMData.nodes.get(dc2.toNode);
+                if (!downNode2) continue;
+                var downAnimName2 = _disp(dc2.toState) || (downNode2.currentAnim || (downNode2.animations.length > 0 ? downNode2.animations[0].name : downNode2.name));
+                var downCond2 = dc2.condition || '';
+
+                var nodeIds3 = [selNodeId, downNode2.id].join(',');
+                var connIds3 = String(dc2.id);
+                chainsHtml += '<div class="flp-chain-group">';
+                chainsHtml += '<div class="flp-chain-row" data-flow-nodes="' + nodeIds3 + '" data-flow-conns="' + connIds3 + '">';
+
+                chainsHtml += '<span class="flp-node-l2" title="' + SMTool._esc(selNode.name) + '">' + SMTool._esc(selAnim) + '</span>';
+                chainsHtml += '<span class="flp-arrow">→</span>';
+                if (downCond2) {
+                    chainsHtml += '<span class="flp-condition" title="' + SMTool._esc(downCond2) + '">条件：' + SMTool._esc(downCond2) + '</span>';
+                } else {
+                    chainsHtml += '<span class="flp-condition-empty">条件：（空）</span>';
+                }
+                chainsHtml += '<span class="flp-arrow">→</span>';
+                chainsHtml += '<span class="flp-node-l3" title="' + SMTool._esc(downNode2.name) + '">' + SMTool._esc(downAnimName2) + '</span>';
+
+                chainsHtml += '</div></div>';
+                chainIndex++;
+            }
+        }
+
+        content.innerHTML = chainsHtml;
+
+        // 如果之前有高亮的组合链，恢复其激活状态
+        if (SMData._flowFocus) {
+            var rows = content.querySelectorAll('.flp-chain-row');
+            var focusConnIds = SMData._flowFocus.connIds;
+            for (var ri = 0; ri < rows.length; ri++) {
+                var r = rows[ri];
+                var connsStr = r.getAttribute('data-flow-conns');
+                if (!connsStr) continue;
+                var connIdArr = connsStr.split(',');
+                var match = connIdArr.length === focusConnIds.size;
+                if (match) {
+                    for (var cii = 0; cii < connIdArr.length; cii++) {
+                        if (!focusConnIds.has(parseInt(connIdArr[cii]))) { match = false; break; }
+                    }
+                }
+                if (match) {
+                    r.classList.add('active');
+                }
+            }
+        }
+    } else if (SMData.selectedNodes.size > 1) {
+        panel.classList.add('inactive');
+        content.innerHTML = '<div class="flp-hint">已多选 ' + SMData.selectedNodes.size + ' 个节点<br/><span style="font-size:11px">单选一个节点以查看其动画组合</span></div>';
+    } else {
+        panel.classList.add('inactive');
+        content.innerHTML = '<div class="flp-hint">点击选中一个动画节点，查看其上下游动画组合</div>';
+    }
 };

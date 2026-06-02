@@ -56,7 +56,20 @@ var SMData = {
     nextGroupId: 1,
 
     // 渲染模式：'perf' | 'dyn'
-    renderMode: 'perf'
+    renderMode: 'perf',
+
+    // 底部动画组合浮窗面板状态
+    _flowPanel: {
+        pinned: false,
+        hovered: false,
+        expanded: false,
+        maximized: false,
+        _collapseTimer: null,
+        _justUnmaximized: false
+    },
+
+    // 动画组合面板中点击高亮某条组合链的焦点
+    _flowFocus: null   // { nodeIds: Set, connIds: Set } 或 null
 };
 
 // ---- Spine 节点数据类 ----
@@ -116,6 +129,7 @@ var SpineNodeData = (function () {
         this.loop = true;           // true=循环, false=单次
         this._boneTags = {};        // { boneName: [animState1, animState2] }
         this._stateDesc = '';       // 状态描述文本
+        this._exitText = '';        // 出口节点文本内容
     }
     return SpineNodeData;
 })();
