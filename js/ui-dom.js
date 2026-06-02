@@ -541,6 +541,8 @@ SMTool._updateSel = function () {
         if (el) {
             el.classList.toggle('selected', SMData.selectedNodes.has(n.id));
             var isDimmed = focusSet.size > 0 && !focusSet.has(n.id);
+            var isFocused = focusSet.size > 0 && focusSet.has(n.id) && !SMData.selectedNodes.has(n.id);
+            el.classList.toggle('focused', isFocused);
             var overlay = el.querySelector('.dim-overlay');
             if (isDimmed && !overlay) {
                 overlay = document.createElement('div');
@@ -624,7 +626,7 @@ SMTool._updateFloatPanel = function () {
             var taggedHtml = taggedStates ? '<span class="dfp-bone-tagged">' + SMTool._esc(taggedStates) + '</span>' : '';
             boneRows += '<div class="dfp-row dfp-bone-row" data-bone="' + SMTool._esc(boneName) + '">' +
                 '<span>' + SMTool._esc(boneName) + '</span>' +
-                    '<button class="dfp-bone-tag-btn" data-bone="' + SMTool._esc(boneName) + '" style="font-size:14px;cursor:pointer;background:none;border:1px solid #50c878;color:#50c878;border-radius:4px;padding:0 6px;margin-left:8px">标记</button>' +
+                    '<button class="dfp-bone-tag-btn" data-bone="' + SMTool._esc(boneName) + '" style="font-size:14px;cursor:pointer;background:none;border:1px solid #4ec96e;color:#4ec96e;border-radius:4px;padding:0 6px;margin-left:8px">标记</button>' +
                     '<span class="dfp-bone-right" style="margin-left:auto;display:flex;align-items:center;gap:6px">' + taggedHtml + labelHtml + '</span></div>';
         }
         if (!boneRows) boneRows = '<div class="dfp-row">无</div>';
@@ -703,7 +705,7 @@ SMTool._updateFloatPanel = function () {
                 var labelHtml2 = label2 ? '<span class="dfp-bone-label" data-bone="' + SMTool._esc(boneName2) + '">' + SMTool._esc(label2) + '<span class="dfp-bone-label-del" data-bone="' + SMTool._esc(boneName2) + '">&times;</span></span>' : '';
                 var taggedStates2 = (node._boneTags && node._boneTags[boneName2]) ? node._boneTags[boneName2].join(', ') : '';
                 var taggedHtml2 = taggedStates2 ? '<span class="dfp-bone-tagged">' + SMTool._esc(taggedStates2) + '</span>' : '';
-                boneRows2 += '<div class="dfp-row dfp-bone-row" data-bone="' + SMTool._esc(boneName2) + '"><span>' + SMTool._esc(boneName2) + '</span><button class="dfp-bone-tag-btn" data-bone="' + SMTool._esc(boneName2) + '" style="font-size:14px;cursor:pointer;background:none;border:1px solid #50c878;color:#50c878;border-radius:4px;padding:0 6px;margin-left:8px">标记</button><span class="dfp-bone-right" style="margin-left:auto;display:flex;align-items:center;gap:6px">' + taggedHtml2 + labelHtml2 + '</span></div>';
+                boneRows2 += '<div class="dfp-row dfp-bone-row" data-bone="' + SMTool._esc(boneName2) + '"><span>' + SMTool._esc(boneName2) + '</span><button class="dfp-bone-tag-btn" data-bone="' + SMTool._esc(boneName2) + '" style="font-size:14px;cursor:pointer;background:none;border:1px solid #4ec96e;color:#4ec96e;border-radius:4px;padding:0 6px;margin-left:8px">标记</button><span class="dfp-bone-right" style="margin-left:auto;display:flex;align-items:center;gap:6px">' + taggedHtml2 + labelHtml2 + '</span></div>';
             }
             if (!boneRows2) boneRows2 = '<div class="dfp-row">无</div>';
 

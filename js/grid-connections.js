@@ -28,7 +28,7 @@ SMTool._renderGrid = function () {
     var ox = ((w / 2 + vx * z) % s + s) % s;
     var oy = ((h / 2 + vy * z) % s + s) % s;
 
-    ctx.strokeStyle = base >= 200 ? '#ffffff10' : '#ffffff06';
+    ctx.strokeStyle = base >= 200 ? '#1c1c1c' : '#111111';
     ctx.lineWidth = 1;
     ctx.beginPath();
     for (var x = ox; x < w; x += s) { ctx.moveTo(x, 0); ctx.lineTo(x, h); }
@@ -38,7 +38,7 @@ SMTool._renderGrid = function () {
     // 中心十字线
     var cx = w / 2 + vx * z;
     var cy = h / 2 + vy * z;
-    ctx.strokeStyle = '#ffffff20';
+    ctx.strokeStyle = '#252525';
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(cx, 0); ctx.lineTo(cx, h);
@@ -114,7 +114,7 @@ SMTool._renderConnections = function () {
         }
 
         // 绘制贝塞尔曲线
-        ctx.globalAlpha = inFocus ? 1 : 0.12;
+        ctx.globalAlpha = inFocus ? 1 : 0.3;
         ctx.strokeStyle = inFocus ? connColor : '#888';
         ctx.lineWidth = Math.max(1.5, (isActive ? 3.5 : 2.5) * z);
         ctx.shadowColor = isActive ? connColor : 'transparent';
@@ -135,7 +135,7 @@ SMTool._renderConnections = function () {
         ctx.globalAlpha = 1;
 
         // 方向箭头
-        if (!inFocus) ctx.globalAlpha = 0.12;
+        if (!inFocus) ctx.globalAlpha = 0.3;
         SMTool._drawBezierArrows(ctx, fs.x, fs.y, cp1s.x, cp1s.y, cp2s.x, cp2s.y, ts.x, ts.y, inFocus ? connColor : '#888', isActive, z);
         ctx.globalAlpha = 1;
 
@@ -173,7 +173,7 @@ SMTool._renderConnections = function () {
         // 入口/出口节点的连线不显示条件标签
         var isEntryExitConn = (fn.nodeType === 'entry' || fn.nodeType === 'exit' || tn.nodeType === 'entry' || tn.nodeType === 'exit');
         if (!isEntryExitConn) {
-        if (!inFocus) ctx.globalAlpha = 0.12;
+        if (!inFocus) ctx.globalAlpha = 0.3;
         var rawLabel = conn.condition || '条件';
         var maxCharsPerLine = 20;
         var maxTotalChars = 50;
@@ -235,7 +235,7 @@ SMTool._renderConnections = function () {
             truncated: truncated
         });
 
-        ctx.fillStyle = '#1c1c28';  // 黑灰背景
+        ctx.fillStyle = '#282830';  // 深色背景
         var br = Math.round(8 * z);  // 圆角随缩放
         SMTool._roundRect(ctx, rectX, rectY, tw, th, br);
         ctx.fill();

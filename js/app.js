@@ -357,7 +357,7 @@ SMTool.init = function () {
     });
 
     // ---- 节点分组 ----
-    SMTool._groupColors = ['#4a90d9','#50c878','#f0a040','#e64980','#9b6dff','#38d9a9','#ff6b6b','#ffd43b'];
+    SMTool._groupColors = ['#4a9eff','#4ec96e','#c98a3e','#c0705a','#4a9eff','#3a9db5','#d94a4a','#7ea83c'];
 
     SMTool.groupSelection = function () {
         if (SMData.selectedNodes.size < 2) return;

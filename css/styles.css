@@ -3,19 +3,19 @@
    ================================================================ */
 
 :root {
-    --bg: #121218;
-    --panel-bg: #1c1c28;
-    --node-bg: #262636;
-    --accent: #4a90d9;
-    --accent2: #9b6dff;
-    --text: #c8c8c8;
-    --text2: #888;
-    --border: #33334a;
-    --input-bg: #1c1c26;
-    --success: #50c878;
-    --warn: #f0a040;
-    --connector: #7c5ce7;
-    --shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    --bg: #1c1c20;
+    --panel-bg: #282830;
+    --node-bg: #303038;
+    --accent: #4a9eff;
+    --accent2: #4a9eff;
+    --text: #b8b8bc;
+    --text2: #707075;
+    --border: #3a3a45;
+    --input-bg: #202025;
+    --success: #4ec96e;
+    --warn: #c98a3e;
+    --connector: #4a9eff;
+    --shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -40,6 +40,7 @@ body {
     top: 0; left: 0;
     z-index: 1;
     pointer-events: none;
+    background: #000;
 }
 #sharedSpineCanvas {
     position: absolute;
@@ -210,7 +211,7 @@ body {
     border: 2px solid var(--border);
     border-radius: 16px;
     box-shadow: var(--shadow);
-    transition: border-color 0.3s;
+    transition: border-color 0.3s, box-shadow 0.3s;
     width: fit-content;
 }
 .spine-node:hover {
@@ -218,7 +219,14 @@ body {
 }
 .spine-node.selected {
     border-color: var(--accent);
-    box-shadow: 0 0 24px rgba(233, 69, 96, 0.3);
+    border-width: 5px;
+    box-shadow: 0 0 40px rgba(74, 158, 255, 0.6), 0 0 16px rgba(74, 158, 255, 0.35), 0 0 4px rgba(74, 158, 255, 0.5);
+}
+/* 连线关联但未选中的节点 — 轻微高亮 */
+.spine-node.focused {
+    border-color: var(--accent);
+    border-width: 5px;
+    box-shadow: 0 0 24px rgba(74, 158, 255, 0.35), 0 0 8px rgba(74, 158, 255, 0.2);
 }
 /* 未直接连线节点置灰（JS 动态插入遮罩 div） */
 .spine-node .dim-overlay {
@@ -230,12 +238,12 @@ body {
 }
 /* 重复节点高亮：按文件组不同颜色 */
 .spine-node.duplicate-highlight {
-    border-color: var(--dup-color, #ff4444) !important;
+    border-color: var(--dup-color, #e0555a) !important;
     box-shadow: 0 0 12px var(--dup-glow, rgba(255,68,68,0.4)), 0 0 3px var(--dup-glow, rgba(255,68,68,0.25)) !important;
 }
 /* 选中 + 重复：同时显示选中和重复颜色 */
 .spine-node.selected.duplicate-highlight {
-    border-color: var(--dup-color, #ff4444) !important;
+    border-color: var(--dup-color, #e0555a) !important;
     box-shadow: 0 0 24px rgba(233, 69, 96, 0.35), 0 0 12px var(--dup-glow, rgba(255,68,68,0.4)) !important;
 }
 
@@ -428,13 +436,13 @@ body {
     transition: color 0.15s, border-color 0.15s;
 }
 .spine-node .footer-skins .skin-badge:hover {
-    color: #f06292;
-    border-color: #f06292;
+    color: #4a9eff;
+    border-color: #4a9eff;
 }
 .spine-node .footer-skins .skin-badge.active {
     background: transparent;
-    color: #f06292;
-    border-color: #f06292;
+    color: #4a9eff;
+    border-color: #4a9eff;
 }
 .spine-node .footer-controls {
     display: flex;
@@ -819,11 +827,11 @@ body {
 .bone-tag-capsule {
     display: inline-flex;
     flex-direction: column;
-    border: 1px solid #50c878;
+    border: 1px solid #57ab5a;
     border-radius: 12px;
     padding: 3px 8px;
     font-size: 16px;
-    color: #50c878;
+    color: #57ab5a;
     gap: 3px;
 }
 .bone-tag-name {
@@ -832,17 +840,17 @@ body {
 }
 .bone-tag-state-capsule {
     display: inline-flex;
-    border: 1px solid #50c878;
+    border: 1px solid #57ab5a;
     border-radius: 10px;
     padding: 1px 7px;
     font-size: 16px;
-    color: #50c878;
-    background: rgba(80,200,120,0.1);
+    color: #57ab5a;
+    background: rgba(87,171,90,0.1);
 }
 .bone-tag-add-btn {
-    border: 1px solid #50c878;
+    border: 1px solid #57ab5a;
     background: none;
-    color: #50c878;
+    color: #57ab5a;
     border-radius: 6px;
     cursor: pointer;
     font-size: 18px;
@@ -851,7 +859,7 @@ body {
     margin-left: auto;
 }
 .bone-tag-add {
-    color: #50c878;
+    color: #57ab5a;
     cursor: pointer;
     font-size: 16px;
     font-weight: 700;
@@ -935,7 +943,7 @@ body {
     cursor: pointer;
     pointer-events: all;
     transition: filter 0.35s, box-shadow 0.35s, background 0.3s, border-radius 0.3s, width 0.3s;
-    box-shadow: 4px 0 20px rgba(155, 109, 255, 0.35);
+    box-shadow: 4px 0 20px rgba(74, 158, 255, 0.35);
     user-select: none;
 }
 #dataFloatPanel.expanded .dfp-trigger-icon {
@@ -1063,12 +1071,12 @@ body {
     transition: color 0.15s, border-color 0.15s;
 }
 #dataFloatPanel .dfp-skin-badge:hover {
-    color: #f06292;
-    border-color: #f06292;
+    color: #4a9eff;
+    border-color: #4a9eff;
 }
 #dataFloatPanel .dfp-skin-badge.active {
-    color: #f06292;
-    border-color: #f06292;
+    color: #4a9eff;
+    border-color: #4a9eff;
 }
 
 /* PMA 勾选行 */
@@ -1090,7 +1098,7 @@ body {
     transition: background 0.15s;
 }
 #dataFloatPanel .dfp-bone-row:hover {
-    background: rgba(155, 109, 255, 0.08);
+    background: rgba(74, 158, 255, 0.08);
 }
 
 /* 骨骼标记按钮（✚ 红色十字叉切换） */
@@ -1103,10 +1111,10 @@ body {
     flex-shrink: 0;
 }
 #dataFloatPanel .dfp-bone-mark:hover {
-    color: #ff5555;
+    color: #e0555a;
 }
 #dataFloatPanel .dfp-bone-mark.active {
-    color: #ff3333;
+    color: #c94b4b;
     text-shadow: 0 0 6px rgba(255, 50, 50, 0.6);
 }
 
@@ -1118,8 +1126,8 @@ body {
 }
 #dataFloatPanel .dfp-bone-tagged {
     font-size: 11px;
-    color: #50c878;
-    background: rgba(80,200,120,0.1);
+    color: #57ab5a;
+    background: rgba(87,171,90,0.1);
     padding: 1px 6px;
     border-radius: 6px;
     max-width: 120px;
@@ -1153,7 +1161,7 @@ body {
 #dataFloatPanel .dfp-bone-label-del {
     font-size: 13px;
     font-weight: bold;
-    color: #ff6b6b;
+    color: #e0555a;
     cursor: pointer;
     line-height: 1;
     opacity: 0;
@@ -1164,7 +1172,7 @@ body {
     opacity: 1;
 }
 #dataFloatPanel .dfp-bone-label-del:hover {
-    color: #ff4444;
+    color: #e0555a;
 }
 
 /* 骨骼标签内联输入框 */
@@ -1454,7 +1462,7 @@ body {
     cursor: pointer;
     pointer-events: all;
     transition: filter 0.35s, box-shadow 0.35s, background 0.3s, border-radius 0.3s, width 0.3s;
-    box-shadow: 0 -4px 20px rgba(155, 109, 255, 0.35);
+    box-shadow: 0 -4px 20px rgba(74, 158, 255, 0.35);
     user-select: none;
 }
 #flowPanel.expanded .flp-trigger-bar {
@@ -1600,12 +1608,12 @@ body {
 }
 #flowPanel .flp-chain-row:hover {
     border-color: var(--accent2);
-    box-shadow: 0 0 8px rgba(155, 109, 255, 0.25);
+    box-shadow: 0 0 8px rgba(74, 158, 255, 0.25);
 }
 #flowPanel .flp-chain-row.active {
     border-color: var(--accent2);
-    box-shadow: 0 0 16px rgba(155, 109, 255, 0.5);
-    background: rgba(155, 109, 255, 0.08);
+    box-shadow: 0 0 16px rgba(74, 158, 255, 0.5);
+    background: rgba(74, 158, 255, 0.08);
 }
 
 /* 流程节点名称 — 第一级（上游/父级）最透明 */
@@ -1660,7 +1668,7 @@ body {
     line-height: 1;
     padding-top: 2px;
     flex-shrink: 0;
-    text-shadow: 0 0 8px rgba(155, 109, 255, 0.5);
+    text-shadow: 0 0 8px rgba(74, 158, 255, 0.5);
 }
 
 /* 流程节点（当前选中）高亮 — 已废弃，改用 flp-node-l2 */
