@@ -29,6 +29,12 @@
         <button onclick="SMTool.importData()">📥 导入</button>
     </div>
 
+    <!-- ===== 动画组模式切换（胶囊按钮） ===== -->
+    <div id="flowModeToggle">
+        <button id="flowModeThree" class="active" onclick="SMTool.setFlowMode('three')">三层-动画组</button>
+        <button id="flowModeFull" onclick="SMTool.setFlowMode('full')">完整-动画组</button>
+    </div>
+
     <!-- ===== 缺失状态通知面板 ===== -->
     <div id="missingPanel">
         <div class="mp-header">⚠️ 缺失状态</div>

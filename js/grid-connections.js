@@ -114,8 +114,8 @@ SMTool._renderConnections = function () {
         }
 
         // 绘制贝塞尔曲线
-        ctx.globalAlpha = inFocus ? 1 : 0.3;
-        ctx.strokeStyle = inFocus ? connColor : '#888';
+        ctx.globalAlpha = inFocus ? 1 : 0.25;
+        ctx.strokeStyle = inFocus ? connColor : '#666';
         ctx.lineWidth = Math.max(1.5, (isActive ? 3.5 : 2.5) * z);
         ctx.shadowColor = isActive ? connColor : 'transparent';
         ctx.shadowBlur = isActive ? 8 * z : 0;
@@ -127,7 +127,7 @@ SMTool._renderConnections = function () {
 
         // 端点圆（随缩放）
         var dotR = Math.round((isActive ? 14 : 10) * z);
-        ctx.fillStyle = inFocus ? connColor : '#888';
+        ctx.fillStyle = inFocus ? connColor : '#666';
         ctx.beginPath(); ctx.arc(fs.x, fs.y, dotR, 0, Math.PI * 2); ctx.fill();
         ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(1, 2 * z); ctx.stroke();
         ctx.beginPath(); ctx.arc(ts.x, ts.y, dotR, 0, Math.PI * 2); ctx.fill();
@@ -135,8 +135,8 @@ SMTool._renderConnections = function () {
         ctx.globalAlpha = 1;
 
         // 方向箭头
-        if (!inFocus) ctx.globalAlpha = 0.3;
-        SMTool._drawBezierArrows(ctx, fs.x, fs.y, cp1s.x, cp1s.y, cp2s.x, cp2s.y, ts.x, ts.y, inFocus ? connColor : '#888', isActive, z);
+        if (!inFocus) ctx.globalAlpha = 0.25;
+        SMTool._drawBezierArrows(ctx, fs.x, fs.y, cp1s.x, cp1s.y, cp2s.x, cp2s.y, ts.x, ts.y, inFocus ? connColor : '#666', isActive, z);
         ctx.globalAlpha = 1;
 
         // 控制手柄（仅选中/拖拽时可见）
@@ -173,7 +173,7 @@ SMTool._renderConnections = function () {
         // 入口/出口节点的连线不显示条件标签
         var isEntryExitConn = (fn.nodeType === 'entry' || fn.nodeType === 'exit' || tn.nodeType === 'entry' || tn.nodeType === 'exit');
         if (!isEntryExitConn) {
-        if (!inFocus) ctx.globalAlpha = 0.3;
+        if (!inFocus) ctx.globalAlpha = 0.25;
         var rawLabel = conn.condition || '条件';
         var maxCharsPerLine = 20;
         var maxTotalChars = 50;

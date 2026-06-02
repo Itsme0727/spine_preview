@@ -492,6 +492,12 @@ SMTool._updateSel = function () {
     if (SMData._flowFocus) {
         // 流程面板高亮模式：使用流程焦点节点
         SMData._flowFocus.nodeIds.forEach(function (nid) { focusSet.add(nid); });
+    } else if (SMData.flowMode === 'full' && SMData.selectedNode) {
+        // 完整动画组模式：自动设置全组件焦点
+        SMTool._setFullComponentFocus(SMData.selectedNode);
+        if (SMData._flowFocus) {
+            SMData._flowFocus.nodeIds.forEach(function (nid) { focusSet.add(nid); });
+        }
     } else if (SMData.connecting) {
         // 连线模式：仅高亮源节点
         focusSet.add(SMData.connecting.nodeId);
@@ -543,6 +549,18 @@ SMTool._updateSel = function () {
             var isDimmed = focusSet.size > 0 && !focusSet.has(n.id);
             var isFocused = focusSet.size > 0 && focusSet.has(n.id) && !SMData.selectedNodes.has(n.id);
             el.classList.toggle('focused', isFocused);
+
+            // 完整动画组播放中：当前步骤节点用粉色高亮
+            var pb = SMData._fullPlayback;
+            var isPlayingCurrent = false;
+            if (pb.isPlaying && pb.activePathIdx >= 0) {
+                var pp = SMData._fullPaths[pb.activePathIdx];
+                if (pp && pb.currentStep < pp.nodes.length && pp.nodes[pb.currentStep].id === n.id) {
+                    isPlayingCurrent = true;
+                }
+            }
+            el.classList.toggle('playing-current', isPlayingCurrent);
+
             var overlay = el.querySelector('.dim-overlay');
             if (isDimmed && !overlay) {
                 overlay = document.createElement('div');
@@ -1022,6 +1040,12 @@ SMTool._updateFlowPanel = function () {
     var panel = document.getElementById('flowPanel');
     if (!content || !panel) return;
 
+    if (SMData.flowMode === 'full') {
+        SMTool._updateFullFlowPanel(content, panel);
+        return;
+    }
+
+    // ---- 三层模式（原有逻辑） ----
     // 仅当单选一个节点且该节点有连接时显示
     if (SMData.selectedNodes.size === 1 && SMData.selectedNode) {
         var selNodeId = SMData.selectedNode;
@@ -1209,4 +1233,467 @@ SMTool._updateFlowPanel = function () {
         panel.classList.add('inactive');
         content.innerHTML = '<div class="flp-hint">点击选中一个动画节点，查看其上下游动画组合</div>';
     }
+};
+
+// ================================================================
+// 完整动画组模式面板
+// ================================================================
+SMTool._updateFullFlowPanel = function (content, panel) {
+    if (SMData.selectedNodes.size !== 1 || !SMData.selectedNode) {
+        panel.classList.add('inactive');
+        content.innerHTML = '<div class="flp-hint">点击选中一个动画节点，查看其完整动画组合</div>';
+        return;
+    }
+
+    var selNodeId = SMData.selectedNode;
+    var selNode = SMData.nodes.get(selNodeId);
+    if (!selNode) {
+        panel.classList.add('inactive');
+        content.innerHTML = '<div class="flp-hint">节点不存在</div>';
+        return;
+    }
+
+    // 计算所有完整路径
+    var paths = SMTool._findAllFullPaths(selNodeId);
+    SMData._fullPaths = paths;
+
+    if (paths.length === 0) {
+        panel.classList.remove('inactive');
+        content.innerHTML = '<div class="flp-no-chain">🔗 节点 "' + SMTool._esc(selNode.name || '') + '" 暂无完整动画组<br/><span style="font-size:11px;color:var(--text2)">从该节点出发没有下游连线</span></div>';
+        return;
+    }
+
+    panel.classList.remove('inactive');
+
+    // 辅助显示名
+    var _disp = function (s) {
+        if (s === 'entry') return '入口';
+        if (s === 'exit') return '出口';
+        return s;
+    };
+
+    // 当前播放状态
+    var pb = SMData._fullPlayback;
+    var activePathIdx = pb.activePathIdx;
+
+    var html = '<div class="flp-full-layout">';
+    // 左侧路径列表
+    html += '<div class="flp-full-list">';
+    for (var pi = 0; pi < paths.length; pi++) {
+        var path = paths[pi];
+        var isActivePath = (pi === activePathIdx);
+        html += '<div class="flp-full-path' + (isActivePath ? ' active' : '') + '" data-path-idx="' + pi + '">';
+        html += '<div class="flp-full-path-label">组 #' + (pi + 1) + '</div>';
+        html += '<div class="flp-full-path-row">';
+        for (var si = 0; si < path.nodes.length; si++) {
+            var sn = path.nodes[si];
+            var stateClass = 'flp-full-state';
+            if (sn.cycleClose) {
+                stateClass += ' cycle-close';
+            } else if (isActivePath) {
+                if (si < pb.currentStep) stateClass += ' played';
+                else if (si === pb.currentStep) stateClass += ' current';
+                else stateClass += ' upcoming';
+            }
+            html += '<span class="' + stateClass + '">' + SMTool._esc(_disp(sn.anim)) + '</span>';
+            if (si < path.nodes.length - 1) {
+                html += '<span class="flp-full-arrow">→</span>';
+            }
+        }
+        html += '</div></div>';
+    }
+    html += '</div>';
+
+    // 右侧播放器
+    html += '<div class="flp-full-player">';
+    html += '<canvas class="flp-full-canvas" id="flpFullCanvas"></canvas>';
+    html += '<div class="flp-full-controls">';
+    html += '<button class="flp-full-btn play" id="flpFullPlay" title="播放">▶</button>';
+    html += '<button class="flp-full-btn pause" id="flpFullPause" title="暂停">⏸</button>';
+    html += '</div>';
+    html += '</div>';
+
+    html += '</div>';
+    content.innerHTML = html;
+
+    // 绑定事件
+    var pathRows = content.querySelectorAll('.flp-full-path');
+    for (var ri = 0; ri < pathRows.length; ri++) {
+        (function (idx) {
+            pathRows[ri].addEventListener('click', function (e) {
+                e.stopPropagation();
+                SMTool._selectFullPath(idx);
+            });
+        })(ri);
+    }
+
+    var playBtn = document.getElementById('flpFullPlay');
+    var pauseBtn = document.getElementById('flpFullPause');
+    if (playBtn) {
+        playBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            SMTool._startFullPlayback();
+        });
+    }
+    if (pauseBtn) {
+        pauseBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            SMTool._pauseFullPlayback();
+        });
+    }
+
+    // 初始化右侧 Spine 画布
+    SMTool._initFullCanvas();
+    SMTool._updateFullCanvasForStep();
+};
+
+// 设置焦点高亮
+// 播放中：仅当前节点+前后连线
+// 已选中路径：仅该路径上的节点+连线
+// 未选中路径：BFS全组件
+SMTool._setFullComponentFocus = function (sourceId) {
+    var pb = SMData._fullPlayback;
+
+    if (pb.isPlaying && pb.activePathIdx >= 0) {
+        // 播放中：仅当前节点 + 前后连线
+        var path = SMData._fullPaths[pb.activePathIdx];
+        if (path && pb.currentStep < path.nodes.length) {
+            var curNodeId = path.nodes[pb.currentStep].id;
+            var nodeIds = new Set();
+            var connIds = new Set();
+            nodeIds.add(curNodeId);
+            if (pb.currentStep > 0 && pb.currentStep - 1 < path.conns.length) {
+                connIds.add(path.conns[pb.currentStep - 1]);
+            }
+            if (pb.currentStep < path.conns.length) {
+                connIds.add(path.conns[pb.currentStep]);
+            }
+            SMData._flowFocus = { nodeIds: nodeIds, connIds: connIds };
+            return;
+        }
+    }
+
+    if (pb.activePathIdx >= 0) {
+        // 已选中某条完整路径：路径上所有节点高亮 + 两端都在路径内的所有连线高亮
+        var selPath = SMData._fullPaths[pb.activePathIdx];
+        if (selPath) {
+            var pNodeIds = new Set();
+            var pConnIds = new Set();
+            for (var ni = 0; ni < selPath.nodes.length; ni++) {
+                pNodeIds.add(selPath.nodes[ni].id);
+            }
+            // 两端都在路径节点内的连线（直接+间接）全部高亮
+            for (var ci2 = 0; ci2 < SMData.connections.length; ci2++) {
+                var cc = SMData.connections[ci2];
+                if (pNodeIds.has(cc.fromNode) && pNodeIds.has(cc.toNode)) {
+                    pConnIds.add(cc.id);
+                }
+            }
+            SMData._flowFocus = { nodeIds: pNodeIds, connIds: pConnIds };
+            return;
+        }
+    }
+
+    // 无选中路径：BFS 全组件焦点
+    var nodeIds = new Set();
+    var connIds = new Set();
+    var queue = [sourceId];
+    nodeIds.add(sourceId);
+    while (queue.length > 0) {
+        var cur = queue.shift();
+        for (var i = 0; i < SMData.connections.length; i++) {
+            var c = SMData.connections[i];
+            if (c.fromNode === cur && !nodeIds.has(c.toNode)) {
+                nodeIds.add(c.toNode);
+                connIds.add(c.id);
+                queue.push(c.toNode);
+            }
+            if (c.toNode === cur && !nodeIds.has(c.fromNode)) {
+                nodeIds.add(c.fromNode);
+                connIds.add(c.id);
+                queue.push(c.fromNode);
+            }
+        }
+    }
+    // 补上所有两端都在 nodeIds 内的间接连线
+    for (var j = 0; j < SMData.connections.length; j++) {
+        var cj = SMData.connections[j];
+        if (nodeIds.has(cj.fromNode) && nodeIds.has(cj.toNode)) {
+            connIds.add(cj.id);
+        }
+    }
+    SMData._flowFocus = { nodeIds: nodeIds, connIds: connIds };
+};
+
+// 初始化右侧 Spine 画布 — 完整渲染版
+SMTool._initFullCanvas = function () {
+    var canvas = document.getElementById('flpFullCanvas');
+    if (!canvas) return;
+    if (SMData._fullCanvasRenderer) return; // 已初始化
+
+    var selNode = SMData.nodes.get(SMData.selectedNode);
+    if (!selNode || !selNode.skeletonData || !selNode.textureImg) return;
+
+    try {
+        var gl = canvas.getContext('webgl2', { alpha: false, premultipliedAlpha: false })
+               || canvas.getContext('webgl', { alpha: false, premultipliedAlpha: false });
+        if (!gl) return;
+
+        var SP = spine.webgl || spine;
+        var context = new SP.ManagedWebGLRenderingContext(canvas, { alpha: false });
+        var renderer = new SP.SceneRenderer(canvas, context, true);
+
+        // 从选中节点获取 img 并创建新纹理
+        var img = selNode.textureImg;
+        var atlas = selNode.atlasData;
+        if (!atlas || !atlas.pages) { try { renderer.dispose(); } catch (e) {} return; }
+
+        for (var pi = 0; pi < atlas.pages.length; pi++) {
+            var page = atlas.pages[pi];
+            var glTex = new SP.GLTexture(context, img, page.pma || false);
+            if (typeof page.setTexture === 'function') {
+                page.setTexture(glTex);
+            } else {
+                page.texture = glTex;
+            }
+            if (!SMData._fullCanvasTextures) SMData._fullCanvasTextures = [];
+            SMData._fullCanvasTextures.push(glTex);
+        }
+        // 更新 region 引用
+        try {
+            for (var ri2 = 0; ri2 < atlas.regions.length; ri2++) {
+                var region = atlas.regions[ri2];
+                if (region.page && region.page.texture) {
+                    region.texture = region.page.texture;
+                }
+            }
+        } catch (e) {}
+
+        // 创建 skeleton 和 animation state
+        var skeleton = new spine.Skeleton(selNode.skeletonData);
+        var animStateData = new spine.AnimationStateData(selNode.skeletonData);
+        var animState = new spine.AnimationState(animStateData);
+
+        // 设置姿态
+        skeleton.setToSetupPose();
+        skeleton.updateWorldTransform();
+
+        SMData._fullCanvasGL = gl;
+        SMData._fullCanvasContext = context;
+        SMData._fullCanvasRenderer = renderer;
+        SMData._fullCanvasSkeleton = skeleton;
+        SMData._fullCanvasState = animState;
+    } catch (e) {
+        console.warn('Full canvas init failed:', e);
+    }
+};
+
+// 更新右侧画布显示当前步骤的动画
+SMTool._updateFullCanvasForStep = function () {
+    var canvas = document.getElementById('flpFullCanvas');
+    var renderer = SMData._fullCanvasRenderer;
+    var skeleton = SMData._fullCanvasSkeleton;
+    var animState = SMData._fullCanvasState;
+    var gl = SMData._fullCanvasGL;
+
+    if (!canvas || !renderer || !skeleton || !animState || !gl) {
+        // 回退到 2D 文字显示
+        SMTool._drawFullCanvasFallback();
+        return;
+    }
+
+    var pb = SMData._fullPlayback;
+    if (pb.activePathIdx < 0) return;
+    var path = SMData._fullPaths[pb.activePathIdx];
+    if (!path || pb.currentStep >= path.nodes.length) return;
+
+    var stepNode = path.nodes[pb.currentStep];
+    var animName = stepNode.anim;
+
+    // 检查动画是否存在
+    var sd = skeleton.data;
+    var animExists = false;
+    for (var ai = 0; ai < sd.animations.length; ai++) {
+        if (sd.animations[ai].name === animName) { animExists = true; break; }
+    }
+    if (!animExists) return;
+
+    try {
+        var cw = canvas.clientWidth || 260;
+        var ch = canvas.clientHeight || 200;
+        
+        // 清除
+        gl.viewport(0, 0, cw, ch);
+        gl.clearColor(0.12, 0.12, 0.14, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        // 设置动画
+        animState.setAnimation(0, animName, false);
+        animState.update(0);
+        animState.apply(skeleton);
+        skeleton.updateWorldTransform();
+
+        // 渲染
+        renderer.camera.position.set(cw / 2, ch / 2, 0);
+        renderer.camera.viewportWidth = cw;
+        renderer.camera.viewportHeight = ch;
+        renderer.camera.update();
+        renderer.begin();
+        try {
+            if (renderer.drawSkeleton.length >= 2) {
+                renderer.drawSkeleton(skeleton, true);
+            } else {
+                renderer.drawSkeleton(skeleton);
+            }
+        } catch (e2) {
+            renderer.drawSkeleton(skeleton);
+        }
+        if (typeof renderer.end === 'function') {
+            renderer.end();
+        }
+    } catch (e) {
+        // WebGL 错误时回退
+    }
+};
+
+// 2D 回退显示
+SMTool._drawFullCanvasFallback = function () {
+    var canvas = document.getElementById('flpFullCanvas');
+    if (!canvas) return;
+    var ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    var w = canvas.clientWidth || 260;
+    var h = canvas.clientHeight || 200;
+    canvas.width = w;
+    canvas.height = h;
+
+    var pb = SMData._fullPlayback;
+    if (pb.activePathIdx < 0) return;
+    var path = SMData._fullPaths[pb.activePathIdx];
+    if (!path || pb.currentStep >= path.nodes.length) return;
+
+    var stepNode = path.nodes[pb.currentStep];
+    var animName = stepNode.anim;
+
+    ctx.fillStyle = '#1a1a1d';
+    ctx.fillRect(0, 0, w, h);
+
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 26px "Segoe UI", system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(animName, w / 2, h / 2);
+
+    ctx.fillStyle = 'rgba(74, 158, 255, 0.7)';
+    ctx.font = '14px "Segoe UI", system-ui, sans-serif';
+    ctx.fillText('步骤 ' + (pb.currentStep + 1) + ' / ' + path.nodes.length, w / 2, h - 20);
+};
+
+// 选择完整路径
+SMTool._selectFullPath = function (pathIdx) {
+    SMData._fullPlayback.activePathIdx = pathIdx;
+    SMData._fullPlayback.currentStep = 0;
+    SMData._fullPlayback.isPlaying = false;
+    if (SMData._fullPlayback._timer) { clearTimeout(SMData._fullPlayback._timer); SMData._fullPlayback._timer = null; }
+    SMTool._setFullComponentFocus(SMData.selectedNode);
+    SMTool._updateFullFlowPanel(document.getElementById('flpContent'), document.getElementById('flowPanel'));
+    SMTool._initFullCanvas();
+    SMTool._updateFullCanvasForStep();
+    SMTool._updateSel();
+    SMTool._updateStateRowColors();
+};
+
+// 开始播放
+SMTool._startFullPlayback = function () {
+    var pb = SMData._fullPlayback;
+    if (pb.activePathIdx < 0) return;
+    var path = SMData._fullPaths[pb.activePathIdx];
+    if (!path || path.nodes.length === 0) return;
+    pb.currentStep = 0;
+    pb.isPlaying = true;
+    SMTool._playFullStep();
+};
+
+// 暂停播放
+SMTool._pauseFullPlayback = function () {
+    SMData._fullPlayback.isPlaying = false;
+    if (SMData._fullPlayback._timer) { clearTimeout(SMData._fullPlayback._timer); SMData._fullPlayback._timer = null; }
+};
+
+// 播放当前步骤
+SMTool._playFullStep = function () {
+    var pb = SMData._fullPlayback;
+    if (!pb.isPlaying) return;
+    var path = SMData._fullPaths[pb.activePathIdx];
+    if (!path || pb.currentStep >= path.nodes.length) {
+        pb.isPlaying = false;
+        return;
+    }
+
+    var stepNode = path.nodes[pb.currentStep];
+
+    // 跳过闭环节点（虚线框），直接结束播放
+    if (stepNode.cycleClose) {
+        pb.isPlaying = false;
+        SMTool._updateFullFlowPanel(document.getElementById('flpContent'), document.getElementById('flowPanel'));
+        SMTool._updateSel();
+        SMTool._updateStateRowColors();
+        return;
+    }
+
+    var spineNode = SMData.nodes.get(stepNode.id);
+    if (spineNode && spineNode.state && spineNode.skeleton) {
+        // 播放该节点的动画
+        var animName = stepNode.anim;
+        if (spineNode.skeletonData) {
+            var found = false;
+            for (var ai = 0; ai < spineNode.skeletonData.animations.length; ai++) {
+                if (spineNode.skeletonData.animations[ai].name === animName) {
+                    found = true;
+                    break;
+                }
+            }
+            if (found) {
+                spineNode.state.setAnimation(0, animName, false);
+                spineNode.currentAnim = animName;
+            }
+        }
+    }
+
+    // 更新面板高亮和画布焦点
+    SMTool._updateFullFlowPanel(document.getElementById('flpContent'), document.getElementById('flowPanel'));
+    SMTool._setFullComponentFocus(SMData.selectedNode);
+    SMTool._updateSel();
+    SMTool._updateStateRowColors();
+    SMTool._updateEl(spineNode);
+    SMTool._updateFullCanvasForStep();
+
+    // 获取动画时长来自动推进
+    var duration = 1000; // 默认1秒
+    if (spineNode && spineNode.skeletonData) {
+        for (var di = 0; di < spineNode.skeletonData.animations.length; di++) {
+            if (spineNode.skeletonData.animations[di].name === stepNode.anim) {
+                duration = spineNode.skeletonData.animations[di].duration * 1000;
+                break;
+            }
+        }
+    }
+
+    pb._timer = setTimeout(function () {
+        pb.currentStep++;
+        if (pb.currentStep < path.nodes.length) {
+            SMTool._playFullStep();
+        } else {
+            pb.isPlaying = false;
+            SMTool._updateFullFlowPanel(document.getElementById('flpContent'), document.getElementById('flowPanel'));
+        }
+    }, duration);
+};
+
+// 更新完整动画组的高亮（画布同步）
+SMTool._updateFullHighlight = function () {
+    SMTool._setFullComponentFocus(SMData.selectedNode);
+    SMTool._updateSel();
+    SMTool._updateStateRowColors();
 };

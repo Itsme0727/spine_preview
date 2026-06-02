@@ -264,7 +264,7 @@ SMTool.init = function () {
 
     // 鼠标事件（数据面板内的操作不取消动画对象选中）
     document.addEventListener('mousedown', function (e) {
-        if (e.target.closest && e.target.closest('#toolbar, #ctxMenu, #conditionEditor, #zoomControl, #statusBar, #dataFloatPanel, #flowPanel')) return;
+        if (e.target.closest && e.target.closest('#toolbar, #ctxMenu, #conditionEditor, #zoomControl, #statusBar, #dataFloatPanel, #flowPanel, #flowModeToggle')) return;
         if (e.target.closest && e.target.closest('input, textarea, select, button')) return;
         if (e.shiftKey) e.preventDefault();
         SMTool._onMD(e);
@@ -355,6 +355,97 @@ SMTool.init = function () {
             }
         }, 150);
     });
+
+    // ---- 动画组模式切换 ----
+    SMTool.setFlowMode = function (mode) {
+        SMData.flowMode = mode;
+        document.getElementById('flowModeThree').classList.toggle('active', mode === 'three');
+        document.getElementById('flowModeFull').classList.toggle('active', mode === 'full');
+        // 清除焦点和播放状态
+        SMData._flowFocus = null;
+        SMData._fullPlayback.activePathIdx = -1;
+        SMData._fullPlayback.currentStep = 0;
+        SMData._fullPlayback.isPlaying = false;
+        if (SMData._fullPlayback._timer) { clearTimeout(SMData._fullPlayback._timer); SMData._fullPlayback._timer = null; }
+        // 清除全画布缓存
+        SMData._fullCanvasGL = null;
+        SMData._fullCanvasContext = null;
+        SMData._fullCanvasRenderer = null;
+        SMData._fullCanvasSkeleton = null;
+        SMData._fullCanvasState = null;
+        SMData._fullCanvasNode = null;
+        SMTool._updateFlowPanel();
+        if (mode === 'full' && SMData.selectedNode) {
+            SMTool._setFullComponentFocus(SMData.selectedNode);
+        }
+        SMTool._updateSel();
+        SMTool._updateStateRowColors();
+    };
+
+    // ---- 完整动画组路径穷举（DFS 从源节点到所有终点） ----
+    SMTool._findAllFullPaths = function (sourceId) {
+        var paths = [];
+
+        function dfs(currentId, nodePath, connPath, pathVisited) {
+            // 找所有出边
+            var outConns = [];
+            for (var i = 0; i < SMData.connections.length; i++) {
+                var c = SMData.connections[i];
+                if (c.fromNode === currentId) outConns.push(c);
+            }
+
+            if (outConns.length === 0) {
+                // 终点节点：记录路径（至少包含源节点）
+                if (nodePath.length >= 1) {
+                    paths.push({ nodes: nodePath.slice(), conns: connPath.slice() });
+                }
+                return;
+            }
+
+            for (var j = 0; j < outConns.length; j++) {
+                var oc = outConns[j];
+                var nextId = oc.toNode;
+                // 防止环路
+                if (pathVisited.has(nextId)) {
+                    // 遇到环路，记录当前路径（含闭环连线+闭环节点）
+                    if (nodePath.length >= 1) {
+                        var cycleConnPath = connPath.slice();
+                        cycleConnPath.push(oc.id);
+                        var cycleNodes = nodePath.slice();
+                        // 闭环终点节点（虚线框表示），取源节点的动画名
+                        var closeNode = SMData.nodes.get(nextId);
+                        if (closeNode) {
+                            var closeAnim = oc.toState || closeNode.currentAnim || (closeNode.animations.length > 0 ? closeNode.animations[0].name : closeNode.name);
+                            cycleNodes.push({ id: nextId, anim: closeAnim, cycleClose: true });
+                        }
+                        paths.push({ nodes: cycleNodes, conns: cycleConnPath });
+                    }
+                    continue;
+                }
+                var nextNode = SMData.nodes.get(nextId);
+                if (!nextNode) continue;
+                var animName = oc.toState || nextNode.currentAnim || (nextNode.animations.length > 0 ? nextNode.animations[0].name : nextNode.name);
+
+                nodePath.push({ id: nextId, anim: animName });
+                connPath.push(oc.id);
+                pathVisited.add(nextId);
+                dfs(nextId, nodePath, connPath, pathVisited);
+                pathVisited.delete(nextId);
+                nodePath.pop();
+                connPath.pop();
+            }
+        }
+
+        var srcNode = SMData.nodes.get(sourceId);
+        if (!srcNode) return paths;
+        var srcAnim = srcNode.currentAnim || (srcNode.animations.length > 0 ? srcNode.animations[0].name : srcNode.name);
+
+        var visited = new Set();
+        visited.add(sourceId);
+        dfs(sourceId, [{ id: sourceId, anim: srcAnim }], [], visited);
+
+        return paths;
+    };
 
     // ---- 节点分组 ----
     SMTool._groupColors = ['#4a9eff','#4ec96e','#c98a3e','#c0705a','#4a9eff','#3a9db5','#d94a4a','#7ea83c'];
@@ -570,6 +661,7 @@ SMTool.init = function () {
     // 初始化底部动画组合浮窗面板
     SMTool._initFlowPanel();
     SMTool._updateFlowPanel();    // 设置初始 inactive 状态 + 提示文字
+    SMTool.setFlowMode('three');  // 初始模式为三层
 
     SMTool._updateSB();
 

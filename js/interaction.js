@@ -62,9 +62,14 @@ SMTool._onMD = function (e) {
         return;
     }
 
-    // 左键 — 画布点击，取消动画组合面板的选中高亮
+    // 左键 — 画布点击
     if (e.button === 0) {
-        SMData._flowFocus = null;
+        // 完整模式：点击新节点时清除旧焦点，让_updateSel重新计算
+        if (SMData.flowMode === 'full') {
+            SMData._flowFocus = null;
+        } else {
+            SMData._flowFocus = null;
+        }
         // 检测条件标签点击
         if (SMTool._checkConditionClick(e.clientX, e.clientY)) return;
 
@@ -1172,11 +1177,25 @@ SMTool._initFlowPanel = function () {
         }
     });
 
-    // 全局点击 — 面板外点击：全屏→短屏，短屏→收起
+    // 全局点击 — 面板外点击：先取消动画组选中，再处理收起
     document.addEventListener('mousedown', function (e) {
         if (!SMData._flowPanel.expanded) return;
         // 检查点击是否在面板内部
         if (e.target.closest && e.target.closest('#flowPanel')) return;
+
+        // 仅左键(0)和右键(2)点击时取消动画组选中，中键(1)拖拽画布时不管
+        if (e.button === 0 || e.button === 2) {
+            if (SMData._fullPlayback.activePathIdx >= 0) {
+                SMData._fullPlayback.activePathIdx = -1;
+                SMData._fullPlayback.currentStep = 0;
+                SMData._fullPlayback.isPlaying = false;
+                if (SMData._fullPlayback._timer) { clearTimeout(SMData._fullPlayback._timer); SMData._fullPlayback._timer = null; }
+                SMData._flowFocus = null;
+                SMTool._updateFlowPanel();
+                SMTool._updateSel();
+                SMTool._updateStateRowColors();
+            }
+        }
 
         if (SMData._flowPanel.maximized) {
             if (SMData._flowPanel.pinned) {
@@ -1253,9 +1272,13 @@ SMTool._expandFlowPanel = function () {
 SMTool._collapseFlowPanel = function () {
     if (!SMData._flowPanel.expanded) return;
     SMData._flowPanel.expanded = false;
-    // 收起时也还原最大化状态和焦点高亮
+    // 收起时也还原最大化状态、焦点高亮、播放状态和选中路径
     SMData._flowPanel.maximized = false;
     SMData._flowFocus = null;
+    SMData._fullPlayback.isPlaying = false;
+    SMData._fullPlayback.activePathIdx = -1;
+    SMData._fullPlayback.currentStep = 0;
+    if (SMData._fullPlayback._timer) { clearTimeout(SMData._fullPlayback._timer); SMData._fullPlayback._timer = null; }
     SMTool._updateSel();
     SMTool._updateStateRowColors();
     var panel = document.getElementById('flowPanel');

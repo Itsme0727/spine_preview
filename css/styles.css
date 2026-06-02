@@ -169,6 +169,37 @@ body {
     margin: 0 4px;
 }
 
+/* ===== 动画组模式切换（胶囊按钮） ===== */
+#flowModeToggle {
+    position: fixed;
+    top: 72px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 100;
+    display: flex;
+    background: var(--node-bg);
+    border-radius: 20px;
+    padding: 3px;
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow);
+}
+#flowModeToggle button {
+    border: none;
+    background: transparent;
+    color: var(--text2);
+    padding: 6px 18px;
+    border-radius: 17px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.25s;
+    white-space: nowrap;
+}
+#flowModeToggle button.active {
+    background: var(--accent);
+    color: #fff;
+}
+
 /* ===== 拖拽区域 ===== */
 #dropZone {
     position: fixed;
@@ -222,11 +253,17 @@ body {
     border-width: 5px;
     box-shadow: 0 0 40px rgba(74, 158, 255, 0.6), 0 0 16px rgba(74, 158, 255, 0.35), 0 0 4px rgba(74, 158, 255, 0.5);
 }
-/* 连线关联但未选中的节点 — 轻微高亮 */
+/* 连线关联但未选中的节点 — 仅外发光，无描边 */
 .spine-node.focused {
-    border-color: var(--accent);
+    border-color: var(--border);
+    border-width: 2px;
+    box-shadow: 0 0 20px rgba(74, 158, 255, 0.25);
+}
+/* 完整动画组播放中：当前状态对应的节点 — 粉色发光 */
+.spine-node.playing-current {
+    border-color: #ff44aa;
     border-width: 5px;
-    box-shadow: 0 0 24px rgba(74, 158, 255, 0.35), 0 0 8px rgba(74, 158, 255, 0.2);
+    box-shadow: 0 0 40px rgba(255, 68, 170, 0.6), 0 0 16px rgba(255, 68, 170, 0.35), 0 0 4px rgba(255, 68, 170, 0.5);
 }
 /* 未直接连线节点置灰（JS 动态插入遮罩 div） */
 .spine-node .dim-overlay {
@@ -560,7 +597,7 @@ body {
     width: 60px;
     height: 60px;
     border-radius: 50%;
-    background: #3b3b6e;
+    background: #3d4a5c;
     border: 2px solid #fff;
     cursor: crosshair;
     opacity: 0.5;
@@ -1699,4 +1736,139 @@ body {
     font-size: 13px;
     text-align: center;
     padding: 10px;
+}
+
+/* ================================================================
+   完整动画组模式
+   ================================================================ */
+#flowPanel .flp-full-layout {
+    display: flex;
+    gap: 12px;
+    height: 100%;
+}
+
+/* 左侧路径列表 */
+#flowPanel .flp-full-list {
+    flex: 1;
+    overflow-y: auto;
+    min-width: 0;
+    padding-right: 4px;
+}
+
+/* 单条完整路径 */
+#flowPanel .flp-full-path {
+    background: var(--node-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 12px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+#flowPanel .flp-full-path:hover {
+    border-color: var(--accent);
+    box-shadow: 0 0 8px rgba(74, 158, 255, 0.2);
+}
+#flowPanel .flp-full-path.active {
+    border-color: var(--accent);
+    box-shadow: 0 0 14px rgba(74, 158, 255, 0.4);
+}
+
+#flowPanel .flp-full-path-label {
+    font-size: 11px;
+    color: var(--text2);
+    margin-bottom: 4px;
+}
+
+#flowPanel .flp-full-path-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 2px;
+}
+
+/* 状态色块 — 默认暗灰，选中路径后才亮起 */
+#flowPanel .flp-full-state {
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.4);
+    padding: 3px 8px;
+    border-radius: 5px;
+    font-size: 12px;
+    white-space: nowrap;
+    background: rgba(74, 158, 255, 0.12);
+}
+/* 选中路径后：恢复正常蓝色 */
+#flowPanel .flp-full-path.active .flp-full-state {
+    color: #fff;
+    background: rgba(74, 158, 255, 0.7);
+}
+#flowPanel .flp-full-path.active .flp-full-state.current {
+    background: rgba(74, 158, 255, 1);
+    box-shadow: 0 0 14px rgba(74, 158, 255, 0.6);
+}
+#flowPanel .flp-full-path.active .flp-full-state.played {
+    background: rgba(74, 158, 255, 0.15);
+    color: rgba(255, 255, 255, 0.4);
+}
+#flowPanel .flp-full-path.active .flp-full-state.upcoming {
+    background: rgba(74, 158, 255, 0.2);
+    color: rgba(255, 255, 255, 0.5);
+}
+/* 闭环终点节点 — 虚线框表示 */
+#flowPanel .flp-full-state.cycle-close {
+    background: transparent !important;
+    color: rgba(255, 255, 255, 0.4) !important;
+    border: 2px dashed rgba(74, 158, 255, 0.4);
+    box-shadow: none !important;
+}
+
+#flowPanel .flp-full-arrow {
+    color: var(--accent);
+    font-weight: 900;
+    font-size: 16px;
+    margin: 0 2px;
+    flex-shrink: 0;
+}
+
+/* 右侧播放器 */
+#flowPanel .flp-full-player {
+    width: 260px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+#flowPanel .flp-full-canvas {
+    width: 100%;
+    height: 200px;
+    background: #000;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+}
+
+#flowPanel .flp-full-controls {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+}
+
+#flowPanel .flp-full-btn {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    border: 2px solid var(--accent);
+    background: var(--node-bg);
+    color: var(--accent);
+    font-size: 22px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+#flowPanel .flp-full-btn:hover {
+    background: var(--accent);
+    color: #fff;
+    box-shadow: 0 0 16px rgba(74, 158, 255, 0.5);
 }

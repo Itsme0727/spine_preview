@@ -71,7 +71,21 @@ var SMData = {
     },
 
     // 动画组合面板中点击高亮某条组合链的焦点
-    _flowFocus: null   // { nodeIds: Set, connIds: Set } 或 null
+    _flowFocus: null,  // { nodeIds: Set, connIds: Set } 或 null
+
+    // 动画组模式：'three' | 'full'
+    flowMode: 'three',
+
+    // 完整动画组：当前源节点的所有路径
+    _fullPaths: [],    // [{ nodes: [{id, anim}], conns: [id] }]
+
+    // 完整动画组播放状态
+    _fullPlayback: {
+        activePathIdx: -1,   // 当前播放的路径索引
+        currentStep: 0,      // 当前播放到第几个节点
+        isPlaying: false,
+        _timer: null
+    }
 };
 
 // ---- Spine 节点数据类 ----
