@@ -68,8 +68,9 @@ SMTool._initSharedRenderer = function () {
 
     SMTool._resizeSharedRenderer();
 
-    var gl = canvas.getContext('webgl2', { alpha: true, antialias: true, preserveDrawingBuffer: false }) ||
-              canvas.getContext('webgl', { alpha: true, antialias: true, preserveDrawingBuffer: false });
+    // stencil: true 是必须的 — Spine 的裁剪(Clipping)和遮罩(Mask)功能依赖模板缓冲区
+    var gl = canvas.getContext('webgl2', { alpha: true, antialias: true, preserveDrawingBuffer: false, stencil: true }) ||
+              canvas.getContext('webgl', { alpha: true, antialias: true, preserveDrawingBuffer: false, stencil: true });
 
     if (!gl) {
         console.error('[SharedRenderer] WebGL not available');
@@ -79,8 +80,9 @@ SMTool._initSharedRenderer = function () {
     SMTool._sharedCanvas = canvas;
     SMTool._sharedGL = gl;
 
-    // 混合模式
+    // 混合模式 — 不预设全局 blend，由各 Spine 运行时内部按 slot 控制
     gl.enable(gl.BLEND);
+    // 默认 blend 函数仅作为后备，实际渲染由 Spine batcher/shader 逐 slot 覆盖
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
     console.log('[SharedRenderer] Initialized — all nodes will share 1 WebGL context');
@@ -117,7 +119,8 @@ SMTool.worldToDOM = function (wx, wy) {
 };
 
 // ---- WebGL 渲染器设置（使用共享 GL 上下文）----
-SMTool._setupWebGLRenderer = function (node, SP, WGL, atlas, img, useVer) {
+// imgs: 按 atlas page 索引的 Image 数组
+SMTool._setupWebGLRenderer = function (node, SP, WGL, atlas, imgs, useVer) {
     var sk = node.skeleton;
     var physParam = node._physParam;
     var sharedGL = SMTool._sharedGL;
@@ -201,14 +204,14 @@ SMTool._setupWebGLRenderer = function (node, SP, WGL, atlas, img, useVer) {
     // 根据版本设置 WebGL 资源（使用共享上下文）
     try {
         if (useVer === '4.3' || useVer === '4.2') {
-            SMTool._setupWebGL4xShared(node, SP, atlas, img, cw, ch);
+            SMTool._setupWebGL4xShared(node, SP, atlas, imgs, cw, ch);
         } else {
             if (!WGL || !WGL.Shader) {
                 console.warn('[Spine] WGL not ready for 3.8 node #' + node.id + ', will retry...');
                 node._needsWebGLRetry = true;
                 return;
             }
-            SMTool._setupWebGL38Shared(node, WGL, atlas, img, cw, ch);
+            SMTool._setupWebGL38Shared(node, WGL, atlas, imgs, cw, ch);
         }
     } catch (e) {
         console.error('[Spine] Shared WebGL setup failed for #' + node.id + ':', e.message);
@@ -218,11 +221,21 @@ SMTool._setupWebGLRenderer = function (node, SP, WGL, atlas, img, useVer) {
     }
 };
 
-// ---- 4.x WebGL 设置（共享上下文+纹理缓存）----
-SMTool._setupWebGL4xShared = function (node, SP, atlas, img, cw, ch) {
+// ---- 4.x 共享 ManagedWebGLRenderingContext（所有 4.x 节点共用一个，避免状态追踪错乱）----
+SMTool._sharedManagedContext4x = null;
+
+// ---- 4.x WebGL 设置（共享上下文+纹理缓存+多图集）----
+SMTool._setupWebGL4xShared = function (node, SP, atlas, imgs, cw, ch) {
     var canvas = SMTool._sharedCanvas;
 
-    var context = new SP.ManagedWebGLRenderingContext(canvas, { alpha: false });
+    // 所有 4.x 节点共用一个 ManagedWebGLRenderingContext 实例
+    // 多个实例包裹同一个 canvas 会导致内部 GL 状态追踪错乱，
+    // 进而导致贴图混合模式（Additive等）失效、裁剪区域黑屏等问题
+    if (!SMTool._sharedManagedContext4x) {
+        SMTool._sharedManagedContext4x = new SP.ManagedWebGLRenderingContext(canvas, { alpha: true });
+        console.log('[SharedRenderer] Created single shared ManagedWebGLRenderingContext for all 4.x nodes');
+    }
+    var context = SMTool._sharedManagedContext4x;
     node._managedContext = context;
 
     var renderer = new SP.SceneRenderer(canvas, context, true);
@@ -234,10 +247,14 @@ SMTool._setupWebGL4xShared = function (node, SP, atlas, img, cw, ch) {
     renderer.camera.update();
 
     node._texCacheKeys = [];
-    var texDataUrl = node._srcTexDataUrl || '';
+    var pageDataUrls = node._srcTexDataUrls || [];
     for (var i = 0; i < atlas.pages.length; i++) {
         var page = atlas.pages[i];
-        var glTex = SMTool._getOrCreateTex4x(context, SP, texDataUrl, i, img, page.pma || false);
+        var pageImg = (imgs && i < imgs.length) ? imgs[i] : (imgs && imgs[0]) || null;
+        var texDataUrl = (pageDataUrls && i < pageDataUrls.length)
+            ? pageDataUrls[i].dataUrl
+            : (node._srcTexDataUrl || '');
+        var glTex = SMTool._getOrCreateTex4x(context, SP, texDataUrl, i, pageImg, page.pma || false);
         page.setTexture(glTex);
         node.glTextures.push(glTex);
         node._texCacheKeys.push(texDataUrl + '||' + i);
@@ -247,8 +264,8 @@ SMTool._setupWebGL4xShared = function (node, SP, atlas, img, cw, ch) {
     }
 };
 
-// ---- 3.8 WebGL 设置（共享上下文+纹理缓存+Shader共享）----
-SMTool._setupWebGL38Shared = function (node, WGL, atlas, img, cw, ch) {
+// ---- 3.8 WebGL 设置（共享上下文+纹理缓存+Shader共享+多图集）----
+SMTool._setupWebGL38Shared = function (node, WGL, atlas, imgs, cw, ch) {
     var gl = SMTool._sharedGL;
 
     node.shader = WGL.Shader.newTwoColoredTextured(gl);
@@ -258,11 +275,15 @@ SMTool._setupWebGL38Shared = function (node, WGL, atlas, img, cw, ch) {
     node.mvp.ortho2d(0, 0, cw - 1, ch - 1);
 
     node._texCacheKeys = [];
-    var texDataUrl = node._srcTexDataUrl || '';
+    var pageDataUrls = node._srcTexDataUrls || [];
     for (var i = 0; i < atlas.pages.length; i++) {
         var page = atlas.pages[i];
+        var pageImg = (imgs && i < imgs.length) ? imgs[i] : (imgs && imgs[0]) || null;
+        var texDataUrl = (pageDataUrls && i < pageDataUrls.length)
+            ? pageDataUrls[i].dataUrl
+            : (node._srcTexDataUrl || '');
         try {
-            var glTex = SMTool._getOrCreateTex38(gl, WGL, texDataUrl, i, img);
+            var glTex = SMTool._getOrCreateTex38(gl, WGL, texDataUrl, i, pageImg);
             page.texture = glTex;
             node.glTextures.push(glTex);
             node._texCacheKeys.push(texDataUrl + '||' + i);
@@ -320,11 +341,12 @@ SMTool._loop = function (now) {
     var cwFull = sharedCanvas.width;
     var chFull = sharedCanvas.height;
 
-    // 每帧全清画布为透明，确保非渲染区域不会残留旧像素
+    // 每帧全清画布为透明，同时清除模板缓冲区，确保非渲染区域不会残留旧像素
     gl.disable(gl.SCISSOR_TEST);
     gl.viewport(0, 0, cwFull, chFull);
     gl.clearColor(0, 0, 0, 0);
-    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.clearStencil(0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
 
     // ---- 视口裁剪：计算当前可见的世界坐标范围 ----
     var z = SMData.view.zoom;
@@ -356,9 +378,10 @@ SMTool._loop = function (now) {
 
         if (node._needsWebGLRetry) {
             var WGLnow = window.spine38 && window.spine38.webgl;
-            if (WGLnow && WGLnow.Shader && node.atlasData && node.textureImg) {
+            if (WGLnow && WGLnow.Shader && node.atlasData && (node.textureImg || (node._texImgs && node._texImgs.length > 0))) {
                 try {
-                    SMTool._setupWebGL38Shared(node, WGLnow, node.atlasData, node.textureImg, node._canvasWidth, node._canvasHeight);
+                    var retryImgs = (node._texImgs && node._texImgs.length > 0) ? node._texImgs : [node.textureImg];
+                    SMTool._setupWebGL38Shared(node, WGLnow, node.atlasData, retryImgs, node._canvasWidth, node._canvasHeight);
                     node._needsWebGLRetry = false;
                 } catch (e2) {}
             }
@@ -407,7 +430,33 @@ SMTool._loop = function (now) {
         gl.scissor(sx, glY, sw, sh);
         gl.viewport(sx, glY, sw, sh);
         gl.clearColor(0, 0, 0, 0);
-        gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.clearStencil(0);
+        // 同时清除颜色和模板缓冲区 — stencil 对裁剪/Mask 至关重要
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
+        // 重置混合模式为默认值，防止上一节点的 slot 混合模式污染当前节点
+        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+        // 【关键】同步 batcher 的内部混合状态缓存。
+        // PolygonBatcher 内部缓存 srcBlend/dstBlend，若与目标值一致则跳过 gl.blendFunc()。
+        // 我们的外部 gl.blendFunc() 重置不被 batcher 感知 → batcher 可能错误跳过设置。
+        // 将 batcher 内部缓存同步到当前 GL 实际值，确保首次 draw 时状态一致。
+        if (node.batcher) {
+            node.batcher.srcBlend = gl.ONE;
+            node.batcher.dstBlend = gl.ONE_MINUS_SRC_ALPHA;
+        }
+        // 同样同步 4.x ManagedWebGLRenderingContext 的混合状态缓存（若存在）
+        var mc = SMTool._sharedManagedContext4x;
+        if (mc) {
+            try {
+                // 尝试通过 managedContext 的 blendFunc API 同步（同时更新缓存和 GL）
+                if (typeof mc.blendFunc === 'function') {
+                    mc.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+                }
+            } catch (e) {
+                // 回退：直接修改内部缓存属性（不同版本属性名可能不同）
+                try { if (mc._blendSrc !== undefined) { mc._blendSrc = gl.ONE; mc._blendDst = gl.ONE_MINUS_SRC_ALPHA; } } catch (e2) {}
+                try { if (mc._cachedBlendSrc !== undefined) { mc._cachedBlendSrc = gl.ONE; mc._cachedBlendDst = gl.ONE_MINUS_SRC_ALPHA; } } catch (e2) {}
+            }
+        }
 
         if ((node._spineVer === '4.3' || node._spineVer === '4.2') && node.sceneRenderer && node.sceneRenderer.begin) {
             node.sceneRenderer.camera.position.set(nodeW / 2, nodeH / 2, 0);
@@ -415,6 +464,9 @@ SMTool._loop = function (now) {
             node.sceneRenderer.camera.viewportHeight = nodeH;
             node.sceneRenderer.camera.update();
             node.sceneRenderer.begin();
+            // SceneRenderer.begin() 可能重置 viewport/scissor，重新应用节点专属裁剪区域
+            gl.viewport(sx, glY, sw, sh);
+            gl.scissor(sx, glY, sw, sh);
             node.sceneRenderer.drawSkeleton(node.skeleton);
             node.sceneRenderer.end();
         } else if (node.shader && node.batcher && node.skeletonRenderer && WGL38) {
@@ -438,6 +490,9 @@ SMTool._loop = function (now) {
     SMTool._renderGrid();
     SMTool._renderGroupBoxes(SMTool.gridCtx);
     SMTool._renderConnections();
+
+    // 鸟瞰图（小地图）
+    SMTool._renderMinimap();
 };
 
 // ---- 缩放 ----

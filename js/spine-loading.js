@@ -13,6 +13,13 @@ SMTool._esc = function (s) {
     return d.innerHTML;
 };
 
+// 安全转义字符串，用于嵌入 HTML onclick 属性中的 JS 字符串字面量
+// 上下文: onclick="...SMTool.foo(123,'VALUE','bar')"
+// 需同时处理 HTML 属性定界符(")和 JS 字符串定界符(')
+SMTool._escAttr = function (s) {
+    return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+};
+
 SMTool._uint8ToBase64 = function (uint8) {
     var binary = '';
     for (var i = 0; i < uint8.length; i++) binary += String.fromCharCode(uint8[i]);
@@ -47,18 +54,52 @@ SMTool._onDrop = function (e) {
             }
         }
         if (!groups[base]) groups[base] = {};
-        groups[base][f.name.split('.').pop().toLowerCase()] = f;
+        var ext = f.name.split('.').pop().toLowerCase();
+        // 多图集支持：PNG 文件用 _pngs 数组存储，避免同名扩展覆盖
+        if (ext === 'png' || ext === 'jpg' || ext === 'jpeg') {
+            if (!groups[base]._pngs) groups[base]._pngs = [];
+            groups[base]._pngs.push(f);
+            if (!groups[base].png) groups[base].png = f; // 第一个作为默认
+        } else {
+            groups[base][ext] = f;
+        }
     }
 
+    // 合并孤儿 PNG 组：如果某组只有图片没有骨架，尝试合并到前缀匹配的父组
     var keys = Object.keys(groups);
-    // 计算累计水平偏移，防止多个文件组的节点重叠
-    var accumulatedOffset = 0;
-    var H_SPACING = 350; // 每个文件组之间的水平间距（屏幕像素）
     for (var k = 0; k < keys.length; k++) {
         var base = keys[k];
         var group = groups[base];
-        if (group.json || group.skel) {
-            SMTool._createNode(group, base, dropX + accumulatedOffset, dropY);
+        if (!group.json && !group.skel && !group.atlas && group._pngs) {
+            // 寻找父组：其 base 是当前 base 的前缀
+            for (var m = 0; m < keys.length; m++) {
+                var parentBase = keys[m];
+                if (parentBase === base) continue;
+                var parentGroup = groups[parentBase];
+                if ((parentGroup.json || parentGroup.skel || parentGroup.atlas) &&
+                    base.indexOf(parentBase) === 0 && base.length > parentBase.length) {
+                    // 合并 PNG 到父组
+                    if (!parentGroup._pngs) parentGroup._pngs = [];
+                    for (var pi = 0; pi < group._pngs.length; pi++) {
+                        parentGroup._pngs.push(group._pngs[pi]);
+                    }
+                    console.log('[Drop] Merged orphan PNGs of "' + base + '" into parent "' + parentBase + '"');
+                    group._merged = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    // 计算累计水平偏移，防止多个文件组的节点重叠
+    var accumulatedOffset = 0;
+    var H_SPACING = 350; // 每个文件组之间的水平间距（屏幕像素）
+    for (var k2 = 0; k2 < keys.length; k2++) {
+        var base2 = keys[k2];
+        var group2 = groups[base2];
+        if (group2._merged) continue; // 跳过已合并的孤儿组
+        if (group2.json || group2.skel) {
+            SMTool._createNode(group2, base2, dropX + accumulatedOffset, dropY);
             accumulatedOffset += H_SPACING;
         }
     }
@@ -233,6 +274,7 @@ SMTool._createCloneNode = function (sourceNode, animName, index, total, callback
     node._srcSkelBinBase64 = sourceNode._srcSkelBinBase64;
     node._srcAtlasText = sourceNode._srcAtlasText;
     node._srcTexDataUrl = sourceNode._srcTexDataUrl;
+    node._srcTexDataUrls = sourceNode._srcTexDataUrls ? sourceNode._srcTexDataUrls.slice() : [];
     node._srcType = sourceNode._srcType;
     node._srcFileNames = sourceNode._srcFileNames ? sourceNode._srcFileNames.slice() : [];
     node.currentAnim = animName;
@@ -282,15 +324,46 @@ SMTool._onND = function (e, nid) {
             }
         }
         if (!groups[base]) groups[base] = {};
-        groups[base][f.name.split('.').pop().toLowerCase()] = f;
+        var ext = f.name.split('.').pop().toLowerCase();
+        // 多图集支持：PNG 文件用 _pngs 数组存储
+        if (ext === 'png' || ext === 'jpg' || ext === 'jpeg') {
+            if (!groups[base]._pngs) groups[base]._pngs = [];
+            groups[base]._pngs.push(f);
+            if (!groups[base].png) groups[base].png = f;
+        } else {
+            groups[base][ext] = f;
+        }
+    }
+
+    // 合并孤儿 PNG 组到父组
+    var keys = Object.keys(groups);
+    for (var k = 0; k < keys.length; k++) {
+        var base = keys[k];
+        var group = groups[base];
+        if (!group.json && !group.skel && !group.atlas && group._pngs) {
+            for (var m = 0; m < keys.length; m++) {
+                var parentBase = keys[m];
+                if (parentBase === base) continue;
+                var parentGroup = groups[parentBase];
+                if ((parentGroup.json || parentGroup.skel || parentGroup.atlas) &&
+                    base.indexOf(parentBase) === 0 && base.length > parentBase.length) {
+                    if (!parentGroup._pngs) parentGroup._pngs = [];
+                    for (var pi = 0; pi < group._pngs.length; pi++) {
+                        parentGroup._pngs.push(group._pngs[pi]);
+                    }
+                    group._merged = true;
+                    break;
+                }
+            }
+        }
     }
 
     var node = SMData.nodes.get(nid);
     if (!node) return;
 
-    var keys = Object.keys(groups);
-    for (var k = 0; k < keys.length; k++) {
-        var g = groups[keys[k]];
+    for (var k2 = 0; k2 < keys.length; k2++) {
+        var g = groups[keys[k2]];
+        if (g._merged) continue;
         SMTool._loadSpine(node, g).then(function () {
             SMTool._updateEl(node);
         }).catch(function (err) {
@@ -347,23 +420,60 @@ SMTool._readFile = function (file) {
     });
 };
 
+// ---- 从 atlas 文本中提取所有页面的图片文件名 ----
+// 返回数组 [{ name: 'page1.png' }, ...]，仅提取文件名（不含路径）
+SMTool._extractAtlasPageNames = function (atlasText) {
+    var names = [];
+    var lines = atlasText.split(/\r?\n/);
+    for (var i = 0; i < lines.length; i++) {
+        var line = lines[i].trim();
+        // 页面行：非空、不以冒号结尾（不是 key: value）、包含 .png/.jpg/.jpeg
+        if (line && line.indexOf(':') === -1 && /\.(png|jpg|jpeg)$/i.test(line)) {
+            // 提取纯文件名（去掉路径）
+            var name = line.replace(/\\/g, '/').split('/').pop();
+            // 去重
+            var dup = false;
+            for (var d = 0; d < names.length; d++) {
+                if (names[d].name === name) { dup = true; break; }
+            }
+            if (!dup) names.push({ name: name });
+        }
+    }
+    return names;
+};
+
 // ---- 主要的 Spine 加载逻辑 ----
 SMTool._loadSpine = function (node, fileGroup) {
     return new Promise(function (resolve, reject) {
         console.log('[Spine] Loading "' + node.name + '"...', Object.keys(fileGroup));
 
-        // 第一步：读取所有文件
+        // 第一步：读取所有文件（包括 _pngs 数组中的多张图片）
         var readPromises = [];
         var fileKeys = Object.keys(fileGroup);
+        var pngFiles = fileGroup._pngs || [];
+        if (fileGroup.png && pngFiles.length === 0) pngFiles = [fileGroup.png];
+        // 用 Set 记录已读文件名，避免重复读取
+        var readNames = {};
+        for (var pi = 0; pi < pngFiles.length; pi++) {
+            readNames[pngFiles[pi].name.toLowerCase()] = true;
+            readPromises.push(SMTool._readFile(pngFiles[pi]));
+        }
         for (var i = 0; i < fileKeys.length; i++) {
-            readPromises.push(SMTool._readFile(fileGroup[fileKeys[i]]));
+            var k = fileKeys[i];
+            if (k === '_pngs' || k === '_merged' || k === 'png') continue; // 跳过辅助字段和已读 PNG
+            var f = fileGroup[k];
+            if (!readNames[f.name.toLowerCase()]) {
+                readPromises.push(SMTool._readFile(f));
+            }
         }
 
         Promise.all(readPromises).then(function (results) {
             console.log('[Spine] Read:', results.map(function (r) { return r.t + ':' + r.n; }).join(', '));
 
             // 第二步：分类文件内容
-            var atlasText = '', pngUrl = '', skelBin = null, skelJson = null;
+            var atlasText = '', skelBin = null, skelJson = null;
+            // 多图集：收集所有图片 { 文件名(小写): dataUrl }
+            var imgMap = {};
 
             for (var i = 0; i < results.length; i++) {
                 var r = results[i];
@@ -383,13 +493,14 @@ SMTool._loadSpine = function (node, fileGroup) {
                         if (!atlasText) atlasText = r.d;
                     }
                 } else if (r.t === 'img') {
-                    pngUrl = r.d;
+                    imgMap[r.n.toLowerCase()] = r.d;
                 } else if (r.t === 'bin') {
                     skelBin = r.d;
                 }
             }
 
-            if (!pngUrl) return reject(new Error('No PNG found'));
+            var imgNames = Object.keys(imgMap);
+            if (imgNames.length === 0) return reject(new Error('No PNG found'));
             if (!atlasText) return reject(new Error('No .atlas found'));
             if (!skelJson && !skelBin) return reject(new Error('No skeleton (.json/.skel) found'));
 
@@ -422,11 +533,53 @@ SMTool._loadSpine = function (node, fileGroup) {
                 atlasText = atlasText.replace(/^pma\s*:.*$/gm, '').replace(/\n{2,}/g, '\n');
             }
 
-            // 第五步：存储原始数据用于导出 + 记录源文件名
+            // 第五步：匹配 atlas 页面到图片
+            var atlasPageNames = SMTool._extractAtlasPageNames(atlasText);
+            console.log('[Spine] Atlas pages:', atlasPageNames.map(function (p) { return p.name; }).join(', '));
+            console.log('[Spine] Available PNGs:', imgNames.join(', '));
+
+            // 为每个 atlas 页面找到匹配的图片 dataUrl
+            var pageDataUrls = []; // [{ name, dataUrl }]
+            for (var ai = 0; ai < atlasPageNames.length; ai++) {
+                var pageName = atlasPageNames[ai].name;
+                var pageNameLower = pageName.toLowerCase();
+                var foundUrl = imgMap[pageNameLower];
+                if (!foundUrl) {
+                    // 模糊匹配：查找包含 pageName 的图片文件
+                    for (var mi = 0; mi < imgNames.length; mi++) {
+                        if (imgNames[mi].indexOf(pageNameLower) !== -1 ||
+                            pageNameLower.indexOf(imgNames[mi]) !== -1) {
+                            foundUrl = imgMap[imgNames[mi]];
+                            console.log('[Spine]   Fuzzy match: "' + pageName + '" → "' + imgNames[mi] + '"');
+                            break;
+                        }
+                    }
+                }
+                if (foundUrl) {
+                    pageDataUrls.push({ name: pageName, dataUrl: foundUrl });
+                } else {
+                    console.warn('[Spine]   ⚠ No PNG found for atlas page: "' + pageName + '"');
+                    // 回退：使用第一个可用的图片
+                    if (imgNames.length > 0) {
+                        pageDataUrls.push({ name: pageName, dataUrl: imgMap[imgNames[0]] });
+                    }
+                }
+            }
+
+            // 如果 atlas 没有显式页面名（罕见），直接用第一个图片
+            if (pageDataUrls.length === 0 && imgNames.length > 0) {
+                pageDataUrls.push({ name: imgNames[0], dataUrl: imgMap[imgNames[0]] });
+            }
+
+            // 首选 pngUrl（向后兼容：第一页）
+            var pngUrl = pageDataUrls.length > 0 ? pageDataUrls[0].dataUrl : '';
+
+            // 第六步：存储原始数据
             node._srcSkelJson = skelJson;
             node._srcSkelBinBase64 = skelBin ? SMTool._uint8ToBase64(skelBin) : null;
             node._srcAtlasText = atlasText;
             node._srcTexDataUrl = pngUrl;
+            node._srcTexDataUrls = pageDataUrls;
             node._srcType = skelBin ? 'skel' : 'json';
             // 收集原始文件名（含后缀）
             node._srcFileNames = [];
@@ -434,18 +587,44 @@ SMTool._loadSpine = function (node, fileGroup) {
                 if (results[ri].n) node._srcFileNames.push(results[ri].n);
             }
 
-            // 第六步：加载图片
-            var img = new Image();
-            img.onload = function () {
-                console.log('[Spine] Image: ' + img.width + 'x' + img.height);
-                node.textureImg = img;
-                SMTool._parseSpineData(node, SP, WGL, atlasText, pngUrl, skelJson, skelBin, img, useVer)
-                    .then(resolve).catch(reject);
-            };
-            img.onerror = function () {
-                reject(new Error('PNG load failed'));
-            };
-            img.src = pngUrl;
+            // 第七步：加载所有图片（并行），按页面顺序
+            var imgs = [];
+            var loadedCount = 0;
+            var totalPages = pageDataUrls.length;
+
+            if (totalPages === 0) {
+                return reject(new Error('No texture pages to load'));
+            }
+
+            for (var pi2 = 0; pi2 < totalPages; pi2++) {
+                (function (idx) {
+                    var img = new Image();
+                    img.onload = function () {
+                        console.log('[Spine] Image[' + idx + '] ' + pageDataUrls[idx].name + ': ' + img.width + 'x' + img.height);
+                        imgs[idx] = img;
+                        loadedCount++;
+                        if (loadedCount >= totalPages) {
+                            // 全部加载完成
+                            node.textureImg = imgs[0];
+                            node._texImgs = imgs;
+                            SMTool._parseSpineData(node, SP, WGL, atlasText, pageDataUrls, skelJson, skelBin, imgs, useVer)
+                                .then(resolve).catch(reject);
+                        }
+                    };
+                    img.onerror = function () {
+                        console.warn('[Spine] ⚠ Failed to load image: ' + pageDataUrls[idx].name);
+                        imgs[idx] = null;
+                        loadedCount++;
+                        if (loadedCount >= totalPages) {
+                            node.textureImg = imgs[0];
+                            node._texImgs = imgs;
+                            SMTool._parseSpineData(node, SP, WGL, atlasText, pageDataUrls, skelJson, skelBin, imgs, useVer)
+                                .then(resolve).catch(reject);
+                        }
+                    };
+                    img.src = pageDataUrls[idx].dataUrl;
+                })(pi2);
+            }
         }).catch(reject);
     });
 };
@@ -494,16 +673,30 @@ SMTool._getSpineRuntime = function (useVer) {
 };
 
 // ---- 解析 Spine 数据 ----
-SMTool._parseSpineData = function (node, SP, WGL, atlasText, pngUrl, skelJson, skelBin, img, useVer) {
+// imgs: 按 atlas page 索引的 Image 数组，pageDataUrls: [{ name, dataUrl }]
+SMTool._parseSpineData = function (node, SP, WGL, atlasText, pageDataUrls, skelJson, skelBin, imgs, useVer) {
     return new Promise(function (resolve, reject) {
         try {
+            var firstImg = (imgs && imgs.length > 0) ? imgs[0] : null;
             // 创建 Atlas
             var atlas;
             if (useVer === '4.3' || useVer === '4.2') {
                 atlas = new SP.TextureAtlas(atlasText);
             } else {
-                atlas = new SP.TextureAtlas(atlasText, function () {
-                    return new SP.FakeTexture(img);
+                // 3.8: 为每个页面返回对应图片的 FakeTexture（多图集支持）
+                atlas = new SP.TextureAtlas(atlasText, function (pagePath) {
+                    var pathStr = (typeof pagePath === 'string') ? pagePath : (pagePath && pagePath.name ? pagePath.name : '');
+                    var pageFileName = pathStr.replace(/\\/g, '/').split('/').pop().toLowerCase();
+                    var matchImg = firstImg;
+                    if (pageDataUrls && imgs) {
+                        for (var pdi = 0; pdi < pageDataUrls.length; pdi++) {
+                            if (pageDataUrls[pdi].name.toLowerCase() === pageFileName && imgs[pdi]) {
+                                matchImg = imgs[pdi];
+                                break;
+                            }
+                        }
+                    }
+                    return new SP.FakeTexture(matchImg);
                 });
             }
             node.atlasData = atlas;
@@ -566,7 +759,7 @@ SMTool._parseSpineData = function (node, SP, WGL, atlasText, pngUrl, skelJson, s
 
             // 委托给渲染模块设置 WebGL
             if (SMTool._setupWebGLRenderer) {
-                SMTool._setupWebGLRenderer(node, SP, WGL, atlas, img, useVer);
+                SMTool._setupWebGLRenderer(node, SP, WGL, atlas, imgs, useVer);
             }
 
             SMTool._updateEl(node);
@@ -634,22 +827,65 @@ SMTool._loadFromSourceData = function (node) {
         if (!SP) return reject(new Error('No spine runtime available'));
 
         var atlasText = node._srcAtlasText;
-        var texDataUrl = node._srcTexDataUrl;
         var srcType = node._srcType || 'json';
+        // 多图集支持：优先使用 _srcTexDataUrls，回退到单个 _srcTexDataUrl
+        var pageDataUrls = (node._srcTexDataUrls && node._srcTexDataUrls.length > 0)
+            ? node._srcTexDataUrls
+            : [{ name: 'texture', dataUrl: node._srcTexDataUrl }];
 
-        console.log('[Import] Restoring "' + node.name + '" from ' + srcType + ' source');
+        console.log('[Import] Restoring "' + node.name + '" from ' + srcType + ' source, ' + pageDataUrls.length + ' page(s)');
 
-        var img = new Image();
-        img.onload = function () {
+        // 加载所有图片（并行）
+        var imgs = [];
+        var loadedCount = 0;
+        var totalPages = pageDataUrls.length;
+
+        if (totalPages === 0) return reject(new Error('No texture data'));
+
+        for (var pi = 0; pi < totalPages; pi++) {
+            (function (idx) {
+                var img = new Image();
+                img.onload = function () {
+                    imgs[idx] = img;
+                    loadedCount++;
+                    if (loadedCount >= totalPages) finishLoad();
+                };
+                img.onerror = function () {
+                    console.warn('[Import] ⚠ Failed to load image ' + idx);
+                    imgs[idx] = null;
+                    loadedCount++;
+                    if (loadedCount >= totalPages) finishLoad();
+                };
+                img.src = pageDataUrls[idx].dataUrl;
+            })(pi);
+        }
+
+        function finishLoad() {
             try {
+                var firstImg = imgs[0];
                 var atlas;
                 if (useVer === '4.3' || useVer === '4.2') {
                     atlas = new SP.TextureAtlas(atlasText);
                 } else {
-                    atlas = new SP.TextureAtlas(atlasText, function () { return new SP.FakeTexture(img); });
+                    // 3.8: 多图集支持，为每个页面匹配对应图片
+                    atlas = new SP.TextureAtlas(atlasText, function (pagePath) {
+                        var pathStr = (typeof pagePath === 'string') ? pagePath : (pagePath && pagePath.name ? pagePath.name : '');
+                        var pageFileName = pathStr.replace(/\\/g, '/').split('/').pop().toLowerCase();
+                        var matchImg = firstImg;
+                        if (pageDataUrls && imgs) {
+                            for (var pdi = 0; pdi < pageDataUrls.length; pdi++) {
+                                if (pageDataUrls[pdi].name.toLowerCase() === pageFileName && imgs[pdi]) {
+                                    matchImg = imgs[pdi];
+                                    break;
+                                }
+                            }
+                        }
+                        return new SP.FakeTexture(matchImg);
+                    });
                 }
                 node.atlasData = atlas;
-                node.textureImg = img;
+                node.textureImg = firstImg;
+                node._texImgs = imgs;
 
                 var al = new SP.AtlasAttachmentLoader(atlas);
                 var sd;
@@ -685,15 +921,13 @@ SMTool._loadFromSourceData = function (node) {
                 }
 
                 if (SMTool._setupWebGLRenderer) {
-                    SMTool._setupWebGLRenderer(node, SP, WGL, atlas, img, useVer);
+                    SMTool._setupWebGLRenderer(node, SP, WGL, atlas, imgs, useVer);
                 }
                 resolve();
             } catch (e) {
                 reject(e);
             }
-        };
-        img.onerror = function () { reject(new Error('Texture image load failed')); };
-        img.src = texDataUrl;
+        }
     });
 };
 

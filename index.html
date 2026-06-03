@@ -15,6 +15,12 @@
         <div id="floatLabels"></div>
     </div>
 
+    <!-- ===== 鸟瞰图（左下角小地图）===== -->
+    <div id="minimap">
+        <canvas id="minimapCanvas"></canvas>
+        <div id="minimapViewport"></div>
+    </div>
+
     <!-- ===== 工具栏 ===== -->
     <div id="toolbar">
         <button onclick="SMTool.addSpineNode()">➕ 添加节点</button>
@@ -37,7 +43,7 @@
 
     <!-- ===== 缺失状态通知面板 ===== -->
     <div id="missingPanel">
-        <div class="mp-header">⚠️ 缺失状态</div>
+        <div class="mp-header">⚠️ 缺失状态<button class="mp-close" onclick="SMTool._closeMissingPanel()" title="关闭提示">✕</button></div>
         <div class="mp-list" id="missingList"></div>
     </div>
 
@@ -78,6 +84,12 @@
         <span id="sbFPS">FPS: --</span>
         <span id="sbMemory">内存: --</span>
         <span id="sbStatus"></span>
+    </div>
+
+    <!-- ===== 自动保存提示气泡（左下角） ===== -->
+    <div id="autoSaveToast">
+        <span class="ast-icon">💾</span>
+        <span class="ast-text">已自动保存</span>
     </div>
 
     <!-- ===== 渲染模式切换 ===== -->
@@ -132,16 +144,18 @@
          3. spine-loading.js — 文件读取/解析/版本检测
          4. spine-rendering.js — WebGL 渲染器 + 视口变换
          5. grid-connections.js — 网格背景 + 贝塞尔连线
-         6. ui-dom.js — 节点 DOM 创建/更新
-         7. interaction.js — 鼠标/键盘事件处理
-         8. export-import.js — 项目导出/导入
-         9. app.js — 主入口（汇总 + 初始化）
+         6. minimap.js — 左下角鸟瞰图小地图
+         7. ui-dom.js — 节点 DOM 创建/更新
+         8. interaction.js — 鼠标/键盘事件处理
+         9. export-import.js — 项目导出/导入
+        10. app.js — 主入口（汇总 + 初始化）
          ================================================================ -->
     <script src="js/lib/spine-loader.js"></script>
     <script src="js/data-model.js"></script>
     <script src="js/spine-loading.js"></script>
     <script src="js/spine-rendering.js"></script>
     <script src="js/grid-connections.js"></script>
+    <script src="js/minimap.js"></script>
     <script src="js/ui-dom.js"></script>
     <script src="js/interaction.js"></script>
     <script src="js/export-import.js"></script>

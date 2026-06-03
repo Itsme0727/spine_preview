@@ -28,7 +28,7 @@ SMTool._renderGrid = function () {
     var ox = ((w / 2 + vx * z) % s + s) % s;
     var oy = ((h / 2 + vy * z) % s + s) % s;
 
-    ctx.strokeStyle = base >= 200 ? '#1c1c1c' : '#111111';
+    ctx.strokeStyle = base >= 200 ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.03)';
     ctx.lineWidth = 1;
     ctx.beginPath();
     for (var x = ox; x < w; x += s) { ctx.moveTo(x, 0); ctx.lineTo(x, h); }
@@ -38,7 +38,7 @@ SMTool._renderGrid = function () {
     // 中心十字线
     var cx = w / 2 + vx * z;
     var cy = h / 2 + vy * z;
-    ctx.strokeStyle = '#252525';
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(cx, 0); ctx.lineTo(cx, h);

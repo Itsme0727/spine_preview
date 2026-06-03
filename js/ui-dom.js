@@ -36,7 +36,7 @@ SMTool._createEl = function (node) {
     for (var si = 0; si < node.skins.length; si++) {
         var skinName = node.skins[si];
         var isActive = skinName === currentSkin ? ' active' : '';
-        skinsHtml += '<span class="badge skin-badge' + isActive + '" onclick="event.stopPropagation();SMTool._setSkin(' + node.id + ',\'' + SMTool._esc(skinName) + '\')" title="切换皮肤: ' + SMTool._esc(skinName) + '">' + SMTool._esc(skinName) + '</span>';
+        skinsHtml += '<span class="badge skin-badge' + isActive + '" onclick="event.stopPropagation();SMTool._setSkin(' + node.id + ',\'' + SMTool._escAttr(skinName) + '\')" title="切换皮肤: ' + SMTool._esc(skinName) + '">' + SMTool._esc(skinName) + '</span>';
     }
     if (!skinsHtml) skinsHtml = '<span class="badge">无皮肤</span>';
 
@@ -103,7 +103,7 @@ SMTool._createEl = function (node) {
         '<div class="header" onmousedown="event.stopPropagation();SMTool._onHD(event,' + node.id + ')">' +
             '<div class="header-titles">' +
                 (node.sourceFile ? '<span class="source-file">' + SMTool._esc(node.sourceFile) + '</span>' : '') +
-                '<span class="name">' + SMTool._esc(node.name) + '</span>' +
+                '<span class="name">' + SMTool._esc(node.currentAnim || node.name) + '</span>' +
             '</div>' +
             '<div class="btns">' +
                 '<button onclick="event.stopPropagation();SMTool.copyNode(' + node.id + ',50,50);" title="复制节点">📋</button>' +
@@ -114,9 +114,10 @@ SMTool._createEl = function (node) {
             '<div style="color:var(--text2);padding:40px">拖入 Spine 文件</div>' +
         '</div>' +
         '<div class="anim-bar">' +
-            '<div class="conn-dot input" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'' + SMTool._esc(curState) + '\',\'input\')" title="连线输入"></div>' +
+            '<div class="conn-dot input" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'' + SMTool._escAttr(curState) + '\',\'input\')" title="连线输入"></div>' +
             '<select class="anim-select" onchange="SMTool._onAnimChange(' + node.id + ', this.value)">' + animOptionsHtml + '</select>' +
-            '<div class="conn-dot output" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'' + SMTool._esc(curState) + '\',\'output\')" title="连线输出"></div>' +
+            '<div class="anim-progress-bar"></div>' +
+            '<div class="conn-dot output" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'' + SMTool._escAttr(curState) + '\',\'output\')" title="连线输出"></div>' +
         '</div>' +
         '<div class="footer">' +
             '<div class="footer-skins"><span class="skin-label">皮肤</span>' + skinsHtml + '</div>' +
@@ -174,6 +175,50 @@ SMTool._updateStateDesc = function (nid, value) {
     if (node) node._stateDesc = value;
     var ta = document.querySelector('#sn-' + nid + ' .state-desc');
     if (ta) { ta.style.height = 'auto'; ta.style.height = Math.max(32, ta.scrollHeight) + 'px'; }
+};
+
+// ---- 构建骨骼行 HTML（含备注区和截图区）----
+SMTool._buildBoneRowHtml = function (node, boneName) {
+    var taggedStates = (node._boneTags && node._boneTags[boneName]) ? node._boneTags[boneName].join(', ') : '';
+    var taggedHtml = taggedStates ? '<span class="dfp-bone-tagged">' + SMTool._esc(taggedStates) + '</span>' : '';
+
+    var curAnim = node.currentAnim || '';
+    var storeKey = (node.sourceFile || node.name) + '||' + curAnim;
+    var boneLabels = SMData._boneLabelStore[storeKey] || {};
+    var label = boneLabels[boneName] || '';
+    var labelHtml = '';
+    if (label) {
+        labelHtml = '<span class="dfp-bone-label" data-bone="' + SMTool._esc(boneName) + '" title="点击编辑标签">' +
+            SMTool._esc(label) +
+            '<span class="dfp-bone-label-del" data-bone="' + SMTool._esc(boneName) + '" title="删除标签">&times;</span>' +
+        '</span>';
+    }
+
+    var isMarked = !!(node._boneTags && node._boneTags[boneName]);
+    var html = '<div class="dfp-row dfp-bone-row" data-bone="' + SMTool._esc(boneName) + '">' +
+        '<span>' + SMTool._esc(boneName) + '</span>' +
+        '<span class="dfp-bone-right">' + taggedHtml + labelHtml + '</span>' +
+        '<span class="dfp-bone-mark' + (isMarked ? ' active' : '') + '" data-bone="' + SMTool._esc(boneName) + '" onclick="event.stopPropagation();SMTool._toggleBoneTag(\'' + SMTool._esc(boneName) + '\')" title="' + (isMarked ? '取消标记' : '标记骨骼') + '">✖</span>' +
+        '</div>';
+
+    if (isMarked) {
+        var noteText = (node._boneNotes && node._boneNotes[boneName]) ? SMTool._esc(node._boneNotes[boneName]) : '';
+        var shotDataUrl = (node._boneScreenshots && node._boneScreenshots[boneName]) ? node._boneScreenshots[boneName] : '';
+        html += '<div class="dfp-bone-note-area show" data-bone-note="' + SMTool._esc(boneName) + '">' +
+            '<textarea placeholder="骨骼备注..." oninput="SMTool._updateBoneNote(\'' + SMTool._esc(boneName) + '\', this.value)" onclick="event.stopPropagation()">' + noteText + '</textarea>' +
+            '<div class="dfp-bone-shot-area show">' +
+                (shotDataUrl ?
+                    '<div class="dfp-bone-shot-placeholder has-image" onclick="event.stopPropagation();SMTool._openScreenshot(\'' + SMTool._esc(boneName) + '\')">' +
+                        '<img src="' + shotDataUrl + '" alt="截图">' +
+                    '</div>' :
+                    '<div class="dfp-bone-shot-placeholder" onclick="event.stopPropagation();SMTool._pickScreenshot(\'' + SMTool._esc(boneName) + '\')" ondragover="event.preventDefault();event.stopPropagation()" ondrop="event.preventDefault();event.stopPropagation();SMTool._dropScreenshot(event,\'' + SMTool._esc(boneName) + '\')">' +
+                        '<span class="shot-icon">🖼️</span>' +
+                        '<span class="shot-text">点击或拖入截图</span>' +
+                    '</div>') +
+            '</div>' +
+        '</div>';
+    }
+    return html;
 };
 
 // ---- 骨骼标记 ----
@@ -236,6 +281,87 @@ SMTool._refreshBoneTagsUI = function (node) {
     }
     html += '<button class="bone-tag-add-btn" onclick="event.stopPropagation();SMTool._showBoneAddMenu(event,' + node.id + ')" title="添加挂点">+</button>';
     el.innerHTML = html;
+};
+
+// ---- 骨骼备注更新 ----
+SMTool._updateBoneNote = function (boneName, value) {
+    var node = SMData.nodes.get(SMData.selectedNode);
+    if (!node) return;
+    if (!node._boneNotes) node._boneNotes = {};
+    node._boneNotes[boneName] = value;
+};
+
+// ---- 截图文件选择 ----
+SMTool._pickScreenshot = function (boneName) {
+    var input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.onchange = function () {
+        var file = input.files[0];
+        if (!file) return;
+        var reader = new FileReader();
+        reader.onload = function () {
+            var node = SMData.nodes.get(SMData.selectedNode);
+            if (!node) return;
+            if (!node._boneScreenshots) node._boneScreenshots = {};
+            node._boneScreenshots[boneName] = reader.result;
+            SMTool._updateFloatPanel();
+        };
+        reader.readAsDataURL(file);
+    };
+    input.click();
+};
+
+// ---- 拖入截图 ----
+SMTool._dropScreenshot = function (e, boneName) {
+    var file = e.dataTransfer.files[0];
+    if (!file || !file.type.startsWith('image/')) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+        var node = SMData.nodes.get(SMData.selectedNode);
+        if (!node) return;
+        if (!node._boneScreenshots) node._boneScreenshots = {};
+        node._boneScreenshots[boneName] = reader.result;
+        SMTool._updateFloatPanel();
+    };
+    reader.readAsDataURL(file);
+};
+
+// ---- 全屏查看截图 ----
+SMTool._closeScreenshot = function () {
+    var overlay = document.getElementById('screenshotOverlay');
+    if (overlay) overlay.classList.remove('show');
+};
+
+SMTool._openScreenshot = function (boneName) {
+    var node = SMData.nodes.get(SMData.selectedNode);
+    if (!node) return;
+    var dataUrl = node._boneScreenshots && node._boneScreenshots[boneName];
+    if (!dataUrl) return;
+    var overlay = document.getElementById('screenshotOverlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'screenshotOverlay';
+        overlay.innerHTML = '<img src="" alt="截图"><span class="close-hint">点击任意位置关闭 | ESC 关闭</span>';
+        overlay.addEventListener('click', function (e) {
+            if (e.target === overlay || e.target.classList.contains('close-hint')) {
+                overlay.classList.remove('show');
+            }
+        });
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape') {
+                overlay.classList.remove('show');
+            }
+        });
+        document.body.appendChild(overlay);
+    }
+    var img = overlay.querySelector('img');
+    if (img) {
+        img.src = dataUrl;
+        // 点击图片本身不关闭
+        img.onclick = function (e) { e.stopPropagation(); };
+    }
+    overlay.classList.add('show');
 };
 
 // ---- 挂点添加按钮：弹出骨骼选择菜单 ----
@@ -334,7 +460,7 @@ SMTool._updateEl = function (node) {
 
     // 更新连线圆点的 onclick 属性（指向当前状态）
     var curState = node.currentAnim || (node.animations[0] && node.animations[0].name) || '';
-    var curStateEsc = SMTool._esc(curState);
+    var curStateEsc = SMTool._escAttr(curState);
     var inputDot = el.querySelector('.anim-bar .conn-dot.input');
     var outputDot = el.querySelector('.anim-bar .conn-dot.output');
     if (inputDot) inputDot.setAttribute('onclick', "event.stopPropagation();SMTool._onDot(" + node.id + ",'" + curStateEsc + "','input')");
@@ -348,7 +474,7 @@ SMTool._updateEl = function (node) {
         for (var si = 0; si < node.skins.length; si++) {
             var skinName = node.skins[si];
             var isActive = skinName === currentSkin2 ? ' active' : '';
-            skinsHtml += '<span class="badge skin-badge' + isActive + '" onclick="event.stopPropagation();SMTool._setSkin(' + node.id + ',\'' + SMTool._esc(skinName) + '\')" title="切换皮肤: ' + SMTool._esc(skinName) + '">' + SMTool._esc(skinName) + '</span>';
+            skinsHtml += '<span class="badge skin-badge' + isActive + '" onclick="event.stopPropagation();SMTool._setSkin(' + node.id + ',\'' + SMTool._escAttr(skinName) + '\')" title="切换皮肤: ' + SMTool._esc(skinName) + '">' + SMTool._esc(skinName) + '</span>';
         }
         ft.innerHTML =
             '<div class="footer-skins"><span class="skin-label">皮肤</span>' + (skinsHtml || '<span class="badge">无皮肤</span>') + '</div>' +
@@ -368,9 +494,9 @@ SMTool._updateEl = function (node) {
         loopBtn.classList.toggle('active', node.loop !== false);
     }
 
-    // 标题
+    // 标题（显示原始英文动画名，而非翻译后的 node.name）
     var hn = el.querySelector('.header .name');
-    if (hn) { hn.textContent = node.name; hn.title = node.name; }
+    if (hn) { var displayName = node.currentAnim || node.name; hn.textContent = displayName; hn.title = displayName; }
     var sf = el.querySelector('.header .source-file');
     if (node.sourceFile) {
         if (sf) { sf.textContent = node.sourceFile; }
@@ -416,9 +542,9 @@ SMTool._updateAllPos = function () {
         result = nodesIter.next();
     }
 
-    // 连线端口：画布缩小时放大，最大2倍
+    // 连线端口：画布缩小时放大，放大时缩小，但保持最小可见
     var z = SMData.view.zoom;
-    var dotScale = Math.min(2, 2 - z);
+    var dotScale = Math.max(0.25, Math.min(2, 2 - z));
     var dots = document.querySelectorAll('.spine-node .conn-dot');
     for (var i = 0; i < dots.length; i++) {
         dots[i].style.transform = 'scale(' + dotScale + ')';
@@ -621,37 +747,25 @@ SMTool._updateFloatPanel = function () {
         for (var si = 0; si < node.skins.length; si++) {
             var skName = node.skins[si];
             var isActiveSkin = skName === currentSkin ? ' active' : '';
-            skinRows += '<span class="dfp-skin-badge' + isActiveSkin + '" onclick="event.stopPropagation();SMTool._setSkin(' + node.id + ',\'' + SMTool._esc(skName) + '\')" title="切换皮肤: ' + SMTool._esc(skName) + '">' + SMTool._esc(skName) + '</span>';
+            skinRows += '<span class="dfp-skin-badge' + isActiveSkin + '" onclick="event.stopPropagation();SMTool._setSkin(' + node.id + ',\'' + SMTool._escAttr(skName) + '\')" title="切换皮肤: ' + SMTool._esc(skName) + '">' + SMTool._esc(skName) + '</span>';
         }
         if (!skinRows) skinRows = '<span class="dfp-skin-badge">default</span>';
 
         var boneRows = '';
-        var curAnim = node.currentAnim || '';
-        var storeKey = (node.sourceFile || node.name) + '||' + curAnim;
-        var boneLabels = SMData._boneLabelStore[storeKey] || {};
         for (var bi = 0; bi < node.bones.length; bi++) {
-            var boneName = node.bones[bi];
-            var label = boneLabels[boneName] || '';
-            var labelHtml = '';
-            if (label) {
-                labelHtml = '<span class="dfp-bone-label" data-bone="' + SMTool._esc(boneName) + '" title="点击编辑标签">' +
-                    SMTool._esc(label) +
-                    '<span class="dfp-bone-label-del" data-bone="' + SMTool._esc(boneName) + '" title="删除标签">&times;</span>' +
-                '</span>';
-            }
-            // 获取该骨骼被标记的状态
-            var taggedStates = (node._boneTags && node._boneTags[boneName]) ? node._boneTags[boneName].join(', ') : '';
-            var taggedHtml = taggedStates ? '<span class="dfp-bone-tagged">' + SMTool._esc(taggedStates) + '</span>' : '';
-            boneRows += '<div class="dfp-row dfp-bone-row" data-bone="' + SMTool._esc(boneName) + '">' +
-                '<span>' + SMTool._esc(boneName) + '</span>' +
-                    '<button class="dfp-bone-tag-btn" data-bone="' + SMTool._esc(boneName) + '" style="font-size:14px;cursor:pointer;background:none;border:1px solid #4ec96e;color:#4ec96e;border-radius:4px;padding:0 6px;margin-left:8px">标记</button>' +
-                    '<span class="dfp-bone-right" style="margin-left:auto;display:flex;align-items:center;gap:6px">' + taggedHtml + labelHtml + '</span></div>';
+            boneRows += SMTool._buildBoneRowHtml(node, node.bones[bi]);
         }
         if (!boneRows) boneRows = '<div class="dfp-row">无</div>';
 
         var slotRows = '';
         for (var sli = 0; sli < node.slots.length; sli++) {
-            slotRows += '<div class="dfp-row">' + SMTool._esc(node.slots[sli]) + '</div>';
+            var slotName = node.slots[sli];
+            var isSlotMarked = !!(node._boneTags && node._boneTags[slotName]);
+            slotRows += '<div class="dfp-row dfp-bone-row" data-bone="' + SMTool._esc(slotName) + '">' +
+                '<span>' + SMTool._esc(slotName) + '</span>' +
+                '<span class="dfp-bone-right"></span>' +
+                '<span class="dfp-bone-mark' + (isSlotMarked ? ' active' : '') + '" onclick="event.stopPropagation();SMTool._toggleBoneTag(\'' + SMTool._esc(slotName) + '\')" title="' + (isSlotMarked ? '取消标记' : '标记插槽') + '">✖</span>' +
+                '</div>';
         }
         if (!slotRows) slotRows = '<div class="dfp-row">无</div>';
 
@@ -668,13 +782,19 @@ SMTool._updateFloatPanel = function () {
 
         content.innerHTML =
             '<div class="dfp-section"><div class="dfp-section-title">🏷️ 节点名称</div><div class="dfp-row">' + SMTool._esc(node.name) + '</div></div>' +
+            '<div class="dfp-pma-section">' +
+                '<button class="dfp-pma-toggle-btn' + (node.premultipliedAlpha ? ' active' : '') + '" onclick="SMTool._togglePMA(' + node.id + ',' + !node.premultipliedAlpha + ')">' +
+                    '<span class="pma-icon">' + (node.premultipliedAlpha ? '🔴' : '⚪') + '</span>' +
+                    '<span>预乘 Alpha</span>' +
+                    '<span class="pma-status">' + (node.premultipliedAlpha ? '已开启' : '已关闭') + '</span>' +
+                '</button>' +
+            '</div>' +
             sourceInfo +
             '<div class="dfp-section"><div class="dfp-section-title">📦 Spine 版本</div><div class="dfp-row"><span>版本</span><span>' + SMTool._esc(node.version || '未知') + '</span></div></div>' +
             '<div class="dfp-section"><div class="dfp-section-title">🎬 动画 (' + node.animations.length + ')</div>' + animsHtml + '</div>' +
             '<div class="dfp-section"><div class="dfp-section-title">🎨 皮肤 (' + node.skins.length + ')</div>' + skinRows + '</div>' +
             '<div class="dfp-section"><div class="dfp-section-title">🦴 骨骼 (' + node.bones.length + ')</div>' + boneRows + '</div>' +
-            '<div class="dfp-section"><div class="dfp-section-title">🔧 插槽 (' + node.slots.length + ')</div>' + slotRows + '</div>' +
-            '<div class="dfp-section"><div class="dfp-check-row"><input type="checkbox" id="dfpPma" ' + (node.premultipliedAlpha ? 'checked' : '') + ' onchange="SMTool._togglePMA(' + node.id + ',this.checked)"><label for="dfpPma">预乘 Alpha 通道</label></div></div>';
+            '<div class="dfp-section"><div class="dfp-section-title">🔧 插槽 (' + node.slots.length + ')</div>' + slotRows + '</div>';
     } else if (SMData.selectedNodes.size > 1) {
         // 多选时，检查是否同一源文件
         var sampleNode = null;
@@ -709,39 +829,46 @@ SMTool._updateFloatPanel = function () {
             for (var si2 = 0; si2 < node.skins.length; si2++) {
                 var skName2 = node.skins[si2];
                 var isActiveSkin2 = skName2 === currentSkin2 ? ' active' : '';
-                skinRows2 += '<span class="dfp-skin-badge' + isActiveSkin2 + '" onclick="event.stopPropagation();SMTool._setSkin(' + node.id + ',\'' + SMTool._esc(skName2) + '\')" title="切换皮肤: ' + SMTool._esc(skName2) + '">' + SMTool._esc(skName2) + '</span>';
+                skinRows2 += '<span class="dfp-skin-badge' + isActiveSkin2 + '" onclick="event.stopPropagation();SMTool._setSkin(' + node.id + ',\'' + SMTool._escAttr(skName2) + '\')" title="切换皮肤: ' + SMTool._esc(skName2) + '">' + SMTool._esc(skName2) + '</span>';
             }
             if (!skinRows2) skinRows2 = '<span class="dfp-skin-badge">default</span>';
 
             var boneRows2 = '';
-            var curAnim2 = node.currentAnim || '';
-            var storeKey2 = (node.sourceFile || node.name) + '||' + curAnim2;
-            var boneLabels2 = SMData._boneLabelStore[storeKey2] || {};
             for (var bi2 = 0; bi2 < node.bones.length; bi2++) {
-                var boneName2 = node.bones[bi2];
-                var label2 = boneLabels2[boneName2] || '';
-                var labelHtml2 = label2 ? '<span class="dfp-bone-label" data-bone="' + SMTool._esc(boneName2) + '">' + SMTool._esc(label2) + '<span class="dfp-bone-label-del" data-bone="' + SMTool._esc(boneName2) + '">&times;</span></span>' : '';
-                var taggedStates2 = (node._boneTags && node._boneTags[boneName2]) ? node._boneTags[boneName2].join(', ') : '';
-                var taggedHtml2 = taggedStates2 ? '<span class="dfp-bone-tagged">' + SMTool._esc(taggedStates2) + '</span>' : '';
-                boneRows2 += '<div class="dfp-row dfp-bone-row" data-bone="' + SMTool._esc(boneName2) + '"><span>' + SMTool._esc(boneName2) + '</span><button class="dfp-bone-tag-btn" data-bone="' + SMTool._esc(boneName2) + '" style="font-size:14px;cursor:pointer;background:none;border:1px solid #4ec96e;color:#4ec96e;border-radius:4px;padding:0 6px;margin-left:8px">标记</button><span class="dfp-bone-right" style="margin-left:auto;display:flex;align-items:center;gap:6px">' + taggedHtml2 + labelHtml2 + '</span></div>';
+                boneRows2 += SMTool._buildBoneRowHtml(node, node.bones[bi2]);
             }
             if (!boneRows2) boneRows2 = '<div class="dfp-row">无</div>';
 
             var slotRows2 = '';
             for (var sli2 = 0; sli2 < node.slots.length; sli2++) {
-                slotRows2 += '<div class="dfp-row">' + SMTool._esc(node.slots[sli2]) + '</div>';
+                var slotName2 = node.slots[sli2];
+                var isSlotMarked2 = !!(node._boneTags && node._boneTags[slotName2]);
+                slotRows2 += '<div class="dfp-row dfp-bone-row" data-bone="' + SMTool._esc(slotName2) + '">' +
+                    '<span>' + SMTool._esc(slotName2) + '</span>' +
+                    '<span class="dfp-bone-right"></span>' +
+                    '<span class="dfp-bone-mark' + (isSlotMarked2 ? ' active' : '') + '" onclick="event.stopPropagation();SMTool._toggleBoneTag(\'' + SMTool._esc(slotName2) + '\')" title="' + (isSlotMarked2 ? '取消标记' : '标记插槽') + '">✖</span>' +
+                    '</div>';
             }
             if (!slotRows2) slotRows2 = '<div class="dfp-row">无</div>';
 
-            var checkedStr = (allPma === true) ? 'checked' : '';
+            var checkedStr = (allPma === true) ? ' active' : '';
+            var pmaIcon = (allPma === true) ? '🔴' : (allPma === 'mixed' ? '🟡' : '⚪');
+            var pmaStatus = (allPma === true) ? '已开启' : (allPma === 'mixed' ? '混合状态' : '已关闭');
+            var pmaToggleVal = (allPma === true) ? false : true; // 点击时切换到相反状态（mixed 按关闭处理）
             content.innerHTML =
                 '<div class="dfp-section"><div class="dfp-section-title">🏷️ 已选 ' + SMData.selectedNodes.size + ' 个节点（同源）</div></div>' +
+                '<div class="dfp-pma-section">' +
+                    '<button class="dfp-pma-toggle-btn' + checkedStr + '" onclick="SMTool._toggleMultiPMA(' + pmaToggleVal + ')">' +
+                        '<span class="pma-icon">' + pmaIcon + '</span>' +
+                        '<span>预乘 Alpha</span>' +
+                        '<span class="pma-status">' + pmaStatus + '</span>' +
+                    '</button>' +
+                '</div>' +
                 '<div class="dfp-section"><div class="dfp-section-title">📦 Spine 版本</div><div class="dfp-row"><span>版本</span><span>' + SMTool._esc(node.version || '未知') + '</span></div></div>' +
                 '<div class="dfp-section"><div class="dfp-section-title">🎬 动画 (' + node.animations.length + ')</div>' + animsHtml2 + '</div>' +
                 '<div class="dfp-section"><div class="dfp-section-title">🎨 皮肤 (' + node.skins.length + ')</div>' + skinRows2 + '</div>' +
                 '<div class="dfp-section"><div class="dfp-section-title">🦴 骨骼 (' + node.bones.length + ')</div>' + boneRows2 + '</div>' +
-                '<div class="dfp-section"><div class="dfp-section-title">🔧 插槽 (' + node.slots.length + ')</div>' + slotRows2 + '</div>' +
-                '<div class="dfp-section"><div class="dfp-check-row"><input type="checkbox" id="dfpPma" ' + checkedStr + ' onchange="SMTool._toggleMultiPMA(this.checked)"><label for="dfpPma">预乘 Alpha 通道</label></div></div>';
+                '<div class="dfp-section"><div class="dfp-section-title">🔧 插槽 (' + node.slots.length + ')</div>' + slotRows2 + '</div>';
         } else {
             panel.classList.add('inactive');
             content.innerHTML = '<div class="dfp-hint">已多选 ' + SMData.selectedNodes.size + ' 个节点</div>';
@@ -968,6 +1095,14 @@ SMTool._checkMissingStates = function () {
     console.log('[MissingCheck] ' + SMData.nodes.size + ' 个节点，缺失 ' + totalMissing + ' 个状态');
 };
 
+// ---- 关闭缺失状态通知面板 ----
+SMTool._closeMissingPanel = function () {
+    var panel = document.getElementById('missingPanel');
+    if (panel) {
+        panel.classList.remove('show');
+    }
+};
+
 // ---- 创建缺失的动画节点 ----
 SMTool._createMissingNode = function (sourceFile, animName) {
     // 找到同文件的一个已有节点作为数据源
@@ -995,6 +1130,7 @@ SMTool._createMissingNode = function (sourceFile, animName) {
     node._srcSkelBinBase64 = sourceNode._srcSkelBinBase64;
     node._srcAtlasText = sourceNode._srcAtlasText;
     node._srcTexDataUrl = sourceNode._srcTexDataUrl;
+    node._srcTexDataUrls = sourceNode._srcTexDataUrls ? sourceNode._srcTexDataUrls.slice() : [];
     node._srcType = sourceNode._srcType;
     node.currentAnim = animName;
     node.animations = sourceNode.animations.slice();
@@ -1631,6 +1767,7 @@ SMTool._selectFullPath = function (pathIdx) {
     SMData._fullPlayback.isPlaying = false;
     SMData._fullPlayback._stepped = false;
     if (SMData._fullPlayback._timer) { clearTimeout(SMData._fullPlayback._timer); SMData._fullPlayback._timer = null; }
+    SMTool._clearAllProgressBars();
     SMTool._resumeAllNodes();
     SMTool._setFullComponentFocus(SMData.selectedNode);
     SMTool._updateFullFlowPanel(document.getElementById('flpContent'), document.getElementById('flowPanel'));
@@ -1659,26 +1796,50 @@ SMTool._startFullPlayback = function () {
 SMTool._pauseFullPlayback = function () {
     SMData._fullPlayback.isPlaying = false;
     if (SMData._fullPlayback._timer) { clearTimeout(SMData._fullPlayback._timer); SMData._fullPlayback._timer = null; }
+    SMTool._clearAllProgressBars();
     SMTool._resumeAllNodes();
 };
 
-// 暂停除指定节点外的所有 Spine 动画节点
+// 暂停除指定节点外的所有 Spine 动画节点（保存原始动画状态以便恢复）
 SMTool._pauseAllNodesExcept = function (exceptId) {
     var nodesIter = SMData.nodes.values();
     var r = nodesIter.next();
     while (!r.done) {
         var n = r.value;
-        if (n.id !== exceptId && n.state) {
+        if (n.id !== exceptId && n.state && n.skeletonData) {
+            // 保存当前动画状态，以便后续恢复
+            if (!n._pausedByFlow) {
+                n._savedAnim = n.currentAnim || (n.animations.length > 0 ? n.animations[0].name : '');
+                n._savedLoop = n.loop;
+                n._pausedByFlow = true;
+            }
             try { n.state.clearTracks(); } catch (e) {}
         }
         r = nodesIter.next();
     }
 };
 
-// 恢复所有 Spine 动画节点（清除暂停状态）
+// 恢复所有被动画组播放暂停的 Spine 动画节点
 SMTool._resumeAllNodes = function () {
-    // 节点恢复需要用户手动操作，这里只确保没有残留的暂停状态
-    // 实际上 clearTracks 已经停止了动画，用户需要手动重新播放
+    var nodesIter = SMData.nodes.values();
+    var r = nodesIter.next();
+    while (!r.done) {
+        var n = r.value;
+        if (n._pausedByFlow && n.state && n.skeletonData) {
+            var restoreAnim = n._savedAnim || n.currentAnim || (n.animations.length > 0 ? n.animations[0].name : '');
+            var restoreLoop = n._savedLoop !== undefined ? n._savedLoop : n.loop;
+            if (restoreAnim) {
+                try {
+                    n.state.setAnimation(0, restoreAnim, restoreLoop !== false);
+                    n.currentAnim = restoreAnim;
+                } catch (e) { /* 忽略 */ }
+            }
+            n._pausedByFlow = false;
+            n._savedAnim = undefined;
+            n._savedLoop = undefined;
+        }
+        r = nodesIter.next();
+    }
 };
 
 // 上一个状态（暂停/停止时可用，到头循环）
@@ -1733,6 +1894,7 @@ SMTool._playFullStep = function () {
     if (!path || pb.currentStep >= path.nodes.length) {
         pb.isPlaying = false;
         pb._stepped = false;
+        SMTool._clearAllProgressBars();
         SMTool._resumeAllNodes();
         SMTool._updateFullFlowPanel(document.getElementById('flpContent'), document.getElementById('flowPanel'));
         SMTool._setFullComponentFocus(SMData.selectedNode);
@@ -1747,6 +1909,7 @@ SMTool._playFullStep = function () {
     if (stepNode.cycleClose) {
         pb.isPlaying = false;
         pb._stepped = false;
+        SMTool._clearAllProgressBars();
         SMTool._resumeAllNodes();
         SMTool._updateFullFlowPanel(document.getElementById('flpContent'), document.getElementById('flowPanel'));
         SMTool._setFullComponentFocus(SMData.selectedNode);
@@ -1760,6 +1923,12 @@ SMTool._playFullStep = function () {
 
     var spineNode = SMData.nodes.get(stepNode.id);
     if (spineNode && spineNode.state && spineNode.skeleton) {
+        // 保存原始动画状态（用于播放完毕后恢复）
+        if (!spineNode._pausedByFlow) {
+            spineNode._savedAnim = spineNode.currentAnim || (spineNode.animations.length > 0 ? spineNode.animations[0].name : '');
+            spineNode._savedLoop = spineNode.loop;
+            spineNode._pausedByFlow = true;
+        }
         // 播放该节点的动画
         var animName = stepNode.anim;
         if (spineNode.skeletonData) {
@@ -1796,19 +1965,40 @@ SMTool._playFullStep = function () {
         }
     }
 
+    // 启动当前节点的进度条动画
+    SMTool._clearAllProgressBars();
+    var progressBar = document.querySelector('#sn-' + stepNode.id + ' .anim-progress-bar');
+    if (progressBar) {
+        progressBar.style.setProperty('--progress-duration', duration + 'ms');
+        // 强制重排后重新触发动画
+        void progressBar.offsetWidth;
+        progressBar.classList.add('playing');
+    }
+
     pb._timer = setTimeout(function () {
         pb.currentStep++;
         if (pb.currentStep < path.nodes.length) {
             SMTool._playFullStep();
         } else {
+            // 播放完毕 → 恢复所有节点动画
             pb.isPlaying = false;
             pb._stepped = false;
+            SMTool._clearAllProgressBars();
+            SMTool._resumeAllNodes();
             SMTool._updateFullFlowPanel(document.getElementById('flpContent'), document.getElementById('flowPanel'));
             SMTool._setFullComponentFocus(SMData.selectedNode);
             SMTool._updateSel();
             SMTool._updateStateRowColors();
         }
     }, duration);
+};
+
+// 清除所有节点的进度条动画
+SMTool._clearAllProgressBars = function () {
+    var bars = document.querySelectorAll('.spine-node .anim-progress-bar.playing');
+    for (var i = 0; i < bars.length; i++) {
+        bars[i].classList.remove('playing');
+    }
 };
 
 // 更新完整动画组的高亮（画布同步）

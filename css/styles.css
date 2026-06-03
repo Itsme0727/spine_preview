@@ -98,6 +98,39 @@ body {
     pointer-events: all;
 }
 
+/* ===== 鸟瞰图（左下角小地图）===== */
+#minimap {
+    position: fixed;
+    bottom: 36px;
+    left: 12px;
+    z-index: 110;
+    width: 200px;
+    height: 140px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: rgba(20, 20, 26, 0.85);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    overflow: hidden;
+    cursor: pointer;
+    transition: opacity 0.3s;
+}
+#minimap:hover {
+    border-color: var(--accent);
+}
+#minimapCanvas {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%;
+    height: 100%;
+}
+#minimapViewport {
+    position: absolute;
+    border: 1px solid rgba(255, 255, 255, 0.5);
+    background: rgba(255, 255, 255, 0.06);
+    pointer-events: none;
+    border-radius: 2px;
+}
+
 /* ===== 渲染模式切换（苹果风胶囊按钮）===== */
 #modeToggle {
     position: fixed;
@@ -244,6 +277,31 @@ body {
     box-shadow: var(--shadow);
     transition: border-color 0.3s, box-shadow 0.3s;
     width: fit-content;
+    overflow: visible;
+}
+
+/* ===== 动画进度条（覆盖 anim-select 下拉框） ===== */
+.spine-node .anim-bar .anim-progress-bar {
+    position: absolute;
+    top: 8px;
+    bottom: 8px;
+    left: 0;
+    right: 0;
+    background: #ff69b4;
+    border-radius: 6px;
+    z-index: 5;
+    pointer-events: none;
+    opacity: 0;
+    transform-origin: left center;
+    transform: scaleX(0);
+}
+.spine-node .anim-bar .anim-progress-bar.playing {
+    opacity: 1;
+    animation: animBarProgressFill var(--progress-duration, 1s) linear forwards;
+}
+@keyframes animBarProgressFill {
+    from { transform: scaleX(0); }
+    to { transform: scaleX(1); }
 }
 .spine-node:hover {
     border-color: var(--accent2);
@@ -302,12 +360,29 @@ body {
     display: block;
 }
 #missingPanel .mp-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
     padding: 8px 14px;
     background: rgba(255, 107, 74, 0.15);
     font-weight: 600;
     font-size: 13px;
     color: #ff6b4a;
     border-bottom: 1px solid rgba(255, 107, 74, 0.25);
+}
+#missingPanel .mp-header .mp-close {
+    background: none;
+    border: none;
+    color: #ff6b4a;
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 2px;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+}
+#missingPanel .mp-header .mp-close:hover {
+    opacity: 1;
 }
 #missingPanel .mp-list {
     padding: 8px;
@@ -666,7 +741,6 @@ body {
 }
 .spine-node.text-box-node .header {
     border-radius: 14px 14px 0 0;
-}
     padding: 8px 14px;
     display: flex;
     align-items: center;
@@ -1116,7 +1190,48 @@ body {
     border-color: #4a9eff;
 }
 
-/* PMA 勾选行 */
+/* PMA 大按钮切换 */
+#dataFloatPanel .dfp-pma-section {
+    margin-bottom: 10px;
+}
+#dataFloatPanel .dfp-pma-toggle-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    width: 100%;
+    padding: 12px 16px;
+    border: 2px solid var(--border);
+    border-radius: 10px;
+    background: var(--input-bg);
+    color: var(--text2);
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: inherit;
+    user-select: none;
+}
+#dataFloatPanel .dfp-pma-toggle-btn:hover {
+    border-color: var(--accent2);
+    color: var(--text);
+}
+#dataFloatPanel .dfp-pma-toggle-btn.active {
+    border-color: #ff6b35;
+    color: #ff6b35;
+    background: rgba(255, 107, 53, 0.08);
+    box-shadow: 0 0 12px rgba(255, 107, 53, 0.25);
+}
+#dataFloatPanel .dfp-pma-toggle-btn .pma-icon {
+    font-size: 20px;
+    line-height: 1;
+}
+#dataFloatPanel .dfp-pma-toggle-btn .pma-status {
+    font-size: 13px;
+    opacity: 0.7;
+}
+
+/* PMA 勾选行 (保留旧版兼容) */
 #dataFloatPanel .dfp-check-row {
     display: flex;
     align-items: center;
@@ -1138,21 +1253,136 @@ body {
     background: rgba(74, 158, 255, 0.08);
 }
 
-/* 骨骼标记按钮（✚ 红色十字叉切换） */
+/* 骨骼标记按钮（✚ 红色十字叉切换）—— 放在最右侧 */
 #dataFloatPanel .dfp-bone-mark {
     cursor: pointer;
-    font-size: 13px;
+    font-size: 15px;
     color: var(--text2);
-    transition: color 0.15s, text-shadow 0.15s;
-    margin-right: 4px;
+    transition: color 0.15s, text-shadow 0.15s, transform 0.15s;
     flex-shrink: 0;
+    margin-left: auto;
+    line-height: 1;
+    padding: 2px;
 }
 #dataFloatPanel .dfp-bone-mark:hover {
     color: #e0555a;
+    transform: scale(1.2);
 }
 #dataFloatPanel .dfp-bone-mark.active {
     color: #c94b4b;
     text-shadow: 0 0 6px rgba(255, 50, 50, 0.6);
+}
+
+/* 骨骼备注文本框 */
+#dataFloatPanel .dfp-bone-note-area {
+    margin-top: 6px;
+    padding: 8px;
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    display: none;
+}
+#dataFloatPanel .dfp-bone-note-area.show {
+    display: block;
+}
+#dataFloatPanel .dfp-bone-note-area textarea {
+    width: 100%;
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font-size: 12px;
+    font-family: inherit;
+    resize: vertical;
+    min-height: 60px;
+    outline: none;
+    line-height: 1.5;
+    padding: 4px;
+}
+#dataFloatPanel .dfp-bone-note-area textarea::placeholder {
+    color: var(--text2);
+}
+
+/* 骨骼截图占位区域（类似微信待上传图片框） */
+#dataFloatPanel .dfp-bone-shot-area {
+    margin-top: 6px;
+    display: none;
+}
+#dataFloatPanel .dfp-bone-shot-area.show {
+    display: block;
+}
+#dataFloatPanel .dfp-bone-shot-placeholder {
+    width: 100%;
+    height: 120px;
+    border: 2px dashed var(--border);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    background: var(--input-bg);
+    gap: 6px;
+}
+#dataFloatPanel .dfp-bone-shot-placeholder:hover {
+    border-color: var(--accent2);
+    background: rgba(74, 158, 255, 0.05);
+}
+#dataFloatPanel .dfp-bone-shot-placeholder .shot-icon {
+    font-size: 32px;
+    color: var(--text2);
+    line-height: 1;
+}
+#dataFloatPanel .dfp-bone-shot-placeholder .shot-text {
+    font-size: 11px;
+    color: var(--text2);
+}
+#dataFloatPanel .dfp-bone-shot-placeholder.has-image {
+    border-style: solid;
+    border-color: var(--accent2);
+    padding: 0;
+    overflow: hidden;
+}
+#dataFloatPanel .dfp-bone-shot-placeholder.has-image img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 6px;
+}
+#dataFloatPanel .dfp-bone-shot-placeholder.has-image .shot-overlay {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    display: none;
+}
+
+/* 全屏截图查看遮罩 */
+#screenshotOverlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    background: rgba(0, 0, 0, 0.92);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+#screenshotOverlay.show {
+    display: flex;
+}
+#screenshotOverlay img {
+    max-width: 92vw;
+    max-height: 92vh;
+    object-fit: contain;
+    border-radius: 4px;
+    box-shadow: 0 0 60px rgba(0, 0, 0, 0.8);
+}
+#screenshotOverlay .close-hint {
+    position: fixed;
+    top: 20px;
+    right: 24px;
+    color: #888;
+    font-size: 14px;
+    pointer-events: none;
 }
 
 /* 骨骼右侧容器 */
@@ -1455,6 +1685,40 @@ body {
 }
 .connecting {
     animation: pulse 0.8s infinite;
+}
+
+/* ===== 自动保存提示气泡（左下角） ===== */
+#autoSaveToast {
+    position: fixed;
+    bottom: 48px;
+    left: 16px;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+    font-size: 13px;
+    color: var(--text);
+    opacity: 0;
+    transform: translateY(12px);
+    transition: opacity 0.35s ease, transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+    pointer-events: none;
+    user-select: none;
+}
+#autoSaveToast.show {
+    opacity: 1;
+    transform: translateY(0);
+}
+#autoSaveToast .ast-icon {
+    font-size: 16px;
+    line-height: 1;
+}
+#autoSaveToast .ast-text {
+    white-space: nowrap;
 }
 
 /* ================================================================

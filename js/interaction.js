@@ -12,6 +12,7 @@ SMTool._onMD = function (e) {
     if (e.button === 0 && !e.altKey) {
         var cp = SMTool._findCP(e.clientX, e.clientY, 24);
         if (cp) {
+            SMData._pendingDragSnap = SMTool._snapshotState();
             SMData.draggingCP = cp;
             SMData.selectingCP = true;
             SMTool.gridCanvas.style.cursor = 'grabbing';
@@ -30,6 +31,7 @@ SMTool._onMD = function (e) {
                 }
             }
             if (conn2) {
+                SMData._pendingDragSnap = SMTool._snapshotState();
                 SMData.draggingLabel = {
                     connId: lr.connId,
                     startCp1x: conn2.cp1x !== undefined ? conn2.cp1x : 50,
@@ -95,6 +97,7 @@ SMTool._onMD = function (e) {
                     }
                 }
                 if (!alreadyExists2) {
+                    SMTool.pushUndo();
                     var ffn = SMData.nodes.get(SMData.connecting.nodeId);
                     var ttn = SMData.nodes.get(found.id);
                     var toState = (ttn && ttn.nodeType === 'exit') ? 'exit' : (ttn && ttn.nodeType === 'entry') ? 'entry' : (ttn ? (ttn.currentAnim || '') : '');
@@ -157,6 +160,7 @@ SMTool._onMD = function (e) {
                 SMTool._updateSel();
             } else if (SMData.selectedNodes.has(found.id) && SMData.selectedNodes.size > 1) {
                 // 点击已选中的多选节点之一 → 开始多拖拽
+                SMData._pendingDragSnap = SMTool._snapshotState();
                 SMData.selectedNode = found.id;
                 SMData.selectedConnection = null;
                 SMData.isMultiDragging = true;
@@ -177,6 +181,7 @@ SMTool._onMD = function (e) {
                 SMData.selectedNodes.clear();
                 var grp = SMTool._findGroupOf(found.id);
                 if (grp) {
+                    SMData._pendingDragSnap = SMTool._snapshotState();
                     grp.nodeIds.forEach(function (gid) { SMData.selectedNodes.add(gid); });
                     SMData.isMultiDragging = true;
                     SMData.draggedNode = null;
@@ -186,6 +191,7 @@ SMTool._onMD = function (e) {
                         if (gn) SMData.multiDragOffsets.set(gid, { x: wp.x - gn.x, y: wp.y - gn.y });
                     });
                 } else {
+                    SMData._pendingDragSnap = SMTool._snapshotState();
                     SMData.selectedNodes.add(found.id);
                     SMData.draggedNode = found;
                     SMData.isMultiDragging = false;
@@ -369,6 +375,7 @@ SMTool._onMU = function (e) {
     // 结束控制点拖拽
     if (SMData.draggingCP) {
         SMData.draggingCP = null;
+        SMTool._commitDragUndo();
         SMTool.gridCanvas.style.cursor = SMData.connectMode ? 'crosshair' : 'default';
         setTimeout(function () { SMData.selectingCP = false; }, 50);
         return;
@@ -393,6 +400,7 @@ SMTool._onMU = function (e) {
             }
         }
         SMData.draggingLabel = null;
+        SMTool._commitDragUndo();
         SMTool.gridCanvas.style.cursor = SMData.connectMode ? 'crosshair' : 'default';
         return;
     }
@@ -459,6 +467,7 @@ SMTool._onMU = function (e) {
                 }
             }
             if (!alreadyExists) {
+                SMTool.pushUndo();
                 var fn = SMData.nodes.get(SMData.connecting.nodeId);
                 var tn = SMData.nodes.get(target.nodeId);
                 var fp = SMTool._getStateConnectorPos(fn, SMData.connecting.stateName, 'output');
@@ -511,6 +520,7 @@ SMTool._onMU = function (e) {
     SMData.draggedNode = null;
     SMData.isMultiDragging = false;
     SMData.multiDragOffsets.clear();
+    SMTool._commitDragUndo();
     SMTool.gridCanvas.style.cursor = SMData.connectMode ? 'crosshair' : 'default';
 };
 
@@ -518,36 +528,206 @@ SMTool._onMU = function (e) {
 SMTool._onKD = function (e) {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
 
-    // Ctrl+C：复制选中节点
+    // Ctrl+C：复制选中的所有节点及它们之间的连线
     if (e.ctrlKey && e.key === 'c') {
-        if (SMData.selectedNode) {
-            SMData._clipboard = SMData.selectedNode;
-            document.getElementById('sbStatus').textContent = '已复制: ' + (SMData.nodes.get(SMData.selectedNode) || {}).name;
+        // 收集所有选中的节点 ID
+        var selIds = new Set();
+        if (SMData.selectedNodes.size > 0) {
+            SMData.selectedNodes.forEach(function (id) { selIds.add(id); });
+        } else if (SMData.selectedNode) {
+            selIds.add(SMData.selectedNode);
+        }
+
+        if (selIds.size > 0) {
+            var cb = { nodes: [], connections: [] };
+
+            // 序列化选中的节点
+            selIds.forEach(function (nid) {
+                var n = SMData.nodes.get(nid);
+                if (!n) return;
+                cb.nodes.push({
+                    name: n.name,
+                    nodeType: n.nodeType || 'spine',
+                    x: n.x,
+                    y: n.y,
+                    width: n.width || 300,
+                    sourceFile: n.sourceFile || '',
+                    animations: n.animations ? n.animations.slice() : [],
+                    skins: n.skins ? n.skins.slice() : [],
+                    slots: n.slots ? n.slots.slice() : [],
+                    bones: n.bones ? n.bones.slice() : [],
+                    version: n.version || '',
+                    currentAnim: n.currentAnim || '',
+                    currentSkin: n.currentSkin || '',
+                    premultipliedAlpha: !!n.premultipliedAlpha,
+                    loop: n.loop !== undefined ? n.loop : true,
+                    _srcSkelJson: n._srcSkelJson,
+                    _srcSkelBinBase64: n._srcSkelBinBase64,
+                    _srcAtlasText: n._srcAtlasText || '',
+                    _srcTexDataUrl: n._srcTexDataUrl || '',
+                    _srcTexDataUrls: n._srcTexDataUrls ? n._srcTexDataUrls.map(function (item) { return { name: item.name, dataUrl: item.dataUrl }; }) : [],
+                    _srcType: n._srcType || '',
+                    _srcFileNames: n._srcFileNames ? n._srcFileNames.slice() : [],
+                    _boneTags: n._boneTags ? JSON.parse(JSON.stringify(n._boneTags)) : {},
+                    _stateDesc: n._stateDesc || '',
+                    _exitText: n._exitText || '',
+                    _textContent: n._textContent || '',
+                    infoCollapsed: !!n.infoCollapsed,
+                    _oldId: n.id
+                });
+            });
+
+            // 序列化选中节点之间的连线（两端都在选中集合内的连线）
+            for (var i = 0; i < SMData.connections.length; i++) {
+                var c = SMData.connections[i];
+                if (selIds.has(c.fromNode) && selIds.has(c.toNode)) {
+                    cb.connections.push({
+                        fromNode: c.fromNode,
+                        fromState: c.fromState,
+                        toNode: c.toNode,
+                        toState: c.toState,
+                        condition: c.condition || '',
+                        cp1x: c.cp1x !== undefined ? c.cp1x : 50,
+                        cp1y: c.cp1y !== undefined ? c.cp1y : 0,
+                        cp2x: c.cp2x !== undefined ? c.cp2x : -50,
+                        cp2y: c.cp2y !== undefined ? c.cp2y : 0,
+                        color: c.color || ''
+                    });
+                }
+            }
+
+            SMData._clipboard = cb;
+            var msg = '已复制 ' + selIds.size + ' 个节点';
+            if (cb.connections.length > 0) msg += ' + ' + cb.connections.length + ' 条连线';
+            document.getElementById('sbStatus').textContent = msg;
             setTimeout(function () { document.getElementById('sbStatus').textContent = ''; }, 2000);
         }
         e.preventDefault();
         return;
     }
-    // Ctrl+V：粘贴节点
+    // Ctrl+V：粘贴剪贴板中的所有节点及连线
     if (e.ctrlKey && e.key === 'v') {
-        if (SMData._clipboard && SMData.nodes.has(SMData._clipboard)) {
-            var wp = SMTool.canvasToWorld(SMData._mx || window.innerWidth / 2, SMData._my || window.innerHeight / 2);
-            var newNode = SMTool.copyNode(SMData._clipboard, 0, 0);
-            if (newNode) {
-                newNode.x = wp.x;
-                newNode.y = wp.y;
-                SMTool._updatePos(newNode);
-                SMData.selectedNodes.clear();
-                SMData.selectedNodes.add(newNode.id);
-                SMData.selectedNode = newNode.id;
-                SMTool._updateSel();
-                SMTool._updateSB();
-                SMTool._updateDuplicateHighlights();
-                SMTool._checkMissingStates();
-                SMTool._refreshAllTranslations();
-                document.getElementById('sbStatus').textContent = '已粘贴';
-                setTimeout(function () { document.getElementById('sbStatus').textContent = ''; }, 1500);
+        var cb = SMData._clipboard;
+        if (cb && cb.nodes && cb.nodes.length > 0) {
+            SMTool.pushUndo();
+
+            // 计算剪贴板节点的中心点
+            var cx = 0, cy = 0;
+            for (var i = 0; i < cb.nodes.length; i++) {
+                cx += cb.nodes[i].x;
+                cy += cb.nodes[i].y;
             }
+            cx /= cb.nodes.length;
+            cy /= cb.nodes.length;
+
+            // 目标位置：鼠标所在世界坐标，偏移使中心对齐鼠标
+            var wp = SMTool.canvasToWorld(SMData._mx || window.innerWidth / 2, SMData._my || window.innerHeight / 2);
+            var offX = wp.x - cx;
+            var offY = wp.y - cy;
+
+            // 构建旧 ID → 新 ID 映射
+            var idMap = {};
+            var newSelIds = [];
+
+            // 创建新节点
+            for (var j = 0; j < cb.nodes.length; j++) {
+                var nd = cb.nodes[j];
+                var newId = SMData.nextId++;
+                idMap[nd._oldId] = newId;
+
+                var node = new SpineNodeData(newId);
+                node.name = nd.name;
+                node.nodeType = nd.nodeType;
+                node.x = nd.x + offX;
+                node.y = nd.y + offY;
+                node.width = nd.width;
+                node.sourceFile = nd.sourceFile;
+                node.animations = nd.animations;
+                node.skins = nd.skins;
+                node.slots = nd.slots;
+                node.bones = nd.bones;
+                node.version = nd.version;
+                node.currentAnim = nd.currentAnim;
+                node.currentSkin = nd.currentSkin;
+                node.premultipliedAlpha = nd.premultipliedAlpha;
+                node.loop = nd.loop;
+                node._srcSkelJson = nd._srcSkelJson;
+                node._srcSkelBinBase64 = nd._srcSkelBinBase64;
+                node._srcAtlasText = nd._srcAtlasText;
+                node._srcTexDataUrl = nd._srcTexDataUrl;
+                node._srcTexDataUrls = nd._srcTexDataUrls;
+                node._srcType = nd._srcType;
+                node._srcFileNames = nd._srcFileNames;
+                node._boneTags = nd._boneTags;
+                node._stateDesc = nd._stateDesc;
+                node._exitText = nd._exitText;
+                node._textContent = nd._textContent;
+                node.infoCollapsed = nd.infoCollapsed;
+
+                SMData.nodes.set(newId, node);
+                SMTool._createEl(node);
+                SMTool._updatePos(node);
+
+                // 异步加载 Spine 渲染数据
+                if (node.nodeType === 'spine' &&
+                    node._srcAtlasText && (node._srcTexDataUrl || (node._srcTexDataUrls && node._srcTexDataUrls.length > 0)) &&
+                    (node._srcSkelJson || node._srcSkelBinBase64)) {
+                    (function (n) {
+                        SMTool._loadFromSourceData(n).then(function () {
+                            SMTool._updateEl(n);
+                            SMTool._updateDuplicateHighlights();
+                            SMTool._checkMissingStates();
+                            SMTool._refreshAllTranslations();
+                            setTimeout(function () { SMTool._updateStateRowColors(); }, 150);
+                        }).catch(function (err) {
+                            console.error('[Paste] Failed to load Spine data for node #' + n.id + ':', err);
+                        });
+                    })(node);
+                }
+
+                newSelIds.push(newId);
+            }
+
+            // 创建连线（映射旧 ID 到新 ID）
+            for (var k = 0; k < cb.connections.length; k++) {
+                var cc = cb.connections[k];
+                var newFrom = idMap[cc.fromNode];
+                var newTo = idMap[cc.toNode];
+                if (newFrom === undefined || newTo === undefined) continue; // 安全检查
+                SMData.connections.push({
+                    id: SMData.nextConnId++,
+                    fromNode: newFrom,
+                    fromState: cc.fromState,
+                    toNode: newTo,
+                    toState: cc.toState,
+                    condition: cc.condition,
+                    cp1x: cc.cp1x,
+                    cp1y: cc.cp1y,
+                    cp2x: cc.cp2x,
+                    cp2y: cc.cp2y,
+                    color: cc.color || _connColor(SMData.connections.length)
+                });
+            }
+
+            // 选中所有新粘贴的节点
+            SMData.selectedNodes.clear();
+            for (var m = 0; m < newSelIds.length; m++) {
+                SMData.selectedNodes.add(newSelIds[m]);
+            }
+            SMData.selectedNode = newSelIds[0] || null;
+            SMData.selectedConnection = null;
+
+            SMTool._updateSel();
+            SMTool._updateSB();
+            SMTool._updateStateRowColors();
+            SMTool._updateDuplicateHighlights();
+            SMTool._checkMissingStates();
+            SMTool._refreshAllTranslations();
+
+            var msg2 = '已粘贴 ' + newSelIds.length + ' 个节点';
+            if (cb.connections.length > 0) msg2 += ' + ' + cb.connections.length + ' 条连线';
+            document.getElementById('sbStatus').textContent = msg2;
+            setTimeout(function () { document.getElementById('sbStatus').textContent = ''; }, 2000);
         }
         e.preventDefault();
         return;
@@ -555,6 +735,7 @@ SMTool._onKD = function (e) {
     if (e.key === 'Delete') {
         // 优先删除选中的连线
         if (SMData.selectedConnection) {
+            SMTool.pushUndo();
             SMData.connections = SMData.connections.filter(function (x) {
                 return x.id !== SMData.selectedConnection;
             });
@@ -583,6 +764,7 @@ SMTool._onKD = function (e) {
     // Ctrl+Shift+G：取消选中节点所在组
     if (e.ctrlKey && e.shiftKey && e.key === 'G') {
         if (SMData.selectedNode) {
+            SMTool.pushUndo();
             var ug = SMTool._findGroupOf(SMData.selectedNode);
             if (ug) {
                 for (var ugi = 0; ugi < SMData.groups.length; ugi++) {
@@ -593,6 +775,26 @@ SMTool._onKD = function (e) {
             }
         }
         e.preventDefault();
+    }
+    // Ctrl+S：导出保存（场景中有内容时才生效）
+    if (e.ctrlKey && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault();
+        if (SMData.nodes.size > 0) {
+            SMTool.exportData();
+        }
+        return;
+    }
+    // Ctrl+Z：撤销
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === 'z' || e.key === 'Z')) {
+        e.preventDefault();
+        SMTool.undo();
+        return;
+    }
+    // Ctrl+Alt+Z：重做
+    if (e.ctrlKey && e.altKey && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
+        e.preventDefault();
+        SMTool.redo();
+        return;
     }
     if (e.key === 'Escape') {
         SMData.connecting = null;
@@ -614,6 +816,7 @@ SMTool._onHD = function (e, nid) {
         return;
     }
     if (e.button !== 0) return;
+    SMData._pendingDragSnap = SMTool._snapshotState();
     var n = SMData.nodes.get(nid);
     if (!n) return;
 
@@ -648,6 +851,7 @@ SMTool._onHD = function (e, nid) {
 
 // ---- 下拉框切换动画 ----
 SMTool._onAnimChange = function (nid, animName) {
+    SMTool.pushUndo();
     var node = SMData.nodes.get(nid);
     if (!node || !node.state) return;
     // 如果正在连线模式 → 退出
@@ -699,6 +903,7 @@ SMTool._onDot = function (nid, name, type) {
             }
         }
         if (!alreadyExists) {
+            SMTool.pushUndo();
             var fn = SMData.nodes.get(SMData.connecting.nodeId);
             var tn = SMData.nodes.get(nid);
             var fp = SMTool._getStateConnectorPos(fn, SMData.connecting.stateName, 'output');
@@ -1339,8 +1544,8 @@ SMTool._initBoneLabelEvents = function () {
     if (!content) return;
 
     content.addEventListener('click', function (e) {
-        // 骨骼标记按钮
-        var tagBtn = e.target.closest('.dfp-bone-tag-btn');
+        // 骨骼标记按钮（红十字叉）
+        var tagBtn = e.target.closest('.dfp-bone-mark');
         if (tagBtn) {
             e.stopPropagation();
             var boneName = tagBtn.getAttribute('data-bone');

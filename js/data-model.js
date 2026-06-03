@@ -86,7 +86,19 @@ var SMData = {
         isPlaying: false,
         _stepped: false,     // 是否手动导航过（prev/next）
         _timer: null
-    }
+    },
+
+    // ---- 撤销/重做 ----
+    _undoStack: [],          // 快照堆栈（最多 20 步）
+    _redoStack: [],          // 重做堆栈
+    _undoMaxSteps: 20,       // 最大撤销步数
+    _isUndoRedo: false,      // 标记正在执行撤销/重做，防止重复压栈
+    _pendingDragSnap: null,  // 拖拽开始时的快照（结束时比对后才决定是否压栈）
+
+    // ---- 自动保存 ----
+    _hasEverSaved: false,    // 是否已经手动保存过（CTRL+S 或点击导出按钮）
+    _autoSaveIntervalId: null, // 自动保存定时器 ID
+    _saveFileHandle: null    // FileSystemFileHandle（首次保存后持有，用于静默覆写）
 };
 
 // ---- Spine 节点数据类 ----
@@ -105,7 +117,8 @@ var SpineNodeData = (function () {
         // Spine 数据
         this.skeletonData = null;
         this.atlasData = null;
-        this.textureImg = null;
+        this.textureImg = null;         // 第一页纹理（向后兼容）
+        this._texImgs = [];             // Image[] 按 atlas page 索引顺序
         this.skeleton = null;
         this.state = null;
         this.animations = [];
@@ -121,7 +134,8 @@ var SpineNodeData = (function () {
         this._srcSkelJson = null;
         this._srcSkelBinBase64 = null;
         this._srcAtlasText = '';
-        this._srcTexDataUrl = '';
+        this._srcTexDataUrl = '';       // 第一页纹理（向后兼容）
+        this._srcTexDataUrls = [];      // [{ name: 'pageName.png', dataUrl: '...' }] 多图集支持
         this._srcType = '';
         this._srcFileNames = [];    // 原始文件名列表（含后缀）
 
@@ -145,6 +159,8 @@ var SpineNodeData = (function () {
         // 播放模式
         this.loop = true;           // true=循环, false=单次
         this._boneTags = {};        // { boneName: [animState1, animState2] }
+        this._boneNotes = {};       // { boneName: "备注文本" }
+        this._boneScreenshots = {}; // { boneName: "dataUrl" }
         this._stateDesc = '';       // 状态描述文本
         this._exitText = '';        // 出口节点文本内容
     }
