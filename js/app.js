@@ -503,8 +503,6 @@ SMTool.init = function () {
         if (SMData._fullPlayback._timer) { clearTimeout(SMData._fullPlayback._timer); SMData._fullPlayback._timer = null; }
         SMTool._clearAllProgressBars();
         SMTool._resumeAllNodes();
-        // 清除全画布缓存（含 WebGL 资源释放）
-        SMTool._disposeFullCanvasResources();
         SMTool._updateFlowPanel();
         if (mode === 'full' && SMData.selectedNode) {
             SMTool._setFullComponentFocus(SMData.selectedNode);

@@ -158,6 +158,8 @@ SMTool._onMD = function (e) {
                 SMData.isMultiDragging = false;
                 SMTool._updateStateRowColors();
                 SMTool._updateSel();
+                // ★ 点击节点立即显示预览浮窗
+                if (found.nodeType === 'spine') SMTool._showAnimPreview(found);
             } else if (SMData.selectedNodes.has(found.id) && SMData.selectedNodes.size > 1) {
                 // 点击已选中的多选节点之一 → 开始多拖拽
                 SMData._pendingDragSnap = SMTool._snapshotState();
@@ -201,6 +203,8 @@ SMTool._onMD = function (e) {
                 SMData.selectedConnection = null;
                 SMTool._updateStateRowColors();
                 SMTool._updateSel();
+                // ★ 点击节点立即显示预览浮窗
+                if (found.nodeType === 'spine') SMTool._showAnimPreview(found);
             }
         } else {
             // 点击空白 → 开始框选

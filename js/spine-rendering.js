@@ -471,7 +471,8 @@ SMTool._loop = function (now) {
             // SceneRenderer.begin() 可能重置 viewport/scissor，重新应用节点专属裁剪区域
             gl.viewport(sx, glY, sw, sh);
             gl.scissor(sx, glY, sw, sh);
-            node.sceneRenderer.drawSkeleton(node.skeleton);
+            // ★ 传递节点的 PMA 设置（4.x drawSkeleton 第2参数）
+            node.sceneRenderer.drawSkeleton(node.skeleton, node.premultipliedAlpha);
             node.sceneRenderer.end();
         } else if (node.shader && node.batcher && node.skeletonRenderer && WGL38) {
             node.mvp.ortho2d(0, 0, nodeW - 1, nodeH - 1);
@@ -834,7 +835,10 @@ SMTool._renderAnimPreview = function (now) {
     if (useVer === '4.3' || useVer === '4.2') {
         if (pp._sceneRenderer) {
             try {
-                pp._sceneRenderer.draw(pp.skeleton);
+                // ★ SceneRenderer 需要 begin/end 包围 drawSkeleton 才能刷出画面
+                pp._sceneRenderer.begin();
+                pp._sceneRenderer.drawSkeleton(pp.skeleton, pp._premultipliedAlpha || false);
+                pp._sceneRenderer.end();
             } catch (e) { /* ignore */ }
         }
     } else {

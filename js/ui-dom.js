@@ -1537,34 +1537,8 @@ SMTool._initAnimPreviewPanel = function () {
                     canvas.height = newH;
                     pp._canvasWidth = newW;
                     pp._canvasHeight = newH;
-                    // ★ 计算缩放比（基于初始参考尺寸）并应用到骨架，保持居中
-                    if (pp.skeleton && pp._refCw && pp._refCh) {
-                        var scaleX = newW / pp._refCw;
-                        var scaleY = newH / pp._refCh;
-                        var scale = Math.min(scaleX, scaleY);
-                        var sk = pp.skeleton;
-                        var rootBone = sk.getRootBone ? sk.getRootBone() : null;
-                        if (rootBone) {
-                            rootBone.scaleX = scale;
-                            rootBone.scaleY = scale;
-                        }
-                        // 重新居中（补偿缩放后的边界）
-                        var bo = pp._boundsOffset || { x: 0, y: 0 };
-                        var bs = pp._boundsSize || { x: 0, y: 0 };
-                        sk.x = newW / 2 - (bo.x + bs.x / 2) * scale;
-                        sk.y = newH / 2 - (bo.y + bs.y / 2) * scale;
-                    }
-                }
-                // 更新 4.x 相机
-                if (pp._sceneRenderer) {
-                    pp._sceneRenderer.camera.viewportWidth = newW;
-                    pp._sceneRenderer.camera.viewportHeight = newH;
-                    pp._sceneRenderer.camera.position.set(newW / 2, newH / 2, 0);
-                    pp._sceneRenderer.camera.update();
-                }
-                // 更新 3.8 投影矩阵
-                if (pp._mvp) {
-                    pp._mvp.ortho2d(0, 0, newW - 1, newH - 1);
+                    // ★ 只更新 GL 视口尺寸，不动相机/投影/骨架位置
+                    //    初始参考尺寸的相机+投影 → 内容自然等比缩放并保持居中
                 }
             }
 
@@ -2463,9 +2437,8 @@ SMTool._updateFullFlowPanel = function (content, panel) {
     }
     html += '</div>';
 
-    // 右侧播放器
+    // 右侧控制区（仅保留播放控制按钮）
     html += '<div class="flp-full-player">';
-    html += '<canvas class="flp-full-canvas" id="flpFullCanvas"></canvas>';
     html += '<div class="flp-full-controls">';
     html += '<button class="flp-full-btn small" id="flpFullPrev" title="上一个状态">⏮</button>';
     html += '<button class="flp-full-btn" id="flpFullPlay" title="播放">▶</button>';
@@ -2475,25 +2448,11 @@ SMTool._updateFullFlowPanel = function (content, panel) {
 
     html += '</div>';
 
-    // ★ 关键优化：保存旧 canvas，避免 innerHTML 重建导致 WebGL 上下文泄漏。
-    //    快速点击 prev/next 时会反复触发 _updateFullFlowPanel，
-    //    每次 innerHTML 都会销毁旧 canvas 并创建新 canvas → 新 WebGL 上下文。
-    //    浏览器 WebGL 上下文有上限（~8~16），超出后共享主画布上下文也会丢失 → 所有节点空白。
-    var oldCanvas = document.getElementById('flpFullCanvas');
-
     // ★ 保存路径列表的滚动位置（实际滚动容器是 .flp-full-list，而非 #flpContent）
     var oldList = content.querySelector('.flp-full-list');
     var _savedListScrollTop = oldList ? oldList.scrollTop : 0;
 
     content.innerHTML = html;
-
-    // ★ 将旧 canvas 恢复到 DOM 中，替换 innerHTML 新建的空 canvas
-    if (oldCanvas) {
-        var newCanvas = document.getElementById('flpFullCanvas');
-        if (newCanvas && newCanvas !== oldCanvas && newCanvas.parentNode) {
-            newCanvas.parentNode.replaceChild(oldCanvas, newCanvas);
-        }
-    }
 
     // ★ 恢复路径列表的滚动位置（使用 rAF 确保布局完成后生效）
     var newList = content.querySelector('.flp-full-list');
@@ -2602,9 +2561,7 @@ SMTool._updateFullFlowPanel = function (content, panel) {
         });
     }
 
-    // 初始化右侧 Spine 画布
-    SMTool._initFullCanvas();
-    SMTool._updateFullCanvasForStep();
+    // 初始化右侧 Spine 画布（已移除，改为使用浮窗预览）
 };
 
 // 设置焦点高亮
@@ -2683,226 +2640,8 @@ SMTool._setFullComponentFocus = function (sourceId) {
 // 初始化右侧 Spine 画布 — 完整渲染版
 // ★ 关键修复：右侧画布必须使用独立的 atlas/skeletonData，绝不能修改共享的 selNode.atlasData。
 //    否则共享图集的 page.texture 会被替换为右侧画布的 WebGL 纹理，导致主视口渲染错乱（显示图集/绑定姿势）。
-SMTool._initFullCanvas = function () {
-    var canvas = document.getElementById('flpFullCanvas');
-    if (!canvas) return;
-
-    // ★ 如果画布 DOM 元素未变且已有渲染器，跳过重复初始化
-    if (SMData._fullCanvasRenderer && SMData._fullCanvasCanvas === canvas) return;
-
-    var selNode = SMData.nodes.get(SMData.selectedNode);
-    if (!selNode || !selNode.skeletonData || !selNode.textureImg) return;
-
-    // 必须拥有源数据才能重建独立 atlas
-    if (!selNode._srcAtlasText) return;
-
-    // ★ 先通过基本检查，确认可以初始化后，再清理旧资源
-    if (SMData._fullCanvasRenderer) {
-        try { SMTool._disposeFullCanvasResources(); } catch (e) { /* 忽略清理错误 */ }
-    }
-
-    try {
-        var gl = canvas.getContext('webgl2', { alpha: false, premultipliedAlpha: false })
-               || canvas.getContext('webgl', { alpha: false, premultipliedAlpha: false });
-        if (!gl) return;
-
-        var SP = spine.webgl || spine;
-        var context = new SP.ManagedWebGLRenderingContext(canvas, { alpha: false });
-        var renderer = new SP.SceneRenderer(canvas, context, true);
-
-        // ★ 为右侧画布创建独立的 Atlas（不修改共享的 selNode.atlasData）
-        var rightAtlas = new SP.TextureAtlas(selNode._srcAtlasText);
-        if (!rightAtlas || !rightAtlas.pages) { try { renderer.dispose(); } catch (e) {} return; }
-
-        SMData._fullCanvasTextures = [];
-        // 多图集支持：遍历 _texImgs 或回退到单个 textureImg
-        var texImgs = (selNode._texImgs && selNode._texImgs.length > 0)
-            ? selNode._texImgs : [selNode.textureImg];
-
-        for (var pi = 0; pi < rightAtlas.pages.length; pi++) {
-            var page = rightAtlas.pages[pi];
-            var pageImg = (pi < texImgs.length) ? texImgs[pi] : texImgs[0];
-            if (!pageImg) continue;
-            var glTex = new SP.GLTexture(context, pageImg, page.pma || false);
-            if (typeof page.setTexture === 'function') {
-                page.setTexture(glTex);
-            } else {
-                page.texture = glTex;
-            }
-            SMData._fullCanvasTextures.push(glTex);
-        }
-        // 更新独立 atlas 的 region 引用
-        try {
-            for (var ri2 = 0; ri2 < rightAtlas.regions.length; ri2++) {
-                var region = rightAtlas.regions[ri2];
-                if (region.page && region.page.texture) {
-                    region.texture = region.page.texture;
-                }
-            }
-        } catch (e2) {}
-
-        // ★ 使用独立 atlas 创建独立的 skeletonData（不共享 selNode.skeletonData 的 atlas 引用）
-        var rightSd = null;
-        var srcType = selNode._srcType || 'json';
-        var al = new SP.AtlasAttachmentLoader(rightAtlas);
-        if (srcType === 'skel' && selNode._srcSkelBinBase64) {
-            var skelBin = SMTool._base64ToUint8(selNode._srcSkelBinBase64);
-            var bl = new SP.SkeletonBinary(al); bl.scale = 1;
-            rightSd = bl.readSkeletonData(skelBin);
-        } else if (selNode._srcSkelJson) {
-            var jl = new SP.SkeletonJson(al); jl.scale = 1;
-            rightSd = jl.readSkeletonData(selNode._srcSkelJson);
-        }
-        if (!rightSd) { SMTool._disposeFullCanvasResources(); return; }
-
-        SMData._fullCanvasSkeletonData = rightSd;
-
-        // 创建独立的 skeleton 和 animation state
-        var skeleton = new spine.Skeleton(rightSd);
-        if (rightSd.defaultSkin) skeleton.setSkin(rightSd.defaultSkin);
-        skeleton.setToSetupPose();
-        skeleton.updateWorldTransform();
-
-        var animStateData = new spine.AnimationStateData(rightSd);
-        var animState = new spine.AnimationState(animStateData);
-
-        SMData._fullCanvasGL = gl;
-        SMData._fullCanvasContext = context;
-        SMData._fullCanvasRenderer = renderer;
-        SMData._fullCanvasCanvas = canvas;   // ★ 记录已初始化的画布 DOM 引用
-        SMData._fullCanvasSkeleton = skeleton;
-        SMData._fullCanvasState = animState;
-    } catch (e) {
-        console.warn('Full canvas init failed:', e);
-        SMTool._disposeFullCanvasResources();
-    }
-};
-
-// ★ 清理右侧画布的 WebGL 资源
-SMTool._disposeFullCanvasResources = function () {
-    if (SMData._fullCanvasTextures) {
-        for (var ti = 0; ti < SMData._fullCanvasTextures.length; ti++) {
-            try { SMData._fullCanvasTextures[ti].dispose(); } catch (e) {}
-        }
-        SMData._fullCanvasTextures = null;
-    }
-    if (SMData._fullCanvasRenderer) {
-        try { SMData._fullCanvasRenderer.dispose(); } catch (e) {}
-        SMData._fullCanvasRenderer = null;
-    }
-    if (SMData._fullCanvasContext && typeof SMData._fullCanvasContext.dispose === 'function') {
-        try { SMData._fullCanvasContext.dispose(); } catch (e) {}
-    }
-    SMData._fullCanvasGL = null;
-    SMData._fullCanvasContext = null;
-    SMData._fullCanvasSkeleton = null;
-    SMData._fullCanvasState = null;
-    SMData._fullCanvasSkeletonData = null;
-    SMData._fullCanvasNode = null;
-    SMData._fullCanvasCanvas = null;
-};
-
-// 更新右侧画布显示当前步骤的动画
-SMTool._updateFullCanvasForStep = function () {
-    var canvas = document.getElementById('flpFullCanvas');
-    var renderer = SMData._fullCanvasRenderer;
-    var skeleton = SMData._fullCanvasSkeleton;
-    var animState = SMData._fullCanvasState;
-    var gl = SMData._fullCanvasGL;
-
-    if (!canvas || !renderer || !skeleton || !animState || !gl) {
-        // 回退到 2D 文字显示
-        SMTool._drawFullCanvasFallback();
-        return;
-    }
-
-    var pb = SMData._fullPlayback;
-    if (pb.activePathIdx < 0) return;
-    var path = SMData._fullPaths[pb.activePathIdx];
-    if (!path || pb.currentStep >= path.nodes.length) return;
-
-    var stepNode = path.nodes[pb.currentStep];
-    var animName = stepNode.anim;
-
-    // 检查动画是否存在
-    var sd = skeleton.data;
-    var animExists = false;
-    for (var ai = 0; ai < sd.animations.length; ai++) {
-        if (sd.animations[ai].name === animName) { animExists = true; break; }
-    }
-    if (!animExists) return;
-
-    try {
-        var cw = canvas.clientWidth || 260;
-        var ch = canvas.clientHeight || 200;
-        
-        // 清除
-        gl.viewport(0, 0, cw, ch);
-        gl.clearColor(0.12, 0.12, 0.14, 1);
-        gl.clear(gl.COLOR_BUFFER_BIT);
-
-        // 设置动画
-        animState.setAnimation(0, animName, false);
-        animState.update(0);
-        animState.apply(skeleton);
-        skeleton.updateWorldTransform();
-
-        // 渲染
-        renderer.camera.position.set(cw / 2, ch / 2, 0);
-        renderer.camera.viewportWidth = cw;
-        renderer.camera.viewportHeight = ch;
-        renderer.camera.update();
-        renderer.begin();
-        try {
-            if (renderer.drawSkeleton.length >= 2) {
-                renderer.drawSkeleton(skeleton, true);
-            } else {
-                renderer.drawSkeleton(skeleton);
-            }
-        } catch (e2) {
-            renderer.drawSkeleton(skeleton);
-        }
-        if (typeof renderer.end === 'function') {
-            renderer.end();
-        }
-    } catch (e) {
-        // WebGL 错误时回退
-    }
-};
-
-// 2D 回退显示
-SMTool._drawFullCanvasFallback = function () {
-    var canvas = document.getElementById('flpFullCanvas');
-    if (!canvas) return;
-    var ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    var w = canvas.clientWidth || 260;
-    var h = canvas.clientHeight || 200;
-    canvas.width = w;
-    canvas.height = h;
-
-    var pb = SMData._fullPlayback;
-    if (pb.activePathIdx < 0) return;
-    var path = SMData._fullPaths[pb.activePathIdx];
-    if (!path || pb.currentStep >= path.nodes.length) return;
-
-    var stepNode = path.nodes[pb.currentStep];
-    var animName = stepNode.anim;
-
-    ctx.fillStyle = '#1a1a1d';
-    ctx.fillRect(0, 0, w, h);
-
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 26px "Segoe UI", system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(animName, w / 2, h / 2);
-
-    ctx.fillStyle = 'rgba(74, 158, 255, 0.7)';
-    ctx.font = '14px "Segoe UI", system-ui, sans-serif';
-    ctx.fillText('步骤 ' + (pb.currentStep + 1) + ' / ' + path.nodes.length, w / 2, h - 20);
-};
+// ★ 右侧画布播放器已移除（改为使用浮窗动画预览）
+// _initFullCanvas, _disposeFullCanvasResources, _updateFullCanvasForStep, _drawFullCanvasFallback 已删除
 
 // 选择完整路径
 SMTool._selectFullPath = function (pathIdx) {
@@ -2915,8 +2654,6 @@ SMTool._selectFullPath = function (pathIdx) {
     SMTool._resumeAllNodes();
     SMTool._setFullComponentFocus(SMData.selectedNode);
     SMTool._updateFullFlowPanel(document.getElementById('flpContent'), document.getElementById('flowPanel'));
-    SMTool._initFullCanvas();
-    SMTool._updateFullCanvasForStep();
     SMTool._updateSel();
     SMTool._updateStateRowColors();
 
@@ -3101,7 +2838,6 @@ SMTool._goToPrevStep = function () {
     SMTool._setFullComponentFocus(SMData.selectedNode);
     SMTool._updateSel();
     SMTool._updateStateRowColors();
-    SMTool._updateFullCanvasForStep();
 
     // ★ 触发右上角动画预览浮窗（使用当前步骤节点）
     if (stepNode && !stepNode.cycleClose) {
@@ -3137,7 +2873,6 @@ SMTool._goToNextStep = function () {
     SMTool._setFullComponentFocus(SMData.selectedNode);
     SMTool._updateSel();
     SMTool._updateStateRowColors();
-    SMTool._updateFullCanvasForStep();
 
     // ★ 触发右上角动画预览浮窗（使用当前步骤节点）
     if (stepNode && !stepNode.cycleClose) {
@@ -3200,7 +2935,6 @@ SMTool._playFullStep = function () {
     SMTool._updateSel();
     SMTool._updateStateRowColors();
     // 不再调用 _updateEl — 避免每步切换时重建节点 DOM 导致卡顿
-    SMTool._updateFullCanvasForStep();
 
     // 获取动画时长来自动推进
     var duration = 1000; // 默认1秒
