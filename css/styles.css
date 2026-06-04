@@ -202,33 +202,36 @@ body {
     margin: 0 4px;
 }
 
-/* ===== 动画组模式切换（胶囊按钮） ===== */
-#flowModeToggle {
-    position: fixed;
-    top: 72px;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 100;
-    display: flex;
+/* ===== 动画组模式切换（胶囊按钮）—— 位于动画组合面板 header 左上角 ===== */
+#flowPanel .flp-header {
+    position: relative;
+}
+#flowPanel .flp-header #flowModeToggle {
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: inline-flex;
     background: var(--node-bg);
-    border-radius: 20px;
+    border-radius: 22px;
     padding: 3px;
     border: 1px solid var(--border);
-    box-shadow: var(--shadow);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    flex-shrink: 0;
 }
-#flowModeToggle button {
+#flowPanel .flp-header #flowModeToggle button {
     border: none;
     background: transparent;
     color: var(--text2);
     padding: 6px 18px;
-    border-radius: 17px;
+    border-radius: 19px;
     cursor: pointer;
     font-size: 13px;
     font-weight: 500;
     transition: all 0.25s;
     white-space: nowrap;
 }
-#flowModeToggle button.active {
+#flowPanel .flp-header #flowModeToggle button.active {
     background: var(--accent);
     color: #fff;
 }
@@ -299,6 +302,9 @@ body {
     opacity: 1;
     animation: animBarProgressFill var(--progress-duration, 1s) linear forwards;
 }
+.spine-node .anim-bar .anim-progress-bar.paused {
+    animation-play-state: paused;
+}
 @keyframes animBarProgressFill {
     from { transform: scaleX(0); }
     to { transform: scaleX(1); }
@@ -317,11 +323,10 @@ body {
     border-width: 2px;
     box-shadow: 0 0 20px rgba(74, 158, 255, 0.25);
 }
-/* 完整动画组播放中：当前状态对应的节点 — 粉色发光 */
+/* 完整动画组播放中：当前状态对应的节点 — 粉色发光（不改变 border-width 避免内容区重排） */
 .spine-node.playing-current {
     border-color: #ff44aa;
-    border-width: 5px;
-    box-shadow: 0 0 40px rgba(255, 68, 170, 0.6), 0 0 16px rgba(255, 68, 170, 0.35), 0 0 4px rgba(255, 68, 170, 0.5);
+    box-shadow: 0 0 40px rgba(255, 68, 170, 0.6), 0 0 16px rgba(255, 68, 170, 0.35), 0 0 4px rgba(255, 68, 170, 0.5), inset 0 0 0 3px rgba(255, 68, 170, 0.7);
 }
 /* 未直接连线节点置灰（JS 动态插入遮罩 div） */
 .spine-node .dim-overlay {
@@ -471,21 +476,78 @@ body {
 }
 .spine-node .header .btns {
     display: flex;
-    gap: 4px;
+    gap: 6px;
+    align-items: center;
 }
 .spine-node .header .btns button {
     background: none;
     border: none;
     color: var(--text2);
     cursor: pointer;
-    font-size: 28px;
-    padding: 4px 10px;
-    border-radius: 4px;
+    font-size: 52px;
+    padding: 4px 12px;
+    border-radius: 6px;
     transition: all 0.2s;
+    line-height: 1;
 }
 .spine-node .header .btns button:hover {
     color: #fff;
     background: var(--accent);
+}
+/* 缩放拖拽手柄 — 绝对定位在节点右下角 */
+.spine-node .scale-handle {
+    position: absolute;
+    bottom: 6px;
+    right: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    color: var(--text2);
+    cursor: nwse-resize;
+    font-size: 52px;
+    padding: 4px 8px;
+    border-radius: 8px;
+    transition: all 0.2s;
+    line-height: 1;
+    user-select: none;
+    z-index: 10;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+.spine-node .scale-handle:hover {
+    color: #fff;
+    background: var(--accent);
+    border-color: var(--accent);
+}
+.spine-node .scale-handle:active {
+    color: #fff;
+    background: var(--accent);
+    border-color: var(--accent);
+}
+/* 入口/出口节点的缩放手柄适配深色标题栏 */
+.spine-node.entry-node .scale-handle,
+.spine-node.exit-node .scale-handle {
+    background: rgba(0,0,0,0.35);
+    border-color: rgba(255,255,255,0.15);
+    color: rgba(255,255,255,0.7);
+}
+.spine-node.entry-node .scale-handle:hover,
+.spine-node.exit-node .scale-handle:hover {
+    background: rgba(255,255,255,0.2);
+    border-color: rgba(255,255,255,0.4);
+    color: #fff;
+}
+/* 缩放图标 — 简洁的 CSS 三角形（右下角缩放指示器） */
+.spine-node .scale-handle-icon {
+    display: block;
+    width: 0;
+    height: 0;
+    border-top: 16px solid transparent;
+    border-right: 16px solid currentColor;
+    border-bottom: 16px solid currentColor;
+    border-left: 16px solid transparent;
+    transition: all 0.2s;
 }
 
 /* Spine 画布区域 */
@@ -627,6 +689,206 @@ body {
     padding: 6px;
 }
 
+/* ===== 多轨道混合面板 ===== */
+.spine-node .track-panel {
+    border-top: 1px solid var(--border);
+    background: rgba(0, 0, 0, 0.2);
+    padding: 6px 8px;
+}
+.track-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+}
+.track-panel-title {
+    font-size: 26px;
+    font-weight: 600;
+    color: var(--text2);
+}
+.track-add-btn {
+    background: rgba(74, 158, 255, 0.15);
+    border: 1px solid rgba(74, 158, 255, 0.3);
+    color: var(--accent);
+    font-size: 22px;
+    padding: 3px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.track-add-btn:hover {
+    background: rgba(74, 158, 255, 0.3);
+    border-color: var(--accent);
+}
+
+.track-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 0;
+    border-radius: 6px;
+    margin-bottom: 3px;
+    transition: background 0.2s;
+}
+.track-row:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+.track-row.track-disabled {
+    opacity: 0.45;
+}
+.track-row.track-disabled:hover {
+    opacity: 0.7;
+}
+
+.track-label {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--accent2);
+    min-width: 36px;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.track-anim-select {
+    flex: 1;
+    min-width: 100px;
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 4px 8px;
+    border-radius: 5px;
+    font-size: 24px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    outline: none;
+    transition: border-color 0.2s;
+    -webkit-appearance: none;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8' viewBox='0 0 8 8'%3E%3Cpath fill='%23888' d='M4 5L1 1h6z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 6px center;
+    padding-right: 18px;
+}
+.track-anim-select:hover {
+    border-color: var(--accent2);
+}
+.track-anim-select:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.track-alpha-wrap {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    flex-shrink: 0;
+}
+.track-alpha-slider {
+    width: 56px;
+    height: 4px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--border);
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+}
+.track-alpha-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+    border: 2px solid var(--bg);
+}
+.track-alpha-val {
+    font-size: 20px;
+    color: var(--text2);
+    min-width: 32px;
+    text-align: right;
+}
+
+.track-blend-select {
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 4px 6px;
+    border-radius: 5px;
+    font-size: 22px;
+    font-family: inherit;
+    cursor: pointer;
+    outline: none;
+    -webkit-appearance: none;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8' viewBox='0 0 8 8'%3E%3Cpath fill='%23888' d='M4 5L1 1h6z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 4px center;
+    padding-right: 16px;
+    min-width: 56px;
+}
+
+.track-enable {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+.track-enable input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    accent-color: var(--accent);
+}
+
+.track-delete-btn {
+    background: none;
+    border: none;
+    color: var(--text2);
+    cursor: pointer;
+    font-size: 20px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition: all 0.2s;
+    flex-shrink: 0;
+    line-height: 1;
+}
+.track-delete-btn:hover {
+    color: #ff4444;
+    background: rgba(255, 68, 68, 0.15);
+}
+
+.track-delete-spacer {
+    display: inline-block;
+    width: 24px;
+    flex-shrink: 0;
+}
+
+/* 轨道混合过渡时间 */
+.track-mix-wrap { display:flex; align-items:center; gap:2px; flex-shrink:0; }
+.track-mix-input {
+    width:44px; background:var(--input-bg); border:1px solid var(--border);
+    color:var(--text); padding:3px 4px; border-radius:4px; font-size:20px;
+    font-family:inherit; text-align:center; outline:none;
+    -moz-appearance:textfield;
+}
+.track-mix-input::-webkit-inner-spin-button,
+.track-mix-input::-webkit-outer-spin-button { -webkit-appearance:none; margin:0; }
+.track-mix-input:hover { border-color:var(--accent2); }
+.track-mix-input:focus { border-color:var(--accent); }
+.track-mix-input:disabled { opacity:0.4; cursor:not-allowed; }
+.track-mix-unit { font-size:18px; color:var(--text2); }
+
+/* 轨道循环按钮 */
+.track-loop-btn {
+    background:none; border:1px solid var(--border); color:var(--text2);
+    cursor:pointer; font-size:18px; padding:2px 5px; border-radius:4px;
+    flex-shrink:0; line-height:1; min-width:28px; text-align:center;
+}
+.track-loop-btn:hover { border-color:var(--accent2); color:#fff; }
+.track-loop-btn.active { color:#44aaff; border-color:#44aaff; background:rgba(68,170,255,0.1); }
+
 /* ===== 旧状态列表（保留兼容） ===== */
 .spine-node .state-list {
     padding: 4px 8px;
@@ -707,12 +969,23 @@ body {
 }
 .spine-node.short-text-node .header {
     border-radius: 14px 14px 0 0;
-}
-.spine-node.short-text-node .header {
     padding: 8px 14px;
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 6px;
+}
+.spine-node.short-text-node .header .name {
+    flex: 1;
+}
+.spine-node.short-text-node .header .btns {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+.spine-node.short-text-node .header .btns button {
+    font-size: 52px;
+    padding: 4px 12px;
 }
 .spine-node.short-text-node .text-node-input {
     background: var(--input-bg);
@@ -744,7 +1017,7 @@ body {
     padding: 8px 14px;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
 }
 .spine-node.text-box-node .text-box-title {
     flex: 1;
@@ -755,6 +1028,15 @@ body {
     font-weight: 600;
     outline: none;
     font-family: inherit;
+}
+.spine-node.text-box-node .header .btns {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+.spine-node.text-box-node .header .btns button {
+    font-size: 52px;
+    padding: 4px 12px;
 }
 .spine-node.text-box-node .text-box-area {
     width: 100% !important;
@@ -790,6 +1072,28 @@ body {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 8px;
+}
+.spine-node.entry-node .entry-header .entry-header-btns {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-shrink: 0;
+}
+.spine-node.entry-node .entry-header .entry-header-btns button {
+    background: none;
+    border: none;
+    color: rgba(255,255,255,0.7);
+    cursor: pointer;
+    font-size: 52px;
+    padding: 4px 12px;
+    border-radius: 6px;
+    transition: all 0.2s;
+    line-height: 1;
+}
+.spine-node.entry-node .entry-header .entry-header-btns button:hover {
+    color: #fff;
+    background: rgba(255,255,255,0.2);
 }
 .spine-node.entry-node .entry-title {
     font-size: 52px;
@@ -859,6 +1163,28 @@ body {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 8px;
+}
+.spine-node.exit-node .exit-header .exit-header-btns {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-shrink: 0;
+}
+.spine-node.exit-node .exit-header .exit-header-btns button {
+    background: none;
+    border: none;
+    color: rgba(255,255,255,0.7);
+    cursor: pointer;
+    font-size: 52px;
+    padding: 4px 12px;
+    border-radius: 6px;
+    transition: all 0.2s;
+    line-height: 1;
+}
+.spine-node.exit-node .exit-header .exit-header-btns button:hover {
+    color: #fff;
+    background: rgba(255,255,255,0.2);
 }
 .spine-node.exit-node .exit-title {
     font-size: 52px;
@@ -1253,24 +1579,66 @@ body {
     background: rgba(74, 158, 255, 0.08);
 }
 
-/* 骨骼标记按钮（✚ 红色十字叉切换）—— 放在最右侧 */
+/* 骨骼标记按钮（+ 标记/取消） */
 #dataFloatPanel .dfp-bone-mark {
     cursor: pointer;
-    font-size: 15px;
-    color: var(--text2);
-    transition: color 0.15s, text-shadow 0.15s, transform 0.15s;
+    font-size: 20px;
+    font-weight: 800;
+    color: #555;                      /* 空骨骼：灰色 */
+    transition: color 0.15s, transform 0.15s;
     flex-shrink: 0;
     margin-left: auto;
     line-height: 1;
-    padding: 2px;
+    padding: 2px 5px;
+    user-select: none;
 }
 #dataFloatPanel .dfp-bone-mark:hover {
     color: #e0555a;
-    transform: scale(1.2);
+    transform: scale(1.25);
 }
+/* 有内容（截图/备注）但未标记：红色提醒 */
+#dataFloatPanel .dfp-bone-mark.has-content {
+    color: #e04040;
+}
+#dataFloatPanel .dfp-bone-mark.has-content:hover {
+    color: #ff5555;
+}
+/* 已标记展开：红色 + 发光 */
 #dataFloatPanel .dfp-bone-mark.active {
-    color: #c94b4b;
-    text-shadow: 0 0 6px rgba(255, 50, 50, 0.6);
+    color: #e04040;
+    text-shadow: 0 0 6px rgba(255, 50, 50, 0.5);
+}
+#dataFloatPanel .dfp-bone-mark.active:hover {
+    color: #ff3333;
+}
+
+/* 骨骼名称 + 预览徽章 */
+#dataFloatPanel .dfp-bone-name {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 1;
+    min-width: 0;
+}
+#dataFloatPanel .dfp-bone-badge {
+    display: inline-flex;
+    align-items: center;
+    font-size: 10px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 4px;
+    padding: 0 4px;
+    color: #999;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+#dataFloatPanel .dfp-bone-fade-badge {
+    background: rgba(180, 130, 255, 0.12);
+    border-color: rgba(180, 130, 255, 0.3);
+    color: #c8a8ff;
+}
+#dataFloatPanel .dfp-bone-row.expanded {
+    background: rgba(255,255,255,0.03);
 }
 
 /* 骨骼备注文本框 */
@@ -1302,7 +1670,67 @@ body {
     color: var(--text2);
 }
 
-/* 骨骼截图占位区域（类似微信待上传图片框） */
+/* 淡入淡出控件 */
+#dataFloatPanel .dfp-fade-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 8px 0;
+    padding: 6px 10px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
+#dataFloatPanel .dfp-fade-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text);
+    cursor: pointer;
+    white-space: nowrap;
+    font-weight: 500;
+}
+#dataFloatPanel .dfp-fade-check {
+    cursor: pointer;
+    width: 18px;
+    height: 18px;
+    accent-color: #e04040;
+    margin: 0;
+    flex-shrink: 0;
+}
+#dataFloatPanel .dfp-fade-input-wrap {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+}
+#dataFloatPanel .dfp-fade-input-wrap.hidden {
+    display: none;
+}
+#dataFloatPanel .dfp-fade-dur {
+    width: 56px;
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 600;
+    padding: 4px 8px;
+    text-align: center;
+    outline: none;
+    transition: border-color 0.2s;
+}
+#dataFloatPanel .dfp-fade-dur:focus {
+    border-color: #e04040;
+}
+#dataFloatPanel .dfp-fade-unit {
+    font-size: 13px;
+    color: var(--text);
+    font-weight: 700;
+}
+
+/* 骨骼截图区域（多图支持） */
 #dataFloatPanel .dfp-bone-shot-area {
     margin-top: 6px;
     display: none;
@@ -1310,49 +1738,75 @@ body {
 #dataFloatPanel .dfp-bone-shot-area.show {
     display: block;
 }
-#dataFloatPanel .dfp-bone-shot-placeholder {
-    width: 100%;
-    height: 120px;
-    border: 2px dashed var(--border);
-    border-radius: 8px;
+/* 图片缩略图列表（横向排列，可换行） */
+#dataFloatPanel .dfp-shot-list {
     display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    transition: border-color 0.2s, background 0.2s;
-    background: var(--input-bg);
+    flex-wrap: wrap;
     gap: 6px;
+    margin-bottom: 6px;
 }
-#dataFloatPanel .dfp-bone-shot-placeholder:hover {
-    border-color: var(--accent2);
-    background: rgba(74, 158, 255, 0.05);
-}
-#dataFloatPanel .dfp-bone-shot-placeholder .shot-icon {
-    font-size: 32px;
-    color: var(--text2);
-    line-height: 1;
-}
-#dataFloatPanel .dfp-bone-shot-placeholder .shot-text {
-    font-size: 11px;
-    color: var(--text2);
-}
-#dataFloatPanel .dfp-bone-shot-placeholder.has-image {
-    border-style: solid;
-    border-color: var(--accent2);
-    padding: 0;
+#dataFloatPanel .dfp-shot-item {
+    width: 64px;
+    height: 64px;
+    border-radius: 6px;
     overflow: hidden;
+    border: 2px solid var(--border);
+    cursor: pointer;
+    position: relative;
+    flex-shrink: 0;
+    transition: border-color 0.2s;
 }
-#dataFloatPanel .dfp-bone-shot-placeholder.has-image img {
+#dataFloatPanel .dfp-shot-item:hover {
+    border-color: var(--accent2);
+}
+#dataFloatPanel .dfp-shot-item img {
     width: 100%;
     height: 100%;
     object-fit: cover;
-    border-radius: 6px;
 }
-#dataFloatPanel .dfp-bone-shot-placeholder.has-image .shot-overlay {
+#dataFloatPanel .dfp-shot-del {
     position: absolute;
-    top: 0; left: 0; right: 0; bottom: 0;
+    top: 1px;
+    right: 1px;
+    width: 18px;
+    height: 18px;
+    background: rgba(220, 50, 50, 0.85);
+    color: #fff;
+    border-radius: 50%;
+    font-size: 12px;
+    line-height: 18px;
+    text-align: center;
+    cursor: pointer;
     display: none;
+    z-index: 2;
+}
+#dataFloatPanel .dfp-shot-item:hover .dfp-shot-del {
+    display: block;
+}
+/* 选取截图按钮（占满宽度） */
+#dataFloatPanel .dfp-shot-add {
+    width: 100%;
+    height: 44px;
+    border: 2px dashed var(--border);
+    border-radius: 8px;
+    background: var(--input-bg);
+    color: var(--text);
+    font-size: 13px;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    font-family: inherit;
+    margin-top: 6px;
+}
+#dataFloatPanel .dfp-shot-add:hover {
+    border-color: var(--accent2);
+    background: rgba(74, 158, 255, 0.05);
+}
+#dataFloatPanel .dfp-shot-add:active {
+    background: rgba(74, 158, 255, 0.12);
 }
 
 /* 全屏截图查看遮罩 */
@@ -1360,29 +1814,103 @@ body {
     position: fixed;
     inset: 0;
     z-index: 1000;
-    background: rgba(0, 0, 0, 0.92);
+    background: rgba(0, 0, 0, 0.94);
     display: none;
     align-items: center;
     justify-content: center;
     cursor: pointer;
+    pointer-events: auto;
 }
 #screenshotOverlay.show {
     display: flex;
 }
+#screenshotOverlay .shot-viewer {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    position: relative;
+    cursor: pointer;
+}
 #screenshotOverlay img {
-    max-width: 92vw;
-    max-height: 92vh;
+    max-width: 90vw;
+    max-height: 78vh;
     object-fit: contain;
-    border-radius: 4px;
+    border-radius: 6px;
     box-shadow: 0 0 60px rgba(0, 0, 0, 0.8);
+    transition: transform 0.15s ease-out;
+    cursor: default;
+}
+/* 底部浮动导航栏（2x 放大） */
+#screenshotOverlay .shot-nav-bar {
+    position: fixed;
+    bottom: 28px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    background: rgba(30, 30, 40, 0.92);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 40px;
+    padding: 12px 28px;
+    z-index: 1001;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+#screenshotOverlay .shot-nav-bar button {
+    background: rgba(255,255,255,0.1);
+    border: none;
+    color: #fff;
+    font-size: 22px;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: background 0.2s, transform 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+}
+#screenshotOverlay .shot-nav-bar button:hover {
+    background: rgba(255,255,255,0.25);
+    transform: scale(1.1);
+}
+#screenshotOverlay .shot-nav-bar button:active {
+    transform: scale(0.95);
+}
+#screenshotOverlay .shot-nav-info {
+    color: #ddd;
+    font-size: 20px;
+    font-weight: 600;
+    min-width: 80px;
+    text-align: center;
+    letter-spacing: 1px;
+}
+#screenshotOverlay .shot-zoom-label {
+    color: #aaa;
+    font-size: 16px;
+    min-width: 52px;
+    text-align: center;
+    font-weight: 500;
+}
+#screenshotOverlay .shot-nav-sep {
+    color: rgba(255,255,255,0.2);
+    font-size: 22px;
+    user-select: none;
 }
 #screenshotOverlay .close-hint {
     position: fixed;
-    top: 20px;
-    right: 24px;
-    color: #888;
-    font-size: 14px;
+    bottom: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: rgba(255,255,255,0.35);
+    font-size: 13px;
     pointer-events: none;
+    white-space: nowrap;
 }
 
 /* 骨骼右侧容器 */
@@ -1581,23 +2109,23 @@ body {
     bottom: 32px; right: 16px;
     z-index: 100;
     background: var(--panel-bg);
-    padding: 10px 8px;
-    border-radius: 12px;
+    padding: 12px 10px;
+    border-radius: 14px;
     border: 1px solid var(--border);
     display: flex;
     align-items: center;
     justify-content: center;
     box-shadow: var(--shadow);
-    width: 36px;
-    height: 170px;
+    width: 48px;
+    height: 200px;
 }
 #zoomSlider {
     -webkit-appearance: none;
     appearance: none;
-    width: 140px;
-    height: 6px;
+    width: 170px;
+    height: 8px;
     background: var(--border);
-    border-radius: 3px;
+    border-radius: 4px;
     outline: none;
     cursor: pointer;
     transform: rotate(-90deg);
@@ -1607,22 +2135,22 @@ body {
 #zoomSlider::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
-    width: 20px;
-    height: 20px;
+    width: 28px;
+    height: 28px;
     background: var(--accent);
     border-radius: 50%;
     cursor: pointer;
     border: 2px solid #fff;
-    box-shadow: 0 0 8px rgba(74, 144, 217, 0.5);
+    box-shadow: 0 0 10px rgba(74, 144, 217, 0.5);
     transition: box-shadow 0.2s;
-    margin-top: -7px;
+    margin-top: -10px;
 }
 #zoomSlider::-webkit-slider-thumb:hover {
     box-shadow: 0 0 14px rgba(74, 144, 217, 0.8);
 }
 #zoomSlider::-moz-range-thumb {
-    width: 20px;
-    height: 20px;
+    width: 28px;
+    height: 28px;
     background: var(--accent);
     border-radius: 50%;
     cursor: pointer;
@@ -1633,8 +2161,9 @@ body {
     bottom: 100%;
     left: 0;
     right: 0;
-    margin-bottom: 6px;
-    font-size: 12px;
+    margin-bottom: 8px;
+    font-size: 15px;
+    font-weight: 600;
     color: var(--text);
     font-variant-numeric: tabular-nums;
     text-align: center;
@@ -1643,15 +2172,15 @@ body {
 #zoomResetBtn {
     position: fixed;
     bottom: 32px;
-    right: 64px;
+    right: 80px;
     z-index: 100;
     background: var(--panel-bg);
     border: 1px solid var(--border);
     color: var(--text);
     border-radius: 8px;
-    padding: 6px 10px;
+    padding: 8px 14px;
     cursor: pointer;
-    font-size: 11px;
+    font-size: 13px;
     box-shadow: var(--shadow);
     white-space: nowrap;
 }
@@ -1660,14 +2189,14 @@ body {
     color: #fff;
 }
 #zoomSlider::-webkit-slider-runnable-track {
-    height: 6px;
+    height: 8px;
     background: var(--border);
-    border-radius: 3px;
+    border-radius: 4px;
 }
 #zoomSlider::-moz-range-track {
-    height: 6px;
+    height: 8px;
     background: var(--border);
-    border-radius: 3px;
+    border-radius: 4px;
 }
 
 /* ===== 滚动条 ===== */

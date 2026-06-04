@@ -391,16 +391,20 @@ SMTool._loop = function (now) {
         if (!node.gl) { result = nodesIter.next(); continue; }
 
         var nodeW = node._canvasWidth, nodeH = node._canvasHeight;
+        var nodeScale = (node._customScale !== undefined ? node._customScale : 1.0);
+        var scaledW = nodeW * nodeScale;
+        var scaledH = nodeH * nodeScale;
 
-        if (node.x + nodeW < frzLeft || node.x > frzRight ||
-            node.y + nodeH < frzTop || node.y > frzBottom) {
+        if (node.x + scaledW < frzLeft || node.x > frzRight ||
+            node.y + scaledH < frzTop || node.y > frzBottom) {
             node._visible = false; result = nodesIter.next(); continue;
         }
         node._visible = true;
 
         var sp = SMTool.worldToCanvas(node.x, node.y);
         var sx = Math.round(sp.x), sy = Math.round(sp.y);
-        var sw = Math.round(nodeW * z), sh = Math.round(nodeH * z);
+        var nodeScale = (node._customScale !== undefined ? node._customScale : 1.0);
+        var sw = Math.round(nodeW * z * nodeScale), sh = Math.round(nodeH * z * nodeScale);
 
         // 跳过 header 区域，scissor 从 canvas-wrap 位置开始
         if (!node._headerH || node._headerH <= 0) {
@@ -409,7 +413,7 @@ SMTool._loop = function (now) {
             var measured = hdr ? hdr.offsetHeight : 0;
             node._headerH = measured > 0 ? measured : 70;
         }
-        var headerOffset = Math.round(node._headerH * z);
+        var headerOffset = Math.round(node._headerH * z * nodeScale);
         sy += headerOffset;
 
         if (sw < 4 || sh < 4) { result = nodesIter.next(); continue; }
@@ -499,7 +503,7 @@ SMTool._loop = function (now) {
 SMTool._onWheel = function (e) {
     var oz = SMData.view.zoom;
     var factor = e.deltaY > 0 ? 0.95 : 1.05;
-    SMData.view.zoom = Math.max(0.1, Math.min(5, SMData.view.zoom * factor));
+    SMData.view.zoom = Math.max(0.03, Math.min(5, SMData.view.zoom * factor));
     var mx = e.clientX - window.innerWidth / 2;
     var my = e.clientY - window.innerHeight / 2;
     SMData.view.x += mx * (1 / SMData.view.zoom - 1 / oz);

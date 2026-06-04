@@ -35,12 +35,6 @@
         <button onclick="SMTool.importData()">📥 导入</button>
     </div>
 
-    <!-- ===== 动画组模式切换（胶囊按钮） ===== -->
-    <div id="flowModeToggle">
-        <button id="flowModeThree" class="active" onclick="SMTool.setFlowMode('three')">三层-动画组</button>
-        <button id="flowModeFull" onclick="SMTool.setFlowMode('full')">完整-动画组</button>
-    </div>
-
     <!-- ===== 缺失状态通知面板 ===== -->
     <div id="missingPanel">
         <div class="mp-header">⚠️ 缺失状态<button class="mp-close" onclick="SMTool._closeMissingPanel()" title="关闭提示">✕</button></div>
@@ -53,6 +47,7 @@
             <div class="icon">📂</div>
             拖拽 Spine 文件到此处
             <br /><span class="sub">需要 .json/.skel + .atlas + .png</span>
+            <br /><span class="sub" style="margin-top:6px;color:#ffd966">也可拖入导出的 .json 项目文件快速导入</span>
         </div>
     </div>
 
@@ -127,6 +122,10 @@
         </div>
         <div class="flp-body">
             <div class="flp-header">
+                <div id="flowModeToggle">
+                    <button id="flowModeThree" class="active" onclick="SMTool.setFlowMode('three')">三层-动画组</button>
+                    <button id="flowModeFull" onclick="SMTool.setFlowMode('full')">完整-动画组</button>
+                </div>
                 <span class="flp-maximize" title="最大化面板">▲</span>
                 <span class="flp-title">🔗 动画组合</span>
                 <span class="flp-pin" title="固定面板">📌</span>

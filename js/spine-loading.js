@@ -36,11 +36,100 @@ SMTool._base64ToUint8 = function (base64) {
 // ---- 从拖拽文件创建节点 ----
 SMTool._onDrop = function (e) {
     var files = Array.from(e.dataTransfer.files);
-    console.log('[Drop] Files:', files.map(function (f) { return f.name; }).join(', '));
+    if (files.length !== 1) { SMTool._onDropSpineFiles(files, e.clientX, e.clientY); return; }
+    var f = files[0];
 
-    // 以鼠标松手位置为基准
-    var dropX = e.clientX;
-    var dropY = e.clientY;
+    // ★ 彻底 dump File 对象所有属性
+    console.log('[Drop] === 文件属性 dump ===');
+    console.log('[Drop] name:', f.name, 'size:', f.size, 'type:', f.type);
+    console.log('[Drop] .path:', f.path, 'type:', typeof f.path);
+    console.log('[Drop] .webkitRelativePath:', f.webkitRelativePath);
+    // 枚举所有自有属性
+    var ownKeys = Object.getOwnPropertyNames(f);
+    console.log('[Drop] ownPropertyNames:', ownKeys);
+    // 也检查 __proto__ 上的
+    try {
+        var protoKeys = Object.getOwnPropertyNames(Object.getPrototypeOf(f));
+        console.log('[Drop] proto keys:', protoKeys.slice(0, 30));
+    } catch (ex) {}
+    console.log('[Drop] ====================');
+
+    if (!f.name.toLowerCase().endsWith('.json')) { SMTool._onDropSpineFiles(files, e.clientX, e.clientY); return; }
+
+    var reader = new FileReader();
+    var item = (e.dataTransfer.items && e.dataTransfer.items[0]) || null;
+
+    // ---- 解析目录（3 种方式，统一返回 string 路径 或 handle 对象） ----
+    var dirPromise = Promise.resolve(null);
+
+    // 方式 A：File.path（Electron 专有）
+    if (typeof f.path === 'string' && f.path.length > 0) {
+        var dp = f.path.replace(/\\/g, '/').replace(/\/[^\/]*$/, '');
+        console.log('[Drop] ✅ A-File.path:', dp);
+        dirPromise = Promise.resolve({ type: 'path', value: dp });
+    }
+    // 方式 B：getAsFileSystemHandle + getParent
+    else if (item && typeof item.getAsFileSystemHandle === 'function') {
+        dirPromise = item.getAsFileSystemHandle().then(function (h) {
+            if (h && h.getParent) {
+                return h.getParent().then(function (p) {
+                    console.log('[Drop] ✅ B-getParent');
+                    return { type: 'handle', value: p };
+                }).catch(function () { return null; });
+            }
+            // 至少保存 fileHandle 用于覆写 JSON
+            if (h) SMData._dragSaveHandle = h;
+            return null;
+        }).catch(function () { return null; });
+    }
+    // 方式 C：webkitGetAsEntry + getParent
+    else if (item && typeof item.webkitGetAsEntry === 'function') {
+        dirPromise = new Promise(function (resolve) {
+            var entry = item.webkitGetAsEntry();
+            if (entry && entry.isFile && entry.getParent) {
+                entry.getParent(
+                    function (p) { console.log('[Drop] ✅ C-webkitGetAsEntry'); resolve({ type: 'entry', value: p }); },
+                    function () { resolve(null); }
+                );
+            } else { resolve(null); }
+        });
+    }
+
+    reader.onload = function () {
+        try {
+            var data = JSON.parse(reader.result);
+            if (!data || (!data.nodes && !data.connections && !data.view)) {
+                SMTool._onDropSpineFiles(files, e.clientX, e.clientY); return;
+            }
+        } catch (ex) {
+            SMTool._onDropSpineFiles(files, e.clientX, e.clientY); return;
+        }
+
+        console.log('[Drop] 识别为项目文件');
+        dirPromise.then(function (dr) {
+            if (dr) {
+                if (dr.type === 'handle') { SMData._assetsDirHandle = dr.value; console.log('[Drop] → _assetsDirHandle'); }
+                else if (dr.type === 'entry') { SMData._legacyDirEntry = dr.value; console.log('[Drop] → _legacyDirEntry'); }
+                else if (dr.type === 'path') { SMData._dropDirPath = dr.value; console.log('[Drop] → _dropDirPath'); }
+            } else {
+                console.log('[Drop] ⚠️ 无任何目录获取方式成功');
+            }
+            return SMTool._processImportJson(reader.result, null);
+        }).then(function () {
+            return SMTool._tryLoadCompanionImages();
+        }).then(function () {
+            SMTool._updateFloatPanel();
+            SMTool._showSaveToast('导入完成');
+        }).catch(function (err) {
+            console.error('[Drop] 导入失败:', err);
+        });
+    };
+    reader.onerror = function () { SMTool._onDropSpineFiles(files, e.clientX, e.clientY); };
+    reader.readAsText(f);
+};
+
+// ---- 原有 Spine 文件拖放逻辑（提取为独立函数）----
+SMTool._onDropSpineFiles = function (files, dropX, dropY) {
 
     var groups = {};
     for (var i = 0; i < files.length; i++) {
@@ -752,14 +841,37 @@ SMTool._parseSpineData = function (node, SP, WGL, atlasText, pageDataUrls, skelJ
             var stateData = new SP.AnimationStateData(sd);
             var state = new SP.AnimationState(stateData);
             node.state = state;
-            if (node.animations.length > 0) {
-                state.setAnimation(0, node.animations[0].name, true);
+
+            // 初始化/补全默认轨道（_createEl 可能已提前创建了空轨道）
+            if (!node.tracks || node.tracks.length === 0) {
+                node.tracks = [{
+                    animName: (node.animations[0] && node.animations[0].name) || '',
+                    alpha: 1.0,
+                    mixBlend: 'replace',
+                    enabled: true,
+                    loop: true,
+                    mixDuration: 0
+                }];
+                node.currentAnim = node.tracks[0].animName;
+            } else if (!node.tracks[0].animName && node.animations.length > 0) {
+                // _createEl 阶段已创建空轨道，补全真实动画名
+                node.tracks[0].animName = node.animations[0].name;
                 node.currentAnim = node.animations[0].name;
             }
+            // 应用轨道配置到 AnimationState
+            SMTool._applyTracksToState(node);
 
             // 委托给渲染模块设置 WebGL
             if (SMTool._setupWebGLRenderer) {
                 SMTool._setupWebGLRenderer(node, SP, WGL, atlas, imgs, useVer);
+            }
+
+            // ★ _setupWebGLRenderer 内部调用了 sk.setToSetupPose()，重置了骨架姿势。
+            // 必须在此重新应用动画状态，否则缩小画布时（perf 模式跳过 update/apply）会显示绑定姿势贴图
+            if (node.state && node.skeleton) {
+                node.state.update(0);
+                node.state.apply(node.skeleton);
+                node.skeleton.updateWorldTransform(node._physParam);
             }
 
             SMTool._updateEl(node);
@@ -914,14 +1026,35 @@ SMTool._loadFromSourceData = function (node) {
                 var stateData = new SP.AnimationStateData(sd);
                 var state = new SP.AnimationState(stateData);
                 node.state = state;
-                if (node.animations.length > 0) {
-                    var animName = node.currentAnim || node.animations[0].name;
-                    state.setAnimation(0, animName, true);
-                    node.currentAnim = animName;
+
+                // 初始化/补全默认轨道（_createEl 可能已提前创建了空轨道）
+                if (!node.tracks || node.tracks.length === 0) {
+                    var defaultAnim = node.currentAnim || (node.animations[0] && node.animations[0].name) || '';
+                    node.tracks = [{
+                        animName: defaultAnim,
+                        alpha: 1.0,
+                        mixBlend: 'replace',
+                        enabled: true,
+                        loop: node.loop !== false,
+                        mixDuration: 0
+                    }];
+                } else if (!node.tracks[0].animName && node.animations.length > 0) {
+                    // _createEl 阶段已创建空轨道，补全真实动画名
+                    var fillAnim = node.currentAnim || node.animations[0].name;
+                    node.tracks[0].animName = fillAnim;
+                    node.currentAnim = fillAnim;
                 }
+                // 应用轨道配置到 AnimationState
+                SMTool._applyTracksToState(node);
 
                 if (SMTool._setupWebGLRenderer) {
                     SMTool._setupWebGLRenderer(node, SP, WGL, atlas, imgs, useVer);
+                }
+                // ★ 重新应用动画状态（_setupWebGLRenderer 的 setToSetupPose 会重置骨架）
+                if (node.state && node.skeleton) {
+                    node.state.update(0);
+                    node.state.apply(node.skeleton);
+                    node.skeleton.updateWorldTransform(node._physParam);
                 }
                 resolve();
             } catch (e) {
@@ -1065,15 +1198,43 @@ function _looksLikePinyin(word) {
 }
 
 // ---- 联网翻译（Google 免费接口） ----
+// 将下划线分隔的名字拆成段，每段单独翻译后再用 _ 拼接
+// 例如 "walk_left" → 拆为 ["walk","left"] → 分别翻译 → "步行_左"
 SMTool._translateAnimNames = function (names, callback) {
     if (!names || !names.length) { callback({}); return; }
+
+    // 1. 过滤未缓存的名字
     var uncached = [];
     for (var i = 0; i < names.length; i++) {
         if (!SMData._transCache[names[i]]) uncached.push(names[i]);
     }
     if (!uncached.length) { callback(SMData._transCache); return; }
 
-    var joined = uncached.join('\n');
+    // 2. 按 _ 拆分段，构建 段→索引 的去重映射，以及 原名→段索引列表 的关系
+    var allSegments = [];            // 所有唯一段（按首次出现顺序）
+    var segIndexMap = {};            // "segment" → 在 allSegments 中的索引
+    var nameSegIndices = {};         // "原名" → [segIdx1, segIdx2, ...]
+
+    for (var n = 0; n < uncached.length; n++) {
+        var origName = uncached[n];
+        var parts = origName.split('_');
+        var indices = [];
+        for (var p = 0; p < parts.length; p++) {
+            var seg = parts[p];
+            if (!seg) continue; // 跳过空段（连续下划线产生）
+            if (segIndexMap[seg] === undefined) {
+                segIndexMap[seg] = allSegments.length;
+                allSegments.push(seg);
+            }
+            indices.push(segIndexMap[seg]);
+        }
+        nameSegIndices[origName] = indices;
+    }
+
+    if (!allSegments.length) { callback(SMData._transCache); return; }
+
+    // 3. 将所有唯一段用换行拼接，一次性发给 Google
+    var joined = allSegments.join('\n');
     var url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=zh-CN&dt=t&q=' + encodeURIComponent(joined);
     var xhr = new XMLHttpRequest();
     xhr.open('GET', url, true);
@@ -1087,8 +1248,17 @@ SMTool._translateAnimNames = function (names, callback) {
                     for (var j = 0; j < data[0].length; j++) {
                         if (data[0][j] && data[0][j][0]) lines.push(data[0][j][0].trim());
                     }
+
+                    // 4. 对每个原始名，取出对应段的翻译结果，用 _ 按顺序拼回去
                     for (var k = 0; k < uncached.length; k++) {
-                        SMData._transCache[uncached[k]] = lines[k] || uncached[k];
+                        var origName = uncached[k];
+                        var indices = nameSegIndices[origName];
+                        var translatedParts = [];
+                        for (var pi = 0; pi < indices.length; pi++) {
+                            var segIdx = indices[pi];
+                            translatedParts.push(lines[segIdx] || allSegments[segIdx]);
+                        }
+                        SMData._transCache[origName] = translatedParts.join('_');
                     }
                 }
             } catch (e) { console.warn('[Translate] Parse error:', e.message); }
@@ -1132,7 +1302,9 @@ SMTool._refreshAllTranslations = function () {
 };
 
 // ---- 查找翻译（缓存优先） ----
-// 禁用翻译，直接返回原始名称
+// 先从缓存取翻译结果，没有则返回原始名称
 SMTool._translateName = function (name) {
-    return name;
+    if (!name) return name;
+    var cached = SMData._transCache[name];
+    return cached || name;
 };

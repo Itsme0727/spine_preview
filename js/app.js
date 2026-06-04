@@ -46,6 +46,20 @@ SMTool.deleteNode = function (nid) {
         if (node.sceneRenderer) { try { node.sceneRenderer.dispose(); } catch (e) {} node.sceneRenderer = null; }
         // 清除 _managedContext 引用但不 dispose（它是共享的）
         node._managedContext = null;
+
+        // ★ 释放全局截图注册表中的引用
+        if (node._boneScreenshots) {
+            var shotBones = Object.keys(node._boneScreenshots);
+            for (var sbi = 0; sbi < shotBones.length; sbi++) {
+                var shotList = node._boneScreenshots[shotBones[sbi]];
+                if (!Array.isArray(shotList)) shotList = [shotList];
+                for (var sli = 0; sli < shotList.length; sli++) {
+                    if (typeof shotList[sli] === 'number') {
+                        SMData._shotRelease(shotList[sli]);
+                    }
+                }
+            }
+        }
     }
 
     var el = SMTool._getEl(nid);
@@ -117,6 +131,41 @@ SMTool.copyNode = function (nid, offsetX, offsetY) {
     node.slots = orig.slots.slice();
     node.bones = orig.bones.slice();
     node.version = orig.version;
+    node._customScale = orig._customScale;
+    node._boneTags = orig._boneTags ? JSON.parse(JSON.stringify(orig._boneTags)) : {};
+    node._boneNotes = orig._boneNotes ? JSON.parse(JSON.stringify(orig._boneNotes)) : {};
+    // ★ 性能优化：共享截图引用而非深拷贝 dataUrl。
+    // 同一来源的节点复制时，_boneScreenshots 只存 shotId（数字），
+    // 实际图片数据在全局 SMData._shotStore 中只有一份。
+    node._boneScreenshots = {};
+    if (orig._boneScreenshots) {
+        var origBones = Object.keys(orig._boneScreenshots);
+        for (var obi = 0; obi < origBones.length; obi++) {
+            var bName = origBones[obi];
+            var origShots = orig._boneScreenshots[bName];
+            if (!Array.isArray(origShots)) origShots = origShots ? [origShots] : [];
+            node._boneScreenshots[bName] = [];
+            for (var osi = 0; osi < origShots.length; osi++) {
+                var sVal = origShots[osi];
+                if (typeof sVal === 'number') {
+                    // 新格式：shotId 引用计数+1
+                    SMData._shotAddRef(sVal);
+                    node._boneScreenshots[bName].push(sVal);
+                } else if (typeof sVal === 'string') {
+                    // 旧格式兼容：注册到全局表后存 shotId
+                    var newShotId = SMData._shotRegister(sVal);
+                    node._boneScreenshots[bName].push(newShotId);
+                }
+            }
+        }
+    }
+    node._boneShotRefs = orig._boneShotRefs ? JSON.parse(JSON.stringify(orig._boneShotRefs)) : {};
+    node._stateDesc = orig._stateDesc || '';
+    node._textContent = orig._textContent || '';
+    node._exitText = orig._exitText || '';
+    node.loop = orig.loop;
+    // 深拷贝轨道配置
+    node.tracks = orig.tracks ? JSON.parse(JSON.stringify(orig.tracks)) : [];
 
     SMData.nodes.set(id, node);
     SMTool._createEl(node);
@@ -315,9 +364,73 @@ SMTool.init = function () {
     dz.addEventListener('dragover', function (e) { e.preventDefault(); });
     dz.addEventListener('dragleave', function () { dz.classList.remove('show'); });
     dz.addEventListener('drop', function (e) { e.preventDefault(); dz.classList.remove('show'); SMTool._onDrop(e); });
+    // ★ 兜底：拖拽到 dropZone 之外时也能响应（快速拖放等场景）
+    document.addEventListener('drop', function (e) {
+        if (e.target === dz || dz.contains(e.target)) return; // dropZone 已处理
+        // 检查是否拖到了 Spine 节点面板内部（节点内部有自己的拖放处理）
+        if (e.target.closest('.spine-canvas-wrap') || e.target.closest('.dfp-shot-add') ||
+            e.target.closest('.spine-node') || e.target.closest('input, textarea, select')) return;
+        e.preventDefault();
+        dz.classList.remove('show');
+        SMTool._onDrop(e);
+    });
 
     // 键盘
     window.addEventListener('keydown', function (e) { SMTool._onKD(e); });
+
+    // 全局粘贴事件（图片 → 自动添加到当前聚焦骨骼的截图区）
+    window.addEventListener('paste', function (e) {
+        var items = e.clipboardData && e.clipboardData.items;
+        if (!items) return;
+
+        // 检查是否有图片
+        var imageBlobs = [];
+        for (var i = 0; i < items.length; i++) {
+            if (items[i].type && items[i].type.indexOf('image/') === 0) {
+                try { var f = items[i].getAsFile(); if (f) imageBlobs.push(f); } catch (ex) {}
+            }
+        }
+        if (imageBlobs.length === 0) return; // 纯文本 → 浏览器正常处理
+
+        e.preventDefault();
+        if (!SMData.selectedNode) return;
+        var node = SMData.nodes.get(SMData.selectedNode);
+        if (!node || node.nodeType !== 'spine') return;
+
+        // 目标骨骼：严格使用 _pasteTargetBone（点击骨骼行/+时设置）
+        var targetBoneName = SMData._pasteTargetBone;
+        if (!targetBoneName || !node._boneTags || !node._boneTags[targetBoneName]) {
+            // 兜底：取第一个已标记的骨骼
+            if (node._boneTags) {
+                var keys = Object.keys(node._boneTags);
+                if (keys.length > 0) targetBoneName = keys[0];
+            }
+        }
+        if (!targetBoneName) {
+            document.getElementById('sbStatus').textContent = '请先在面板中点击骨骼旁的 + 标记锚点';
+            setTimeout(function () { document.getElementById('sbStatus').textContent = ''; }, 2500);
+            return;
+        }
+
+        var loaded = 0;
+        var dataUrls = [];
+        for (var j = 0; j < imageBlobs.length; j++) {
+            (function (blob) {
+                var reader = new FileReader();
+                reader.onload = function () {
+                    dataUrls.push(reader.result);
+                    loaded++;
+                    if (loaded === imageBlobs.length) {
+                        SMTool._addBoneScreenshots(targetBoneName, dataUrls);
+                        document.getElementById('sbStatus').textContent = '✅ 已粘贴 ' + loaded + ' 张截图 → ' + targetBoneName;
+                        setTimeout(function () { document.getElementById('sbStatus').textContent = ''; }, 2000);
+                    }
+                };
+                reader.onerror = function () { loaded++; };
+                reader.readAsDataURL(blob);
+            })(imageBlobs[j]);
+        }
+    });
 
     // 全局点击关闭右键菜单
     window.addEventListener('click', function () {
@@ -386,13 +499,8 @@ SMTool.init = function () {
         if (SMData._fullPlayback._timer) { clearTimeout(SMData._fullPlayback._timer); SMData._fullPlayback._timer = null; }
         SMTool._clearAllProgressBars();
         SMTool._resumeAllNodes();
-        // 清除全画布缓存
-        SMData._fullCanvasGL = null;
-        SMData._fullCanvasContext = null;
-        SMData._fullCanvasRenderer = null;
-        SMData._fullCanvasSkeleton = null;
-        SMData._fullCanvasState = null;
-        SMData._fullCanvasNode = null;
+        // 清除全画布缓存（含 WebGL 资源释放）
+        SMTool._disposeFullCanvasResources();
         SMTool._updateFlowPanel();
         if (mode === 'full' && SMData.selectedNode) {
             SMTool._setFullComponentFocus(SMData.selectedNode);
@@ -750,9 +858,14 @@ SMTool.init = function () {
                 loop: n.loop !== undefined ? n.loop : true,
                 _srcKey: srcKey,   // 源数据引用 key，不再复制大块数据
                 _boneTags: n._boneTags ? JSON.parse(JSON.stringify(n._boneTags)) : {},
+                _boneNotes: n._boneNotes ? JSON.parse(JSON.stringify(n._boneNotes)) : {},
+                // 快照中将 shotId 转回 dataUrl，确保 undo/redo 不依赖 _shotStore 生命周期
+                _boneScreenshots: n._boneScreenshots ? SMTool._serializeShots(n._boneScreenshots) : {},
+                _boneShotRefs: n._boneShotRefs ? JSON.parse(JSON.stringify(n._boneShotRefs)) : {},
                 _stateDesc: n._stateDesc || '',
                 _exitText: n._exitText || '',
                 _textContent: n._textContent || '',
+                _customScale: n._customScale !== undefined ? n._customScale : 1.0,
                 infoCollapsed: !!n.infoCollapsed
             });
             result = nodesIter.next();
@@ -837,15 +950,39 @@ SMTool.init = function () {
                 // 从缓存恢复源数据（仅当 key 变化时才更新）
                 SMTool._applySrcCache(existing, nd._srcKey);
                 existing._boneTags = nd._boneTags || {};
+                existing._boneNotes = nd._boneNotes || {};
+                existing._boneScreenshots = nd._boneScreenshots || {};
+                // 兼容旧数据（单图转数组，字符串转 shotId）
+                if (existing._boneScreenshots) {
+                    var boneNames = Object.keys(existing._boneScreenshots);
+                    for (var bi = 0; bi < boneNames.length; bi++) {
+                        var bn = boneNames[bi];
+                        if (existing._boneScreenshots[bn] && !Array.isArray(existing._boneScreenshots[bn])) {
+                            existing._boneScreenshots[bn] = [existing._boneScreenshots[bn]];
+                        }
+                        // 旧格式 dataUrl 字符串 → 注册到全局表转为 shotId
+                        var shotArr = existing._boneScreenshots[bn];
+                        if (Array.isArray(shotArr)) {
+                            for (var sai = 0; sai < shotArr.length; sai++) {
+                                if (typeof shotArr[sai] === 'string' && shotArr[sai].indexOf('data:image/') === 0) {
+                                    shotArr[sai] = SMData._shotRegister(shotArr[sai]);
+                                }
+                            }
+                        }
+                    }
+                }
+                existing._boneShotRefs = nd._boneShotRefs || {};
                 existing._stateDesc = nd._stateDesc || '';
                 existing._exitText = nd._exitText || '';
                 existing._textContent = nd._textContent || '';
+                existing._customScale = nd._customScale !== undefined ? nd._customScale : 1.0;
                 existing.infoCollapsed = !!nd.infoCollapsed;
 
                 // 更新动画（即时切换，无需重载）
                 if (existing.state && existing.currentAnim !== (nd.currentAnim || '')) {
                     try {
-                        existing.state.setAnimation(0, nd.currentAnim || '', existing.loop);
+                        existing.tracks[0].animName = nd.currentAnim || '';
+                        SMTool._applyTracksToState(existing);
                     } catch (e) { /* 忽略 */ }
                 }
                 existing.currentAnim = nd.currentAnim || '';
@@ -924,9 +1061,31 @@ SMTool.init = function () {
                 // 从缓存恢复源数据
                 SMTool._applySrcCache(node, nd._srcKey);
                 node._boneTags = nd._boneTags || {};
+                node._boneNotes = nd._boneNotes || {};
+                node._boneScreenshots = nd._boneScreenshots || {};
+                // 兼容旧数据（单图转数组，字符串转 shotId）
+                if (node._boneScreenshots) {
+                    var bnKeys = Object.keys(node._boneScreenshots);
+                    for (var bj = 0; bj < bnKeys.length; bj++) {
+                        var bnk = bnKeys[bj];
+                        if (node._boneScreenshots[bnk] && !Array.isArray(node._boneScreenshots[bnk])) {
+                            node._boneScreenshots[bnk] = [node._boneScreenshots[bnk]];
+                        }
+                        var shotArr2 = node._boneScreenshots[bnk];
+                        if (Array.isArray(shotArr2)) {
+                            for (var saj = 0; saj < shotArr2.length; saj++) {
+                                if (typeof shotArr2[saj] === 'string' && shotArr2[saj].indexOf('data:image/') === 0) {
+                                    shotArr2[saj] = SMData._shotRegister(shotArr2[saj]);
+                                }
+                            }
+                        }
+                    }
+                }
+                node._boneShotRefs = nd._boneShotRefs || {};
                 node._stateDesc = nd._stateDesc || '';
                 node._exitText = nd._exitText || '';
                 node._textContent = nd._textContent || '';
+                node._customScale = nd._customScale !== undefined ? nd._customScale : 1.0;
                 node.infoCollapsed = !!nd.infoCollapsed;
 
                 SMData.nodes.set(nd.id, node);

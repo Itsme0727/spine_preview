@@ -236,6 +236,27 @@ SMTool._onMM = function (e) {
         return;
     }
 
+    // 节点缩放拖拽
+    if (SMData.scalingNode) {
+        var sn = SMData.scalingNode;
+        var node2 = SMData.nodes.get(sn.nodeId);
+        if (node2) {
+            // 计算鼠标相对于节点中心的距离变化来等比缩放
+            var dScreenX = e.clientX - sn.startMx;
+            var dScreenY = e.clientY - sn.startMy;
+            // 使用对角线方向的距离：鼠标向右下移动放大，向左上移动缩小
+            var dist = (dScreenX + dScreenY) * 0.5;
+            // 将屏幕距离转换为缩放比例变化
+            var scaleChange = dist / 200; // 200px 移动 ≈ 1x 缩放变化
+            var newScale = sn.startScale + scaleChange;
+            // 限制缩放范围 0.2 ~ 5.0
+            newScale = Math.max(0.2, Math.min(5.0, newScale));
+            node2._customScale = newScale;
+            SMTool._updatePos(node2);
+        }
+        return;
+    }
+
     // 连线模式
     if (SMData.connecting) {
         SMData.connecting.mx = e.clientX;
@@ -372,6 +393,14 @@ SMTool._onMM = function (e) {
 
 // ---- 鼠标释放 ----
 SMTool._onMU = function (e) {
+    // 结束节点缩放拖拽
+    if (SMData.scalingNode) {
+        SMData.scalingNode = null;
+        SMTool._commitDragUndo();
+        SMTool.gridCanvas.style.cursor = SMData.connectMode ? 'crosshair' : 'default';
+        return;
+    }
+
     // 结束控制点拖拽
     if (SMData.draggingCP) {
         SMData.draggingCP = null;
@@ -569,6 +598,10 @@ SMTool._onKD = function (e) {
                     _srcType: n._srcType || '',
                     _srcFileNames: n._srcFileNames ? n._srcFileNames.slice() : [],
                     _boneTags: n._boneTags ? JSON.parse(JSON.stringify(n._boneTags)) : {},
+                    _boneNotes: n._boneNotes ? JSON.parse(JSON.stringify(n._boneNotes)) : {},
+                    // 快照中将 shotId 转回 dataUrl，确保粘贴/克隆不依赖 _shotStore 生命周期
+                    _boneScreenshots: n._boneScreenshots ? SMTool._serializeShots(n._boneScreenshots) : {},
+                    _boneShotRefs: n._boneShotRefs ? JSON.parse(JSON.stringify(n._boneShotRefs)) : {},
                     _stateDesc: n._stateDesc || '',
                     _exitText: n._exitText || '',
                     _textContent: n._textContent || '',
@@ -659,6 +692,26 @@ SMTool._onKD = function (e) {
                 node._srcType = nd._srcType;
                 node._srcFileNames = nd._srcFileNames;
                 node._boneTags = nd._boneTags;
+                node._boneNotes = nd._boneNotes || {};
+                node._boneScreenshots = nd._boneScreenshots || {};
+                if (node._boneScreenshots) {
+                    var bks = Object.keys(node._boneScreenshots);
+                    for (var bk = 0; bk < bks.length; bk++) {
+                        if (node._boneScreenshots[bks[bk]] && !Array.isArray(node._boneScreenshots[bks[bk]])) {
+                            node._boneScreenshots[bks[bk]] = [node._boneScreenshots[bks[bk]]];
+                        }
+                        // 旧格式 dataUrl 字符串 → shotId
+                        var sArr = node._boneScreenshots[bks[bk]];
+                        if (Array.isArray(sArr)) {
+                            for (var sii = 0; sii < sArr.length; sii++) {
+                                if (typeof sArr[sii] === 'string' && sArr[sii].indexOf('data:image/') === 0) {
+                                    sArr[sii] = SMData._shotRegister(sArr[sii]);
+                                }
+                            }
+                        }
+                    }
+                }
+                node._boneShotRefs = nd._boneShotRefs || {};
                 node._stateDesc = nd._stateDesc;
                 node._exitText = nd._exitText;
                 node._textContent = nd._textContent;
@@ -728,8 +781,10 @@ SMTool._onKD = function (e) {
             if (cb.connections.length > 0) msg2 += ' + ' + cb.connections.length + ' 条连线';
             document.getElementById('sbStatus').textContent = msg2;
             setTimeout(function () { document.getElementById('sbStatus').textContent = ''; }, 2000);
+            e.preventDefault();
+            return;
         }
-        e.preventDefault();
+        // 没有节点剪贴板数据 → 不拦截，让 paste 事件正常触发（图片粘贴等）
         return;
     }
     if (e.key === 'Delete') {
@@ -849,7 +904,26 @@ SMTool._onHD = function (e, nid) {
     SMTool._updateSel();
 };
 
-// ---- 下拉框切换动画 ----
+// ---- 缩放图标拖拽开始 ----
+SMTool._onScaleStart = function (e, nid) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    var node = SMData.nodes.get(nid);
+    if (!node) return;
+    SMData._pendingDragSnap = SMTool._snapshotState();
+    SMData.scalingNode = {
+        nodeId: nid,
+        startScale: node._customScale || 1.0,
+        startMx: e.clientX,
+        startMy: e.clientY,
+        startX: node.x,
+        startY: node.y
+    };
+    SMTool.gridCanvas.style.cursor = 'nwse-resize';
+};
+
+// ---- 下拉框切换动画（track 0） ----
 SMTool._onAnimChange = function (nid, animName) {
     SMTool.pushUndo();
     var node = SMData.nodes.get(nid);
@@ -862,9 +936,14 @@ SMTool._onAnimChange = function (nid, animName) {
         SMTool.gridCanvas.style.cursor = 'default';
         SMTool._updateSel();
     }
-    node.state.setAnimation(0, animName, true);
+    // 更新 track 0
+    if (!node.tracks || node.tracks.length === 0) {
+        SMTool._initDefaultTracks(node);
+    }
+    node.tracks[0].animName = animName;
     node.currentAnim = animName;
     node.name = SMTool._translateName(animName);
+    SMTool._applyTracksToState(node);
     SMTool._updateEl(node);
     SMTool._updateStateRowColors();
     SMTool._updateDuplicateHighlights();
@@ -1218,6 +1297,9 @@ SMTool._initFloatPanel = function () {
     // 全局鼠标移动 — 检测靠近左边缘
     document.addEventListener('mousemove', function (e) {
         if (SMData._floatPanel.pinned || SMData._floatPanel.expanded) return;
+        // 全屏截图模式时不触发面板展开
+        var shotOverlay = document.getElementById('screenshotOverlay');
+        if (shotOverlay && shotOverlay.classList.contains('show')) return;
         if (e.clientX <= 15) {
             SMTool._expandFloatPanel();
         }
@@ -1242,6 +1324,8 @@ SMTool._expandFloatPanel = function () {
     SMData._floatPanel.expanded = true;
     var panel = document.getElementById('dataFloatPanel');
     if (panel) panel.classList.add('expanded');
+    // ★ 面板展开时触发截图懒加载
+    SMTool._loadPanelImages();
 };
 
 // 收起面板
@@ -1251,6 +1335,8 @@ SMTool._collapseFloatPanel = function () {
     SMData._floatPanel.expanded = false;
     var panel = document.getElementById('dataFloatPanel');
     if (panel) panel.classList.remove('expanded');
+    // ★ 面板收起时释放已加载的截图图片内存
+    SMTool._unloadPanelImages();
 };
 
 // 延迟收起（鼠标离开面板时使用，留一点缓冲）
@@ -1365,6 +1451,9 @@ SMTool._initFlowPanel = function () {
     // 全局鼠标移动 — 检测靠近底部边缘
     document.addEventListener('mousemove', function (e) {
         if (SMData._flowPanel.pinned || SMData._flowPanel.expanded) return;
+        // 全屏截图模式时不触发面板展开
+        var shotOverlay = document.getElementById('screenshotOverlay');
+        if (shotOverlay && shotOverlay.classList.contains('show')) return;
         if (e.clientY >= window.innerHeight - 65) {
             SMTool._expandFlowPanel();
         }
@@ -1395,6 +1484,7 @@ SMTool._initFlowPanel = function () {
                 SMData._fullPlayback.currentStep = 0;
                 SMData._fullPlayback.isPlaying = false;
                 if (SMData._fullPlayback._timer) { clearTimeout(SMData._fullPlayback._timer); SMData._fullPlayback._timer = null; }
+                SMTool._clearAllProgressBars();
                 SMTool._resumeAllNodes();
                 SMData._flowFocus = null;
                 SMTool._updateFlowPanel();
@@ -1485,6 +1575,7 @@ SMTool._collapseFlowPanel = function () {
     SMData._fullPlayback.activePathIdx = -1;
     SMData._fullPlayback.currentStep = 0;
     if (SMData._fullPlayback._timer) { clearTimeout(SMData._fullPlayback._timer); SMData._fullPlayback._timer = null; }
+    SMTool._clearAllProgressBars();
     SMTool._resumeAllNodes();
     SMTool._updateSel();
     SMTool._updateStateRowColors();
@@ -1544,44 +1635,22 @@ SMTool._initBoneLabelEvents = function () {
     if (!content) return;
 
     content.addEventListener('click', function (e) {
-        // 骨骼标记按钮（红十字叉）
+        // 骨骼标记按钮（+）
         var tagBtn = e.target.closest('.dfp-bone-mark');
         if (tagBtn) {
             e.stopPropagation();
             var boneName = tagBtn.getAttribute('data-bone');
+            // 设为此骨骼为粘贴目标
+            SMData._pasteTargetBone = boneName;
             SMTool._toggleBoneTag(boneName);
             return;
         }
 
-        // 删除标签
-        var delBtn = e.target.closest('.dfp-bone-label-del');
-        if (delBtn) {
-            e.stopPropagation();
-            var boneName = delBtn.getAttribute('data-bone');
-            SMTool._removeBoneLabel(boneName);
-            return;
-        }
-
-        // 点击已有标签 → 进入编辑
-        var labelEl = e.target.closest('.dfp-bone-label');
-        if (labelEl) {
-            e.stopPropagation();
-            var boneName = labelEl.getAttribute('data-bone');
-            SMTool._startBoneLabelEdit(boneName, labelEl.textContent.replace('×', '').trim());
-            return;
-        }
-
-        // 点击骨骼行空白区域 → 添加标签
+        // 点击骨骼行 → 设为此骨骼为粘贴目标
         var boneRow = e.target.closest('.dfp-bone-row');
         if (boneRow) {
             var boneName = boneRow.getAttribute('data-bone');
-            // 如果已有标签 → 编辑；否则 → 新建
-            var existingLabel = boneRow.querySelector('.dfp-bone-label');
-            if (existingLabel) {
-                SMTool._startBoneLabelEdit(boneName, existingLabel.textContent.replace('×', '').trim());
-            } else {
-                SMTool._startBoneLabelEdit(boneName, '');
-            }
+            if (boneName) SMData._pasteTargetBone = boneName;
         }
     });
 };
