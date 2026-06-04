@@ -1015,6 +1015,15 @@ SMTool._loadFromSourceData = function (node) {
                 node.version = sd.version || node.version;
                 node.bones = [];
                 for (var i = 0; i < sd.bones.length; i++) node.bones.push(sd.bones[i].name);
+                // ★ 补充填充动画/皮肤/插槽列表
+                node.animations = [];
+                for (var ai = 0; ai < sd.animations.length; ai++) {
+                    node.animations.push({ name: sd.animations[ai].name, duration: sd.animations[ai].duration || 0 });
+                }
+                node.skins = [];
+                for (var si = 0; si < sd.skins.length; si++) node.skins.push(sd.skins[si].name);
+                node.slots = [];
+                for (var sli = 0; sli < sd.slots.length; sli++) node.slots.push(sd.slots[sli].name);
 
                 var sk = new SP.Skeleton(sd);
                 if (sd.defaultSkin) sk.setSkin(sd.defaultSkin);

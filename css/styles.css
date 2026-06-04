@@ -1452,6 +1452,82 @@ body {
     flex: 1;
     overflow-y: auto;
     padding: 10px 14px;
+    /* 底部留出空间给固定 footer */
+    padding-bottom: 4px;
+}
+
+/* ===== 页签导航栏 ===== */
+#dataFloatPanel .dfp-tabs {
+    display: flex;
+    flex-shrink: 0;
+    border-bottom: 2px solid var(--border);
+    background: var(--node-bg);
+    padding: 0 6px;
+    gap: 2px;
+}
+#dataFloatPanel .dfp-tab-btn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 8px 4px;
+    border: none;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    background: transparent;
+    color: var(--text2);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: color 0.2s, border-color 0.2s, background 0.2s;
+    font-family: inherit;
+    white-space: nowrap;
+    border-radius: 6px 6px 0 0;
+    position: relative;
+    overflow: visible;
+}
+#dataFloatPanel .dfp-tab-btn:hover {
+    color: var(--text);
+    background: rgba(255,255,255,0.04);
+}
+#dataFloatPanel .dfp-tab-btn.active {
+    color: var(--accent2);
+    border-bottom-color: var(--accent2);
+    font-weight: 600;
+}
+#dataFloatPanel .dfp-tab-count {
+    font-size: 10px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 8px;
+    padding: 1px 6px;
+    color: var(--text2);
+    min-width: 16px;
+    text-align: center;
+}
+#dataFloatPanel .dfp-tab-btn.active .dfp-tab-count {
+    background: rgba(74, 158, 255, 0.2);
+    color: var(--accent2);
+}
+
+/* ===== 页签内容面板 ===== */
+#dataFloatPanel .dfp-tab-panel {
+    display: none;
+}
+#dataFloatPanel .dfp-tab-panel.active {
+    display: block;
+}
+
+/* ===== 面板底部固定栏（PMA 按钮） ===== */
+#dataFloatPanel .dfp-footer {
+    flex-shrink: 0;
+    padding: 8px 14px;
+    border-top: 1px solid var(--border);
+    background: var(--node-bg);
+}
+/* 空 footer 时隐藏（如入口/出口节点、提示文字状态） */
+#dataFloatPanel .dfp-footer:empty {
+    display: none;
 }
 
 /* 提示文字 */
@@ -1619,6 +1695,30 @@ body {
     gap: 4px;
     flex: 1;
     min-width: 0;
+}
+
+/* ★ 骨骼/插槽页签右上角红色小圆点（有内容时显示，循环缩放发光） */
+#dataFloatPanel .dfp-tab-dot {
+    position: absolute;
+    top: 1px;
+    right: 6px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #ff3040;
+    box-shadow: 0 0 5px rgba(255, 48, 64, 0.8);
+    pointer-events: none;
+    animation: tabDotPulse 1.6s ease-in-out infinite;
+}
+@keyframes tabDotPulse {
+    0%, 100% {
+        transform: scale(1);
+        box-shadow: 0 0 5px rgba(255, 48, 64, 0.8);
+    }
+    50% {
+        transform: scale(1.8);
+        box-shadow: 0 0 10px rgba(255, 48, 64, 1.0), 0 0 16px rgba(255, 48, 64, 0.4);
+    }
 }
 #dataFloatPanel .dfp-bone-badge {
     display: inline-flex;
@@ -2578,6 +2678,114 @@ body {
     align-items: center;
     flex-wrap: wrap;
     gap: 2px;
+}
+
+/* ===== 右上角动画预览浮窗面板 ===== */
+#animPreviewPanel {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 600;
+    width: 280px;
+    height: 420px;
+    min-width: 200px;
+    min-height: 200px;
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6), 0 0 2px rgba(255, 255, 255, 0.08);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    user-select: none;
+    transition: box-shadow 0.2s;
+}
+#animPreviewPanel:hover {
+    box-shadow: 0 8px 44px rgba(0, 0, 0, 0.7), 0 0 6px rgba(74, 158, 255, 0.15);
+}
+
+/* 标题栏（拖拽手柄） */
+#animPreviewPanel .app-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 14px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    cursor: move;
+    flex-shrink: 0;
+    -webkit-app-region: no-drag;
+    border-radius: 13px 13px 0 0;
+}
+#animPreviewPanel .app-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 220px;
+}
+#animPreviewPanel .app-close {
+    font-size: 16px;
+    color: rgba(255, 255, 255, 0.8);
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition: all 0.2s;
+    line-height: 1;
+}
+#animPreviewPanel .app-close:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.2);
+}
+
+/* Canvas 区域 */
+#animPreviewPanel .app-canvas-wrap {
+    flex: 1;
+    position: relative;
+    background: var(--bg);
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+#animPreviewPanel .app-canvas-wrap canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+/* 缩放手柄（右下角） */
+#animPreviewPanel .app-resize-handle {
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    width: 22px;
+    height: 22px;
+    cursor: nwse-resize;
+    z-index: 10;
+    opacity: 0.6;
+    transition: opacity 0.2s;
+    background:
+        linear-gradient(135deg, transparent 50%, rgba(255,255,255,0.3) 50%),
+        linear-gradient(135deg, transparent 50%, rgba(255,255,255,0.2) 52%);
+    border-radius: 0 0 13px 0;
+}
+#animPreviewPanel .app-resize-handle:hover {
+    opacity: 1;
+}
+#animPreviewPanel .app-resize-handle::after {
+    content: '';
+    position: absolute;
+    bottom: 4px;
+    right: 4px;
+    width: 0;
+    height: 0;
+    border-top: 10px solid transparent;
+    border-right: 10px solid rgba(255,255,255,0.5);
+    border-bottom: 10px solid rgba(255,255,255,0.5);
+    border-left: 10px solid transparent;
 }
 
 /* 状态色块 — 默认暗灰，选中路径后才亮起 */

@@ -96,6 +96,11 @@ SMTool.deleteNode = function (nid) {
     // 清理该节点的浮动标签（缩放 < 40% 时显示的大字标签）
     SMTool._updateFloatLabels();
 
+    // ★ 若删除的是预览面板的源节点，关闭预览
+    if (SMData._animPreview.visible && SMData._animPreview.nodeId === nid) {
+        SMTool._hideAnimPreview();
+    }
+
     SMTool._updateSel();
     SMTool._updateSB();
     SMTool._updateStateRowColors();
@@ -249,10 +254,9 @@ SMTool._setSkin = function (nid, skinName) {
     }
 
     // 同步刷新数据面板高亮
+    SMData._lastPanelNodeId = -1;
     SMTool._updateFloatPanel();
 };
-
-// 切换连线模式
 SMTool.toggleConnectMode = function () {
     SMData.connectMode = !SMData.connectMode;
     document.getElementById('btnConnect').classList.toggle('active', SMData.connectMode);
@@ -1310,6 +1314,9 @@ SMTool.init = function () {
     SMTool._initFlowPanel();
     SMTool._updateFlowPanel();    // 设置初始 inactive 状态 + 提示文字
     SMTool.setFlowMode('three');  // 初始模式为三层
+
+    // ★ 初始化右上角动画预览浮窗面板
+    SMTool._initAnimPreviewPanel();
 
     SMTool._updateSB();
 

@@ -859,6 +859,8 @@ SMTool._onKD = function (e) {
         SMData.selectedNode = null;
         document.getElementById('btnConnect').classList.remove('active');
         document.getElementById('conditionEditor').classList.remove('show');
+        // ★ 关闭预览面板
+        SMTool._hideAnimPreview();
         SMTool._updateSel();
         SMTool._updateStateRowColors();
     }
@@ -943,11 +945,19 @@ SMTool._onAnimChange = function (nid, animName) {
     node.tracks[0].animName = animName;
     node.currentAnim = animName;
     node.name = SMTool._translateName(animName);
+    // ★ 初始化：重置骨骼到绑定姿态 + 清除所有轨道，确保新动画从干净状态开始
+    node.skeleton.setToSetupPose();
+    node.state.clearTracks();
     SMTool._applyTracksToState(node);
     SMTool._updateEl(node);
     SMTool._updateStateRowColors();
     SMTool._updateDuplicateHighlights();
     SMTool._checkMissingStates();
+
+    // ★ 同步更新预览面板动画
+    if (SMData._animPreview.visible && SMData._animPreview.nodeId === nid) {
+        SMTool._updateAnimPreviewAnim(animName);
+    }
 };
 
 // ---- 旧的状态行点击（保留兼容，供手动创建的节点使用） ----
@@ -1324,8 +1334,6 @@ SMTool._expandFloatPanel = function () {
     SMData._floatPanel.expanded = true;
     var panel = document.getElementById('dataFloatPanel');
     if (panel) panel.classList.add('expanded');
-    // ★ 面板展开时触发截图懒加载
-    SMTool._loadPanelImages();
 };
 
 // 收起面板
@@ -1335,8 +1343,6 @@ SMTool._collapseFloatPanel = function () {
     SMData._floatPanel.expanded = false;
     var panel = document.getElementById('dataFloatPanel');
     if (panel) panel.classList.remove('expanded');
-    // ★ 面板收起时释放已加载的截图图片内存
-    SMTool._unloadPanelImages();
 };
 
 // 延迟收起（鼠标离开面板时使用，留一点缓冲）
@@ -1552,6 +1558,12 @@ SMTool._initFlowPanel = function () {
             }
             SMTool._updateSel();
             SMTool._updateStateRowColors();
+
+            // ★ 触发右上角动画预览浮窗
+            if (SMData.selectedNode) {
+                var selNode2 = SMData.nodes.get(SMData.selectedNode);
+                if (selNode2) SMTool._showAnimPreview(selNode2);
+            }
         });
     }
 };
@@ -1710,6 +1722,7 @@ SMTool._saveBoneLabel = function (boneName, labelText) {
     if (!SMData._boneLabelStore[storeKey]) SMData._boneLabelStore[storeKey] = {};
     SMData._boneLabelStore[storeKey][boneName] = labelText;
 
+    SMData._lastPanelNodeId = -1;
     SMTool._updateFloatPanel();
 };
 
@@ -1726,5 +1739,6 @@ SMTool._removeBoneLabel = function (boneName) {
         }
     }
 
+    SMData._lastPanelNodeId = -1;
     SMTool._updateFloatPanel();
 };

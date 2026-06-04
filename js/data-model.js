@@ -106,6 +106,7 @@ var SMData = {
     _assetsDirHandle: null,  // FileSystemDirectoryHandle（伴随图片存储目录）
     _panelCache: {},         // 数据面板 HTML 缓存 { nodeId: htmlString }
     _lastPanelNodeId: -1,    // 上次渲染面板的节点 ID
+    _activePanelTab: 'skin', // 当前激活的数据面板页签（skin/bone/slot/info）
     _pasteTargetBone: null,  // 粘贴截图按钮设置的目标骨骼名
 
     // ---- 全局截图注册表（极致去重） ----
@@ -114,7 +115,37 @@ var SMData = {
     // 结构：{ shotId: { dataUrl, thumbDataUrl, refCount, hash } }
     _shotStore: {},
     _shotHashIndex: {},  // { hashKey: [shotId, shotId2, ...] }  采样 hash → shotId 列表，O(1) 查找
-    _nextShotId: 1
+    _nextShotId: 1,
+
+    // ---- 右上角动画预览浮窗面板状态 ----
+    _animPreview: {
+        visible: false,       // 面板是否可见
+        nodeId: null,         // 源节点 ID
+        canvas: null,         // 预览画布元素
+        gl: null,             // 预览 WebGL 上下文
+        skeleton: null,       // Spine 骨架实例
+        state: null,          // Spine AnimationState 实例
+        animName: '',         // 当前播放的动画名
+        panelX: 0,            // 面板 left px
+        panelY: 0,            // 面板 top px
+        panelW: 280,          // 面板宽度 px
+        panelH: 420,          // 面板高度 px
+        _spineVer: '',        // Spine 版本 ('3.8' | '4.2' | '4.3')
+        _batcher: null,       // PolygonBatcher
+        _shader: null,        // Shader
+        _sceneRenderer: null, // SceneRenderer
+        _glTextures: [],      // GL 纹理数组
+        _texImgs: [],         // 纹理 Image 对象数组
+        _texCacheKeys: [],    // 纹理缓存键（用于释放）
+        _atlasData: null,     // 解析后的 atlas 数据
+        _skeletonData: null,  // 解析后的 skeletonData
+        _canvasWidth: 0,      // 骨架像素宽
+        _canvasHeight: 0,     // 骨架像素高
+        _boundsOffset: null,  // {x, y} 骨架包围盒偏移
+        _boundsSize: null,    // {x, y} 骨架包围盒尺寸
+        _physParam: null,     // 物理参数
+        _lastTime: 0          // 上一帧时间
+    }
 };
 
 // ---- 快速采样 hash（非加密，用于去重查找的 O(1) 索引） ----
@@ -223,16 +254,11 @@ SMData._shotGetThumb = function (shotId) {
         genThumb(entry.dataUrl).then(function (thumb) {
             entry.thumbDataUrl = thumb;
             entry._thumbPending = false;
-            // 缩略图就绪后刷新面板
+            // 缩略图就绪后刷新面板（HTML 构建时已通过 _shotGetThumb 使用真实图片）
             if (SMData._lastPanelNodeId >= 0) {
                 SMData._lastPanelNodeId = -1;
                 var updateFn = window.SMTool && window.SMTool._updateFloatPanel;
                 if (updateFn) updateFn();
-                // ★ 刷新后面板 img 元素已重建，需要重新触发懒加载
-                setTimeout(function () {
-                    var loadFn = window.SMTool && window.SMTool._loadPanelImages;
-                    if (loadFn) loadFn();
-                }, 80);
             }
         });
     }
