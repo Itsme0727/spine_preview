@@ -1288,6 +1288,10 @@ SMTool._updateSel = function () {
 
     // 计算焦点集合
     var focusSet = new Set();
+    // ★ 无选中节点时清除旧的流程焦点，避免残留高亮/变暗
+    if (SMData._flowFocus && !SMData.selectedNode) {
+        SMData._flowFocus = null;
+    }
     if (SMData._flowFocus) {
         // 流程面板高亮模式：使用流程焦点节点
         SMData._flowFocus.nodeIds.forEach(function (nid) { focusSet.add(nid); });
@@ -2450,6 +2454,8 @@ SMTool._updateFullFlowPanel = function (content, panel) {
         (SMData.selectedNodes.size > 1 && SMTool._findGroupOf(selNodeId))
     );
     if (!showFlow) {
+        // ★ 无选中节点时清除旧路径，防止展开面板时误触发播放/重置
+        SMData._fullPaths = [];
         panel.classList.add('inactive');
         content.innerHTML = '<div class="flp-hint">点击选中一个动画节点，查看其完整动画组合</div>';
         content.scrollTop = _savedScrollTop;

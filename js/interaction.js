@@ -1755,7 +1755,7 @@ SMTool._expandFlowPanel = function () {
     SMTool._updateFlowPanel();
     var pb = SMData._fullPlayback;
     var paths = SMData._fullPaths;
-    if (pb.activePathIdx < 0 && paths && paths.length > 0 && !pb.isPlaying && !SMData._flowExitLock) {
+    if (SMData.selectedNode && pb.activePathIdx < 0 && paths && paths.length > 0 && !pb.isPlaying && !SMData._flowExitLock) {
         SMTool._selectFullPath(0);
     }
 };
@@ -1764,6 +1764,8 @@ SMTool._expandFlowPanel = function () {
 SMTool._collapseFlowPanel = function () {
     if (!SMData._flowPanel.expanded) return;
     SMData._flowPanel.expanded = false;
+    // ★ 收起前记录是否实际进入了流模式（有选中节点时才会暂停/重置动画）
+    var wasInFlow = !!SMData.selectedNode;
     // 收起时也还原最大化状态、焦点高亮、播放状态和选中路径
     SMData._flowPanel.maximized = false;
     SMData._flowFocus = null;
@@ -1772,7 +1774,10 @@ SMTool._collapseFlowPanel = function () {
     SMData._fullPlayback.currentStep = 0;
     if (SMData._fullPlayback._timer) { clearTimeout(SMData._fullPlayback._timer); SMData._fullPlayback._timer = null; }
     SMTool._clearAllProgressBars();
-    SMTool._resumeAllNodes();
+    // ★ 仅当实际进入了流模式时才恢复节点（无选中节点时面板仅显示提示，未打断动画）
+    if (wasInFlow) {
+        SMTool._forceResetAllNodes();
+    }
     SMTool._updateSel();
     SMTool._updateStateRowColors();
     var panel = document.getElementById('flowPanel');
