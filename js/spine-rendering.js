@@ -486,6 +486,9 @@ SMTool._loop = function (now) {
             node.shader.unbind();
         }
 
+        // ★ 渲染骨骼挂图（截图绑定到骨骼，跟随动画实时渲染）
+        SMTool._renderNodeBoneImages(node, gl, nodeW, nodeH, sx, glY, sw, sh);
+
         result = nodesIter.next();
     }
 
@@ -875,6 +878,9 @@ SMTool._renderAnimPreview = function (now) {
             pp._shader.unbind();
         }
     }
+
+    // ★ 渲染预览浮窗骨骼挂图
+    SMTool._renderPreviewBoneImages(pp);
 };
 
 // ---- 同步预览面板视口（缩放面板时调用，重新计算相机/投影/骨架位置） ----
@@ -968,6 +974,19 @@ SMTool._destroyAnimPreview = function () {
         for (var i = 0; i < pp._glTextures.length; i++) {
             try { pp._glTextures[i].dispose(); } catch (e) {}
         }
+    }
+    // ★ 销毁预览专属骨骼挂图资源（独立 GL 上下文）
+    if (pp._boneTexCache && pp.gl) {
+        var btcKeys = Object.keys(pp._boneTexCache);
+        for (var b = 0; b < btcKeys.length; b++) {
+            try { pp._boneTexCache[btcKeys[b]].texture.dispose(); } catch (e) {}
+        }
+        pp._boneTexCache = null;
+    }
+    if (pp._boneQR && pp.gl) {
+        try { pp.gl.deleteProgram(pp._boneQR.prog); } catch (e) {}
+        try { pp.gl.deleteBuffer(pp._boneQR.vbo); } catch (e) {}
+        pp._boneQR = null;
     }
 
     // 重置状态
@@ -1165,4 +1184,451 @@ SMTool.resize = function () {
     SMTool.connCanvas.width = window.innerWidth;
     SMTool.connCanvas.height = window.innerHeight;
     SMTool._resizeSharedRenderer();
+};
+
+// ================================================================
+// ★ 骨骼挂图渲染 — 将骨骼截图以程序化挂点方式绑定到 Spine 骨骼
+//    跟随骨骼的位移/旋转/缩放，在动画节点和预览浮窗内实时渲染
+// ================================================================
+
+// 骨骼图片 GL 纹理缓存（主画布共享）
+// { shotId: { texture, img, width, height } }
+SMTool._boneTexCache = {};
+
+// 骨骼挂图四边形渲染器（主画布）
+SMTool._boneQR = null;
+
+// ---- 编译骨骼挂图着色器程序 ----
+SMTool._createBoneQuadRenderer = function (gl) {
+    var vs = gl.createShader(gl.VERTEX_SHADER);
+    gl.shaderSource(vs, [
+        'attribute vec2 a_pos;',
+        'attribute vec2 a_uv;',
+        'uniform mat4 u_mvp;',
+        'varying vec2 v_uv;',
+        'void main() {',
+        '  gl_Position = u_mvp * vec4(a_pos, 0.0, 1.0);',
+        '  v_uv = a_uv;',
+        '}'
+    ].join('\n'));
+    gl.compileShader(vs);
+
+    var fs = gl.createShader(gl.FRAGMENT_SHADER);
+    gl.shaderSource(fs, [
+        'precision mediump float;',
+        'varying vec2 v_uv;',
+        'uniform sampler2D u_tex;',
+        'uniform float u_alpha;',
+        'void main() {',
+        '  vec4 c = texture2D(u_tex, v_uv);',
+        '  gl_FragColor = vec4(c.rgb, c.a * u_alpha);',
+        '}'
+    ].join('\n'));
+    gl.compileShader(fs);
+
+    var prog = gl.createProgram();
+    gl.attachShader(prog, vs);
+    gl.attachShader(prog, fs);
+    gl.linkProgram(prog);
+
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+        console.warn('[BoneQR] Shader link failed:', gl.getProgramInfoLog(prog));
+        gl.deleteProgram(prog);
+        return null;
+    }
+
+    var vbo = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+    // 单位正方形，中心在原点：(pos.x, pos.y, uv.u, uv.v)
+    // UV V 坐标翻转：WebGL texImage2D 上传 HTML Image 时第一行在顶部，
+    // 而 GL 纹理坐标 (0,0) 指向纹理数据第一行，即图片顶部
+    var verts = new Float32Array([
+        -0.5, -0.5,  0.0, 1.0,
+         0.5, -0.5,  1.0, 1.0,
+        -0.5,  0.5,  0.0, 0.0,
+         0.5,  0.5,  1.0, 0.0
+    ]);
+    gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
+
+    return {
+        prog: prog,
+        vbo: vbo,
+        aPos: gl.getAttribLocation(prog, 'a_pos'),
+        aUV: gl.getAttribLocation(prog, 'a_uv'),
+        uMVP: gl.getUniformLocation(prog, 'u_mvp'),
+        uTex: gl.getUniformLocation(prog, 'u_tex'),
+        uAlpha: gl.getUniformLocation(prog, 'u_alpha')
+    };
+};
+
+// ---- 获取或创建骨骼图片的 GL 纹理 ----
+SMTool._ensureBoneTexture = function (gl, shotId) {
+    if (SMTool._boneTexCache[shotId]) return SMTool._boneTexCache[shotId].texture;
+
+    var dataUrl = SMData._shotGetDataUrl ? SMData._shotGetDataUrl(shotId) : null;
+    if (!dataUrl) return null;
+
+    var img = new Image();
+    img.src = dataUrl;
+
+    var tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    // 占位 1x1 透明像素
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 0]));
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    var entry = { texture: tex, img: img, uploaded: false };
+    SMTool._boneTexCache[shotId] = entry;
+
+    img.onload = function () {
+        entry.uploaded = false; // 标记需要重新上传
+    };
+
+    return tex;
+};
+
+// ---- 上传已加载的图片到 GL 纹理 ----
+SMTool._uploadBoneTexture = function (gl, shotId) {
+    var entry = SMTool._boneTexCache[shotId];
+    if (!entry || entry.uploaded || !entry.img || !entry.img.complete || !entry.img.width) return;
+    try {
+        gl.bindTexture(gl.TEXTURE_2D, entry.texture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, entry.img);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        entry.uploaded = true;
+    } catch (e) {
+        // 跨域或其他错误，忽略
+    }
+};
+
+// ---- 构建正交投影矩阵（Y-down，屏幕空间） ----
+SMTool._orthoM4 = function (out, l, r, b, t, n, f) {
+    out.fill(0);
+    out[0] = 2 / (r - l);
+    out[5] = 2 / (t - b);
+    out[10] = -2 / (f - n);
+    out[12] = -(r + l) / (r - l);
+    out[13] = -(t + b) / (t - b);
+    out[14] = -(f + n) / (f - n);
+    out[15] = 1;
+};
+
+// ---- 构建 2D 模型矩阵（平移 + 旋转 + 缩放） ----
+SMTool._modelM4 = function (out, tx, ty, angle, sx, sy) {
+    var cos = Math.cos(angle);
+    var sin = Math.sin(angle);
+    out.fill(0);
+    out[0] = cos * sx;
+    out[1] = sin * sx;
+    out[4] = -sin * sy;
+    out[5] = cos * sy;
+    out[12] = tx;
+    out[13] = ty;
+    out[10] = 1;
+    out[15] = 1;
+};
+
+// ---- 4x4 矩阵乘法：out = a * b ----
+SMTool._mulM4 = function (out, a, b) {
+    for (var i = 0; i < 4; i++) {
+        for (var j = 0; j < 4; j++) {
+            out[i + j * 4] = a[i] * b[j * 4] + a[i + 4] * b[1 + j * 4] + a[i + 8] * b[2 + j * 4] + a[i + 12] * b[3 + j * 4];
+        }
+    }
+};
+
+// ---- 保存关键 GL 状态 ----
+SMTool._saveGL = function (gl) {
+    return {
+        prog: gl.getParameter(gl.CURRENT_PROGRAM),
+        blend: gl.isEnabled(gl.BLEND),
+        blendSrc: gl.getParameter(gl.BLEND_SRC_RGB),
+        blendDst: gl.getParameter(gl.BLEND_DST_RGB),
+        tex2D: gl.getParameter(gl.TEXTURE_BINDING_2D),
+        activeTex: gl.getParameter(gl.ACTIVE_TEXTURE),
+        arrBuf: gl.getParameter(gl.ARRAY_BUFFER_BINDING),
+        vp: gl.getParameter(gl.VIEWPORT)
+    };
+};
+
+// ---- 恢复关键 GL 状态 ----
+SMTool._restoreGL = function (gl, s) {
+    gl.useProgram(s.prog);
+    if (s.blend) { gl.enable(gl.BLEND); } else { gl.disable(gl.BLEND); }
+    gl.blendFunc(s.blendSrc, s.blendDst);
+    gl.activeTexture(s.activeTex);
+    gl.bindTexture(gl.TEXTURE_2D, s.tex2D);
+    gl.bindBuffer(gl.ARRAY_BUFFER, s.arrBuf);
+    gl.viewport(s.vp[0], s.vp[1], s.vp[2], s.vp[3]);
+};
+
+// ================================================================
+// 渲染节点骨骼挂图（在共享画布上，跟随 Spine 骨骼动画）
+// 调用时机：每帧每个节点骨架渲染完成后
+// ================================================================
+SMTool._renderNodeBoneImages = function (node, gl, nodeW, nodeH, sx, glY, sw, sh) {
+    if (!node._boneScreenshots || !node.skeleton) return;
+    var boneNames = Object.keys(node._boneScreenshots);
+    if (boneNames.length === 0) return;
+
+    // 懒初始化骨骼四边形渲染器（主画布共享）
+    if (!SMTool._boneQR && gl) {
+        SMTool._boneQR = SMTool._createBoneQuadRenderer(gl);
+    }
+    var qr = SMTool._boneQR;
+    if (!qr) return;
+
+    // ★ 显式恢复节点专属 viewport + scissor（4.x SceneRenderer.end() 可能重置）
+    gl.viewport(sx, glY, sw, sh);
+    gl.scissor(sx, glY, sw, sh);
+    gl.enable(gl.SCISSOR_TEST);
+
+    // 构建骨骼名 → 骨骼对象映射
+    var bones = node.skeleton.bones;
+    if (!bones || bones.length === 0) return;
+    var boneMap = {};
+    for (var i = 0; i < bones.length; i++) {
+        var b = bones[i];
+        var nm = (b.data && b.data.name) ? b.data.name : (typeof b.getName === 'function' ? b.getName() : '');
+        if (nm) boneMap[nm] = b;
+    }
+
+    // 保存 GL 状态
+    var saved = SMTool._saveGL(gl);
+
+    // 设置骨骼挂图渲染管线
+    gl.useProgram(qr.prog);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.bindBuffer(gl.ARRAY_BUFFER, qr.vbo);
+    gl.enableVertexAttribArray(qr.aPos);
+    gl.vertexAttribPointer(qr.aPos, 2, gl.FLOAT, false, 16, 0);
+    gl.enableVertexAttribArray(qr.aUV);
+    gl.vertexAttribPointer(qr.aUV, 2, gl.FLOAT, false, 16, 8);
+
+    // 正交投影：映射节点画布坐标（Y-up，匹配 Spine 坐标系）
+    var ortho = new Float32Array(16);
+    SMTool._orthoM4(ortho, 0, nodeW, 0, nodeH, -1, 1);
+    gl.uniform1i(qr.uTex, 0);
+
+    var defSize = Math.max(Math.min(nodeH * 0.2, 250), 80); // 画布高度的 20%（80-250px）
+
+    for (var bi = 0; bi < boneNames.length; bi++) {
+        var boneName = boneNames[bi];
+        var bone = boneMap[boneName];
+        if (!bone) continue;
+
+        var shotIds = node._boneScreenshots[boneName];
+        if (!Array.isArray(shotIds)) shotIds = shotIds != null ? [shotIds] : [];
+        if (shotIds.length === 0) continue;
+
+        // 提取骨骼世界变换（兼容 3.8 / 4.x API）
+        var bx, by, angle, scaleX, scaleY;
+        if (typeof bone.getWorldX === 'function') {
+            // 4.x: getWorldX/Y/RotationX/ScaleX
+            bx = bone.getWorldX();
+            by = bone.getWorldY();
+            angle = (typeof bone.getWorldRotationX === 'function') ? bone.getWorldRotationX() : 0;
+            scaleX = (typeof bone.getWorldScaleX === 'function') ? bone.getWorldScaleX() : 1;
+            scaleY = (typeof bone.getWorldScaleY === 'function') ? bone.getWorldScaleY() : 1;
+        } else {
+            // 3.8: 直接属性访问
+            bx = bone.worldX;
+            by = bone.worldY;
+            angle = Math.atan2(bone.b, bone.a);
+            scaleX = Math.sqrt(bone.a * bone.a + bone.c * bone.c);
+            scaleY = Math.sqrt(bone.b * bone.b + bone.d * bone.d);
+        }
+
+        // 骨骼 worldX/Y 已含 skeleton x/y 偏移，无需额外加
+
+        for (var si = 0; si < shotIds.length; si++) {
+            var shotId = shotIds[si];
+            if (typeof shotId !== 'number') continue;
+
+            var tex = SMTool._ensureBoneTexture(gl, shotId);
+            if (!tex) continue;
+            SMTool._uploadBoneTexture(gl, shotId);
+
+            // 图片原始像素尺寸 = 100% 大小，骨骼 worldScale 跟随动画缩放
+            var drawW = defSize, drawH = defSize;
+            var entry = SMTool._boneTexCache[shotId];
+            if (entry && entry.img && entry.img.width && entry.img.height) {
+                drawW = entry.img.width;
+                drawH = entry.img.height;
+            }
+
+            // 同一骨骼多张图微偏移，避免完全重叠
+            var offX = si * 5;
+            var offY = si * 5;
+
+            var model = new Float32Array(16);
+            SMTool._modelM4(model, bx + offX, by + offY, angle, drawW * scaleX, drawH * scaleY);
+
+            var mvp = new Float32Array(16);
+            SMTool._mulM4(mvp, ortho, model);
+            gl.uniformMatrix4fv(qr.uMVP, false, mvp);
+            gl.uniform1f(qr.uAlpha, 0.9);
+
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, tex);
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        }
+    }
+
+    // 恢复 GL 状态
+    SMTool._restoreGL(gl, saved);
+};
+
+// ================================================================
+// 渲染预览浮窗骨骼挂图（预览独立 WebGL 上下文）
+// ================================================================
+SMTool._renderPreviewBoneImages = function (pp) {
+    if (!pp || !pp.visible || !pp.skeleton || !pp.gl) return;
+    var nodeId = pp.nodeId;
+    if (nodeId == null) return;
+    var srcNode = SMData.nodes.get(nodeId);
+    if (!srcNode || !srcNode._boneScreenshots) return;
+    var boneNames = Object.keys(srcNode._boneScreenshots);
+    if (boneNames.length === 0) return;
+
+    var gl = pp.gl;
+    var cw = pp._canvasWidth || (pp.canvas ? pp.canvas.width : 320);
+    var ch = pp._canvasHeight || (pp.canvas ? pp.canvas.height : 500);
+
+    // 懒初始化预览专属四边形渲染器
+    if (!pp._boneQR) {
+        pp._boneQR = SMTool._createBoneQuadRenderer(gl);
+        pp._boneTexCache = {}; // 预览专属纹理缓存
+    }
+    var qr = pp._boneQR;
+    if (!qr) return;
+
+    // 构建骨骼映射
+    var bones = pp.skeleton.bones;
+    if (!bones || bones.length === 0) return;
+    var boneMap = {};
+    for (var i = 0; i < bones.length; i++) {
+        var b = bones[i];
+        var nm = (b.data && b.data.name) ? b.data.name : (typeof b.getName === 'function' ? b.getName() : '');
+        if (nm) boneMap[nm] = b;
+    }
+
+    var saved = SMTool._saveGL(gl);
+
+    gl.useProgram(qr.prog);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    // ★ 显式恢复预览专属 viewport（4.x SceneRenderer.end() 可能重置）
+    gl.viewport(0, 0, pp.canvas ? pp.canvas.width : cw, pp.canvas ? pp.canvas.height : ch);
+    gl.bindBuffer(gl.ARRAY_BUFFER, qr.vbo);
+    gl.enableVertexAttribArray(qr.aPos);
+    gl.vertexAttribPointer(qr.aPos, 2, gl.FLOAT, false, 16, 0);
+    gl.enableVertexAttribArray(qr.aUV);
+    gl.vertexAttribPointer(qr.aUV, 2, gl.FLOAT, false, 16, 8);
+
+    var ortho = new Float32Array(16);
+    // ★ 预览缩放适配：正交投影范围与 Spine 预览渲染一致
+    var zoom = pp._contentZoom || 1.0;
+    var halfW = cw / (2 * zoom);
+    var halfH = ch / (2 * zoom);
+    SMTool._orthoM4(ortho, cw / 2 - halfW, cw / 2 + halfW, ch / 2 - halfH, ch / 2 + halfH, -1, 1);
+    gl.uniform1i(qr.uTex, 0);
+
+    var defSize = Math.max(Math.min((pp.canvas ? pp.canvas.height : ch) * 0.2, 250), 80); // 画布高度的 20%（80-250px）
+
+    // 预览专属纹理辅助（复用主缓存的数据，但在预览 GL 上下文中创建纹理）
+    function _ensurePreviewTex(shotId) {
+        if (pp._boneTexCache[shotId]) return pp._boneTexCache[shotId].texture;
+        var dataUrl = SMData._shotGetDataUrl ? SMData._shotGetDataUrl(shotId) : null;
+        if (!dataUrl) return null;
+        var img = new Image();
+        img.src = dataUrl;
+        var tex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 0]));
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        var entry = { texture: tex, img: img, uploaded: false };
+        pp._boneTexCache[shotId] = entry;
+        img.onload = function () { entry.uploaded = false; };
+        return tex;
+    }
+
+    function _uploadPreviewTex(shotId) {
+        var entry = pp._boneTexCache[shotId];
+        if (!entry || entry.uploaded || !entry.img || !entry.img.complete || !entry.img.width) return;
+        try {
+            gl.bindTexture(gl.TEXTURE_2D, entry.texture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, entry.img);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            entry.uploaded = true;
+        } catch (e) {}
+    }
+
+    for (var bi = 0; bi < boneNames.length; bi++) {
+        var boneName = boneNames[bi];
+        var bone = boneMap[boneName];
+        if (!bone) continue;
+
+        var shotIds = srcNode._boneScreenshots[boneName];
+        if (!Array.isArray(shotIds)) shotIds = shotIds != null ? [shotIds] : [];
+        if (shotIds.length === 0) continue;
+
+        var bx, by, angle, scaleX, scaleY;
+        if (typeof bone.getWorldX === 'function') {
+            bx = bone.getWorldX();
+            by = bone.getWorldY();
+            angle = (typeof bone.getWorldRotationX === 'function') ? bone.getWorldRotationX() : 0;
+            scaleX = (typeof bone.getWorldScaleX === 'function') ? bone.getWorldScaleX() : 1;
+            scaleY = (typeof bone.getWorldScaleY === 'function') ? bone.getWorldScaleY() : 1;
+        } else {
+            bx = bone.worldX;
+            by = bone.worldY;
+            angle = Math.atan2(bone.b, bone.a);
+            scaleX = Math.sqrt(bone.a * bone.a + bone.c * bone.c);
+            scaleY = Math.sqrt(bone.b * bone.b + bone.d * bone.d);
+        }
+        // 骨骼 worldX/Y 已含 skeleton x/y 偏移，无需额外加
+
+        for (var si = 0; si < shotIds.length; si++) {
+            var shotId = shotIds[si];
+            if (typeof shotId !== 'number') continue;
+
+            var tex = _ensurePreviewTex(shotId);
+            if (!tex) continue;
+            _uploadPreviewTex(shotId);
+
+            var drawW = defSize, drawH = defSize;
+            var entry = pp._boneTexCache[shotId];
+            if (entry && entry.img && entry.img.width && entry.img.height) {
+                drawW = entry.img.width;
+                drawH = entry.img.height;
+            }
+
+            var offX = si * 5;
+            var offY = si * 5;
+
+            var model = new Float32Array(16);
+            SMTool._modelM4(model, bx + offX, by + offY, angle, drawW * scaleX, drawH * scaleY);
+
+            var mvp = new Float32Array(16);
+            SMTool._mulM4(mvp, ortho, model);
+            gl.uniformMatrix4fv(qr.uMVP, false, mvp);
+            gl.uniform1f(qr.uAlpha, 0.9);
+
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, tex);
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        }
+    }
+
+    SMTool._restoreGL(gl, saved);
 };

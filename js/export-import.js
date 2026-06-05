@@ -5,7 +5,7 @@
 
 var SMTool = window.SMTool || {};
 
-// ---- dataURL → Blob 转换（用于保存为 JPG 文件）----
+// ---- dataURL → Blob 转换（保持原始图片格式）----
 SMTool._dataUrlToBlob = function (dataUrl) {
     var parts = dataUrl.split(',');
     var mime = parts[0].match(/:(.*?);/)[1];
@@ -66,7 +66,7 @@ SMTool._collectAllBoneScreenshots = function () {
     return shotMap;
 };
 
-// ---- 保存骨骼截图为 JPG 文件到指定目录（★ 文件级去重：每张唯一图片只存一份）----
+// ---- 保存骨骼截图为原始格式文件到指定目录（★ 保持上传时的原始图片格式）----
 SMTool._saveCompanionImages = function (dirHandle) {
     var shotMap = SMTool._collectAllBoneScreenshots();
     var shotIds = Object.keys(shotMap);
@@ -80,8 +80,15 @@ SMTool._saveCompanionImages = function (dirHandle) {
             var shotInfo = shotMap[shotId];
             if (!shotInfo || !shotInfo.dataUrl) continue;
 
-            // ★ 使用 shotId 命名文件，同一 shotId 只存一份！
-            var fileName = 'img_' + shotId + '.jpg';
+            // ★ 从 dataUrl 检测原始图片格式，保持上传时的 MIME 类型
+            var mime = 'image/png'; // 兜底
+            var mimeMatch = shotInfo.dataUrl.match(/^data:(image\/\w+);/);
+            if (mimeMatch) mime = mimeMatch[1];
+            var ext = mime.split('/')[1]; // png, jpeg, gif, webp...
+            if (ext === 'jpeg') ext = 'jpg';
+
+            // ★ 使用 shotId 命名文件，同一 shotId 只存一份
+            var fileName = 'img_' + shotId + '.' + ext;
 
             // ★ 为所有引用此 shotId 的节点设置 _boneShotRefs
             for (var r = 0; r < shotInfo.refs.length; r++) {
@@ -94,42 +101,22 @@ SMTool._saveCompanionImages = function (dirHandle) {
                 }
             }
 
-            // 异步保存图片文件
-            (function (fn, dataUrl, sid) {
-                var img = new Image();
-                var p = new Promise(function (resolve, reject) {
-                    img.onload = function () {
-                        var canvas = document.createElement('canvas');
-                        canvas.width = img.width;
-                        canvas.height = img.height;
-                        var ctx = canvas.getContext('2d');
-                        ctx.drawImage(img, 0, 0);
-                        canvas.toBlob(function (blob) {
-                            if (blob) {
-                                assetsDir.getFileHandle(fn, { create: true }).then(function (fileHandle) {
-                                    return fileHandle.createWritable().then(function (writable) {
-                                        return writable.write(blob).then(function () {
-                                            return writable.close();
-                                        });
-                                    });
-                                }).then(resolve).catch(reject);
-                            } else {
-                                var fallbackBlob = SMTool._dataUrlToBlob(dataUrl);
-                                assetsDir.getFileHandle(fn, { create: true }).then(function (fileHandle) {
-                                    return fileHandle.createWritable().then(function (writable) {
-                                        return writable.write(fallbackBlob).then(function () {
-                                            return writable.close();
-                                        });
-                                    });
-                                }).then(resolve).catch(reject);
-                            }
-                        }, 'image/jpeg', 0.92);
-                    };
-                    img.onerror = function () { reject(new Error('Failed to load image for shot ' + sid)); };
+            // 异步保存图片文件（原始二进制，不经过 canvas 重编码）
+            (function (fn, dataUrl, sid, mimeType) {
+                var p = Promise.resolve().then(function () {
+                    var blob = SMTool._dataUrlToBlob(dataUrl);
+                    return assetsDir.getFileHandle(fn, { create: true }).then(function (fileHandle) {
+                        return fileHandle.createWritable().then(function (writable) {
+                            return writable.write(blob).then(function () {
+                                return writable.close();
+                            });
+                        });
+                    });
+                }).catch(function (err) {
+                    console.warn('[Export] Failed to save bone image ' + fn + ':', err);
                 });
-                img.src = dataUrl;
                 promises.push(p);
-            })(fileName, shotInfo.dataUrl, shotId);
+            })(fileName, shotInfo.dataUrl, shotId, mime);
         }
         return Promise.all(promises);
     });
