@@ -8,6 +8,27 @@ var SMTool = window.SMTool || {};
 
 // ---- 鼠标按下 ----
 SMTool._onMD = function (e) {
+    // ★ 最高优先级：左键点击画布任意位置 → 退出动画流模式，强制恢复所有节点正常播放
+    if (e.button === 0) {
+        var pb = SMData._fullPlayback;
+        if (pb.activePathIdx >= 0) {
+            // ★ 先上锁，防止后续任何逻辑重新拉回流模式
+            SMData._flowExitLock = true;
+            pb.isPlaying = false;
+            pb.activePathIdx = -1;
+            pb.currentStep = 0;
+            pb._stepped = false;
+            if (pb._timer) { clearTimeout(pb._timer); pb._timer = null; }
+            if (SMData._animPreview) SMData._animPreview._flowFrozen = false;
+            SMTool._clearAllProgressBars();
+            SMTool._forceResetAllNodes();
+            SMTool._updateFullFlowPanel(document.getElementById('flpContent'), document.getElementById('flowPanel'));
+            SMTool._updateSel();
+            SMTool._updateStateRowColors();
+            setTimeout(function () { SMData._flowExitLock = false; }, 200);
+        }
+    }
+
     // 优先检测控制点点击
     if (e.button === 0 && !e.altKey) {
         var cp = SMTool._findCP(e.clientX, e.clientY, 24);
@@ -752,6 +773,7 @@ SMTool._onKD = function (e) {
                     _stateDesc: n._stateDesc || '',
                     _exitText: n._exitText || '',
                     _textContent: n._textContent || '',
+                    _customScale: n._customScale !== undefined ? n._customScale : 1.0,
                     infoCollapsed: !!n.infoCollapsed,
                     _oldId: n.id
                 });
@@ -862,6 +884,7 @@ SMTool._onKD = function (e) {
                 node._stateDesc = nd._stateDesc;
                 node._exitText = nd._exitText;
                 node._textContent = nd._textContent;
+                node._customScale = nd._customScale !== undefined ? nd._customScale : 1.0;
                 node.infoCollapsed = nd.infoCollapsed;
 
                 SMData.nodes.set(newId, node);
@@ -1721,11 +1744,11 @@ SMTool._expandFlowPanel = function () {
     SMData._flowPanel.expanded = true;
     var panel = document.getElementById('flowPanel');
     if (panel) panel.classList.add('expanded');
-    // ★ 展开时刷新面板并默认选中第一个路径
+    // ★ 展开时刷新面板并默认选中第一个路径（退出锁期间跳过）
     SMTool._updateFlowPanel();
     var pb = SMData._fullPlayback;
     var paths = SMData._fullPaths;
-    if (pb.activePathIdx < 0 && paths && paths.length > 0 && !pb.isPlaying) {
+    if (pb.activePathIdx < 0 && paths && paths.length > 0 && !pb.isPlaying && !SMData._flowExitLock) {
         SMTool._selectFullPath(0);
     }
 };

@@ -110,6 +110,17 @@ SMTool._createEl = function (node) {
                 '<div class="conn-dot input" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'exit\',\'input\')" title="连线输入"></div>' +
             '</div>' +
             '<span class="scale-handle" onmousedown="event.stopPropagation();SMTool._onScaleStart(event,' + node.id + ')" title="拖拽缩放"><i class="scale-handle-icon"></i></span>';
+    } else if (node.nodeType === 'titleText') {
+        el.classList.add('title-node');
+        var titleText = SMTool._esc(node._textContent || '标题');
+        el.innerHTML =
+            '<div class="title-text" contenteditable="false" ' +
+                'ondblclick="event.stopPropagation();this.contentEditable=\'true\';this.focus();document.execCommand(\'selectAll\')" ' +
+                'onblur="this.contentEditable=\'false\';SMTool._updateTitleText(' + node.id + ',this.innerText)" ' +
+                'onkeydown="if(event.key===\'Escape\'){this.blur()}" ' +
+                'onmousedown="if(this.contentEditable===\'false\'){event.stopPropagation();SMTool._onHD(event,' + node.id + ')}" ' +
+                '>' + titleText + '</div>' +
+            '<span class="title-scale-handle" onmousedown="event.stopPropagation();SMTool._onScaleStart(event,' + node.id + ')" title="拖拽缩放"><i class="scale-handle-icon"></i></span>';
     } else {
     el.innerHTML =
         '<div class="header" onmousedown="event.stopPropagation();SMTool._onHD(event,' + node.id + ')">' +
@@ -2630,8 +2641,8 @@ SMTool._updateFullFlowPanel = function (content, panel) {
 
     // 初始化右侧 Spine 画布（已移除，改为使用浮窗预览）
 
-    // ★ 锚钉激活时，选中组后自动进入流预览模式并选第一个路径
-    if (pb.activePathIdx < 0 && paths.length > 0 && !pb.isPlaying && SMData._flowPanel.pinned) {
+    // ★ 锚钉激活时，选中组后自动进入流预览模式并选第一个路径（退出锁期间跳过）
+    if (pb.activePathIdx < 0 && paths.length > 0 && !pb.isPlaying && SMData._flowPanel.pinned && !SMData._flowExitLock) {
         SMTool._selectFullPath(0);
     }
 };
@@ -2835,6 +2846,39 @@ SMTool._resetAllToAnimFrame1 = function () {
             }
             n._pausedByFlow = false;
             n._savedTracks = undefined;
+        }
+        r = nodesIter.next();
+    }
+};
+
+// ★ 强制重置所有节点到正常播放（暴力恢复，用于退出动画流模式）
+SMTool._forceResetAllNodes = function () {
+    var nodesIter = SMData.nodes.values();
+    var r = nodesIter.next();
+    while (!r.done) {
+        var n = r.value;
+        if (n.state && n.skeletonData && n.skeleton) {
+            try { n.state.clearTracks(); } catch (e) {}
+            try { n.skeleton.setToSetupPose(); } catch (e) {}
+            // 恢复默认轨道配置
+            if (!n.tracks || n.tracks.length === 0) {
+                SMTool._initDefaultTracks(n);
+            }
+            n.tracks[0].loop = (n.loop !== false);
+            if (n._savedTracks && n._savedTracks.length > 0) {
+                n.tracks = JSON.parse(JSON.stringify(n._savedTracks));
+                n.loop = n._savedLoop !== undefined ? n._savedLoop : (n.tracks[0] && n.tracks[0].loop !== false);
+                n.currentAnim = n.tracks[0].animName || '';
+            }
+            try {
+                SMTool._applyTracksToState(n);
+                n.state.update(0);
+                n.state.apply(n.skeleton);
+                n.skeleton.updateWorldTransform(n._physParam);
+            } catch (e) {}
+            n._pausedByFlow = false;
+            n._savedTracks = undefined;
+            n._savedLoop = undefined;
         }
         r = nodesIter.next();
     }

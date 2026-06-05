@@ -2314,6 +2314,67 @@ body {
     background: var(--accent);
     color: #fff;
 }
+#ctxMenu .ctx-sep {
+    height: 1px;
+    background: var(--border);
+    margin: 3px 6px;
+}
+
+/* ===== 标题节点（固定屏幕大小，不随画布缩放）===== */
+.spine-node.title-node {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    min-width: auto !important;
+    width: auto !important;
+    cursor: move;
+}
+.spine-node.title-node .title-text {
+    font-size: 48px;
+    font-weight: 800;
+    color: #fff;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.8), 0 0 3px rgba(0,0,0,0.5);
+    outline: none;
+    border: none;
+    background: transparent;
+    padding: 4px 8px;
+    white-space: nowrap;
+    min-width: 40px;
+    cursor: move;
+    line-height: 1.2;
+}
+.spine-node.title-node .title-text:focus {
+    cursor: text;
+    text-shadow: 0 2px 12px rgba(0,0,0,0.9), 0 0 6px rgba(0,0,0,0.6);
+}
+.spine-node.title-node .title-text::selection {
+    background: rgba(74, 158, 255, 0.5);
+}
+.spine-node.title-node .title-scale-handle {
+    position: absolute;
+    bottom: -6px;
+    right: -14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    color: rgba(255,255,255,0.4);
+    cursor: nwse-resize;
+    font-size: 28px;
+    padding: 2px 4px;
+    border-radius: 4px;
+    transition: all 0.2s;
+    line-height: 1;
+    user-select: none;
+    z-index: 10;
+}
+.spine-node.title-node .title-scale-handle:hover {
+    color: rgba(255,255,255,0.8);
+    background: transparent;
+    border: none;
+}
 
 /* ===== 标签悬浮提示（固定大小，不受画布缩放影响） ===== */
 #labelTooltip {

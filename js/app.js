@@ -1615,6 +1615,35 @@ SMTool.toggleSnap = function () {
     if (btn) btn.classList.toggle('active', SMData._snapEnabled);
 };
 
+// ---- 右键菜单：添加标题 ----
+SMTool.ctxAddTitle = function () {
+    document.getElementById('ctxMenu').style.display = 'none';
+    SMTool.pushUndo();
+    var id = SMData.nextId++;
+    var node = new SpineNodeData(id);
+    node.nodeType = 'titleText';
+    node.name = '标题';
+    node._textContent = '标题';
+    var wp = SMTool.canvasToWorld(SMData._mx || window.innerWidth / 2, SMData._my || window.innerHeight / 2);
+    node.x = wp.x;
+    node.y = wp.y;
+    node.width = 200;
+    SMData.nodes.set(id, node);
+    SMTool._createEl(node);
+    SMTool._updatePos(node);
+    SMData.selectedNodes.clear();
+    SMData.selectedNodes.add(id);
+    SMData.selectedNode = id;
+    SMTool._updateSel();
+    SMTool._updateSB();
+};
+
+// ★ 更新标题节点文本
+SMTool._updateTitleText = function (nid, text) {
+    var node = SMData.nodes.get(nid);
+    if (node) { node._textContent = text; node.name = text; }
+};
+
 // ---- 按指定间距分布 ----
 SMTool._gapStep = function (dir) {
     var input = document.getElementById('gapInput');
