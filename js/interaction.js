@@ -198,10 +198,11 @@ SMTool._onMD = function (e) {
                 SMTool._updateStateRowColors();
                 SMTool._updateSel();
             } else {
-                // 普通点击：单选，如在组内则全选整组（Alt+点击则穿透选单个）
+                // 普通点击：单选，如在组内则全选整组（Alt+点击或组编辑模式则穿透选单个）
                 SMData.selectedNodes.clear();
                 var grp = SMTool._findGroupOf(found.id);
-                if (grp && !e.altKey) {
+                var inEditMode = SMData._groupEditMode && grp && grp.id === SMData._groupEditMode;
+                if (grp && !e.altKey && !inEditMode) {
                     SMData._pendingDragSnap = SMTool._snapshotState();
                     grp.nodeIds.forEach(function (gid) { SMData.selectedNodes.add(gid); });
                     SMData.isMultiDragging = true;
@@ -211,6 +212,9 @@ SMTool._onMD = function (e) {
                         var gn = SMData.nodes.get(gid);
                         if (gn) SMData.multiDragOffsets.set(gid, { x: wp.x - gn.x, y: wp.y - gn.y });
                     });
+                    // ★ 追溯组内源头节点（无入边的节点），设为 selectedNode
+                    var sourceNode = SMTool._findGroupSource(grp);
+                    if (sourceNode) found = sourceNode;
                 } else {
                     SMData._pendingDragSnap = SMTool._snapshotState();
                     SMData.selectedNodes.add(found.id);
@@ -226,7 +230,8 @@ SMTool._onMD = function (e) {
                 if (found.nodeType === 'spine') SMTool._showAnimPreview(found);
             }
         } else {
-            // 点击空白 → 开始框选
+            // 点击空白 → 退出组编辑模式 + 开始框选
+            if (SMData._groupEditMode) { SMData._groupEditMode = null; SMTool._updateSel(); }
             if (!e.shiftKey) {
                 SMData.selectedNode = null;
                 SMData.selectedNodes.clear();
@@ -1716,6 +1721,13 @@ SMTool._expandFlowPanel = function () {
     SMData._flowPanel.expanded = true;
     var panel = document.getElementById('flowPanel');
     if (panel) panel.classList.add('expanded');
+    // ★ 展开时刷新面板并默认选中第一个路径
+    SMTool._updateFlowPanel();
+    var pb = SMData._fullPlayback;
+    var paths = SMData._fullPaths;
+    if (pb.activePathIdx < 0 && paths && paths.length > 0 && !pb.isPlaying) {
+        SMTool._selectFullPath(0);
+    }
 };
 
 // 收起底部流程面板

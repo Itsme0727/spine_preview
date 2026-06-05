@@ -78,7 +78,7 @@ var SMData = {
     _flowFocus: null,  // { nodeIds: Set, connIds: Set } 或 null
 
     // 动画组模式：'three' | 'full'
-    flowMode: 'three',
+    flowMode: 'full',
 
     // 完整动画组：当前源节点的所有路径
     _fullPaths: [],    // [{ nodes: [{id, anim}], conns: [id] }]
@@ -152,7 +152,10 @@ var SMData = {
 
     // ★ 拖拽吸附线 { dir: 'h'|'v', pos: worldCoord }
     _snapLines: [],
-    _snapEnabled: true   // 吸附功能开关
+    _snapEnabled: true,  // 吸附功能开关
+
+    // ★ 组内编辑模式（双击组进入，存储正在编辑的组 ID，null=未进入）
+    _groupEditMode: null
 };
 
 // ---- 快速采样 hash（非加密，用于去重查找的 O(1) 索引） ----

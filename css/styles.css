@@ -442,6 +442,13 @@ body {
     box-shadow: 0 0 24px rgba(233, 69, 96, 0.35), 0 0 12px var(--dup-glow, rgba(255,68,68,0.4)) !important;
 }
 
+/* 组编辑模式：组边框用虚线高亮 */
+.spine-node.group-editing {
+    border-style: dashed !important;
+    border-color: #f0a050 !important;
+    box-shadow: 0 0 12px rgba(240, 160, 80, 0.3), inset 0 0 0 1px rgba(240, 160, 80, 0.15) !important;
+}
+
 /* ===== 缺失状态通知面板 ===== */
 #missingPanel {
     position: fixed;

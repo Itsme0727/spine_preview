@@ -1362,6 +1362,14 @@ SMTool._updateSel = function () {
             } else {
                 el.classList.remove('connecting');
             }
+            // ★ 组编辑模式标记
+            var editGrp = SMData._groupEditMode;
+            if (editGrp) {
+                var nGrp = SMTool._findGroupOf(n.id);
+                el.classList.toggle('group-editing', !!(nGrp && nGrp.id === editGrp));
+            } else {
+                el.classList.remove('group-editing');
+            }
         }
         result = nodesIter.next();
     }
@@ -2222,9 +2230,13 @@ SMTool._updateFlowPanel = function () {
     }
 
     // ---- 三层模式（原有逻辑） ----
-    // 仅当单选一个节点且该节点有连接时显示
-    if (SMData.selectedNodes.size === 1 && SMData.selectedNode) {
-        var selNodeId = SMData.selectedNode;
+    // 单选一个节点 或 选中同一组内多个节点时显示
+    var selNodeId = SMData.selectedNode;
+    var showFlow = selNodeId && (
+        SMData.selectedNodes.size === 1 ||
+        (SMData.selectedNodes.size > 1 && SMTool._findGroupOf(selNodeId))
+    );
+    if (showFlow) {
         var selNode = SMData.nodes.get(selNodeId);
         if (!selNode) {
             panel.classList.add('inactive');
@@ -2421,14 +2433,18 @@ SMTool._updateFlowPanel = function () {
 // ================================================================
 SMTool._updateFullFlowPanel = function (content, panel) {
     var _savedScrollTop = content.scrollTop;
-    if (SMData.selectedNodes.size !== 1 || !SMData.selectedNode) {
+    var selNodeId = SMData.selectedNode;
+    var showFlow = selNodeId && (
+        SMData.selectedNodes.size === 1 ||
+        (SMData.selectedNodes.size > 1 && SMTool._findGroupOf(selNodeId))
+    );
+    if (!showFlow) {
         panel.classList.add('inactive');
         content.innerHTML = '<div class="flp-hint">点击选中一个动画节点，查看其完整动画组合</div>';
         content.scrollTop = _savedScrollTop;
         return;
     }
 
-    var selNodeId = SMData.selectedNode;
     var selNode = SMData.nodes.get(selNodeId);
     if (!selNode) {
         panel.classList.add('inactive');
@@ -2613,6 +2629,11 @@ SMTool._updateFullFlowPanel = function (content, panel) {
     }
 
     // 初始化右侧 Spine 画布（已移除，改为使用浮窗预览）
+
+    // ★ 锚钉激活时，选中组后自动进入流预览模式并选第一个路径
+    if (pb.activePathIdx < 0 && paths.length > 0 && !pb.isPlaying && SMData._flowPanel.pinned) {
+        SMTool._selectFullPath(0);
+    }
 };
 
 // 设置焦点高亮

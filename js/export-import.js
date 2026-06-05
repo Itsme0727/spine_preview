@@ -505,7 +505,7 @@ SMTool._serializeData = function () {
     // ★ 保存预览缩放、吸附开关、动画流模式
     data._previewZooms = SMData._previewZooms || {};
     data._snapEnabled = SMData._snapEnabled !== false;
-    data.flowMode = SMData.flowMode || 'three';
+    data.flowMode = SMData.flowMode || 'full';
     data.renderMode = SMData.renderMode || 'perf';
 
     return JSON.stringify(data, null, 2);

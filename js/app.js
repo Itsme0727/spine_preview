@@ -466,6 +466,37 @@ SMTool.init = function () {
                 }
             }
         }
+
+        // ★ 双击组内节点 → 进入/退出组编辑模式
+        var wpDbl = SMTool.canvasToWorld(e.clientX, e.clientY);
+        var nodesIterDbl = SMData.nodes.values();
+        var rDbl = nodesIterDbl.next();
+        var foundDbl = null;
+        while (!rDbl.done) {
+            if (SMTool._hitTest(rDbl.value, wpDbl.x, wpDbl.y)) { foundDbl = rDbl.value; break; }
+            rDbl = nodesIterDbl.next();
+        }
+        if (foundDbl) {
+            var grpDbl = SMTool._findGroupOf(foundDbl.id);
+            if (grpDbl) {
+                if (SMData._groupEditMode === grpDbl.id) {
+                    // 再次双击同一组 → 退出编辑模式
+                    SMData._groupEditMode = null;
+                    SMTool._updateSel();
+                } else {
+                    // 进入组编辑模式
+                    SMData._groupEditMode = grpDbl.id;
+                    SMData.selectedNodes.clear();
+                    SMData.selectedNodes.add(foundDbl.id);
+                    SMData.selectedNode = foundDbl.id;
+                    SMTool._updateSel();
+                }
+            }
+        } else {
+            // 双击空白 → 退出组编辑模式
+            SMData._groupEditMode = null;
+            SMTool._updateSel();
+        }
     });
 
     // 条件编辑器键盘事件 + textarea 自适应高度 + 失焦自动保存
@@ -628,6 +659,35 @@ SMTool.init = function () {
     SMTool._findGroupOf = function (nodeId) {
         for (var i = 0; i < SMData.groups.length; i++) {
             if (SMData.groups[i].nodeIds.has(nodeId)) return SMData.groups[i];
+        }
+        return null;
+    };
+
+    // 追溯组的"源头"节点（组内无来自组内其他节点入边的 Spine 节点，即连线流起始点）
+    SMTool._findGroupSource = function (grp) {
+        var groupIds = new Set(grp.nodeIds);
+        var hasIncoming = {};
+        grp.nodeIds.forEach(function (nid) { hasIncoming[nid] = false; });
+        for (var i = 0; i < SMData.connections.length; i++) {
+            var c = SMData.connections[i];
+            if (groupIds.has(c.toNode) && groupIds.has(c.fromNode) && c.fromNode !== c.toNode) {
+                hasIncoming[c.toNode] = true;
+            }
+        }
+        // 找第一个无入边的 spine 节点
+        var nodesArr = [];
+        grp.nodeIds.forEach(function (nid) {
+            var n = SMData.nodes.get(nid);
+            if (n && !hasIncoming[nid] && n.nodeType === 'spine') nodesArr.push(n);
+        });
+        if (nodesArr.length > 0) return nodesArr[0];
+        // 兜底：返回组内任意 spine 节点
+        var nodesIter2 = grp.nodeIds.values();
+        var r2 = nodesIter2.next();
+        while (!r2.done) {
+            var n2 = SMData.nodes.get(r2.value);
+            if (n2 && n2.nodeType === 'spine') return n2;
+            r2 = nodesIter2.next();
         }
         return null;
     };
@@ -1312,7 +1372,7 @@ SMTool.init = function () {
     // 初始化底部动画组合浮窗面板
     SMTool._initFlowPanel();
     SMTool._updateFlowPanel();    // 设置初始 inactive 状态 + 提示文字
-    SMTool.setFlowMode('three');  // 初始模式为三层
+    SMTool.setFlowMode('full');  // 默认完整-动画流模式
 
     // ★ 初始化右上角动画预览浮窗面板
     SMTool._initAnimPreviewPanel();
@@ -1355,13 +1415,44 @@ SMTool._getNodeWorldRect = function (node) {
     };
 };
 
-// 获取所有选中节点的世界矩形数组
+// 获取所有选中节点的世界矩形数组（组内节点合并为组包围盒，作为整体计算）
 SMTool._getSelectedRects = function () {
     var rects = [];
-    SMData.selectedNodes.forEach(function (nid) {
+    var accounted = new Set();
+
+    var selArray = [];
+    SMData.selectedNodes.forEach(function (nid) { selArray.push(nid); });
+    for (var si = 0; si < selArray.length; si++) {
+        var nid = selArray[si];
+        if (accounted.has(nid)) continue;
         var n = SMData.nodes.get(nid);
-        if (n) rects.push({ node: n, rect: SMTool._getNodeWorldRect(n) });
-    });
+        if (!n) continue;
+        var grp = SMTool._findGroupOf(nid);
+        if (grp) {
+            var bb = SMTool._getGroupBounds(grp);
+            if (!bb) continue;
+            var groupNodes = [];
+            grp.nodeIds.forEach(function (gid) {
+                accounted.add(gid);
+                var gn = SMData.nodes.get(gid);
+                if (gn) groupNodes.push(gn);
+            });
+            rects.push({
+                nodes: groupNodes,
+                rect: {
+                    left: bb.left, top: bb.top, right: bb.right, bottom: bb.bottom,
+                    width: bb.right - bb.left, height: bb.bottom - bb.top,
+                    cx: (bb.left + bb.right) / 2, cy: (bb.top + bb.bottom) / 2
+                }
+            });
+        } else {
+            accounted.add(nid);
+            rects.push({
+                nodes: [n],
+                rect: SMTool._getNodeWorldRect(n)
+            });
+        }
+    }
     return rects;
 };
 
@@ -1386,8 +1477,11 @@ SMTool.alignTop = function () {
     SMTool.pushUndo();
     var bb = SMTool._getSelBounds(items);
     for (var i = 0; i < items.length; i++) {
-        items[i].node.y += bb.top - items[i].rect.top;
-        SMTool._updatePos(items[i].node);
+        var dy = bb.top - items[i].rect.top;
+        for (var j = 0; j < items[i].nodes.length; j++) {
+            items[i].nodes[j].y += dy;
+            SMTool._updatePos(items[i].nodes[j]);
+        }
     }
     SMTool._updateSel();
 };
@@ -1398,8 +1492,11 @@ SMTool.alignMidH = function () {
     SMTool.pushUndo();
     var bb = SMTool._getSelBounds(items);
     for (var i = 0; i < items.length; i++) {
-        items[i].node.y += bb.cy - items[i].rect.cy;
-        SMTool._updatePos(items[i].node);
+        var dy = bb.cy - items[i].rect.cy;
+        for (var j = 0; j < items[i].nodes.length; j++) {
+            items[i].nodes[j].y += dy;
+            SMTool._updatePos(items[i].nodes[j]);
+        }
     }
     SMTool._updateSel();
 };
@@ -1410,8 +1507,11 @@ SMTool.alignBottom = function () {
     SMTool.pushUndo();
     var bb = SMTool._getSelBounds(items);
     for (var i = 0; i < items.length; i++) {
-        items[i].node.y += bb.bottom - items[i].rect.bottom;
-        SMTool._updatePos(items[i].node);
+        var dy = bb.bottom - items[i].rect.bottom;
+        for (var j = 0; j < items[i].nodes.length; j++) {
+            items[i].nodes[j].y += dy;
+            SMTool._updatePos(items[i].nodes[j]);
+        }
     }
     SMTool._updateSel();
 };
@@ -1424,8 +1524,11 @@ SMTool.alignLeft = function () {
     SMTool.pushUndo();
     var bb = SMTool._getSelBounds(items);
     for (var i = 0; i < items.length; i++) {
-        items[i].node.x += bb.left - items[i].rect.left;
-        SMTool._updatePos(items[i].node);
+        var dx = bb.left - items[i].rect.left;
+        for (var j = 0; j < items[i].nodes.length; j++) {
+            items[i].nodes[j].x += dx;
+            SMTool._updatePos(items[i].nodes[j]);
+        }
     }
     SMTool._updateSel();
 };
@@ -1436,8 +1539,11 @@ SMTool.alignMidV = function () {
     SMTool.pushUndo();
     var bb = SMTool._getSelBounds(items);
     for (var i = 0; i < items.length; i++) {
-        items[i].node.x += bb.cx - items[i].rect.cx;
-        SMTool._updatePos(items[i].node);
+        var dx = bb.cx - items[i].rect.cx;
+        for (var j = 0; j < items[i].nodes.length; j++) {
+            items[i].nodes[j].x += dx;
+            SMTool._updatePos(items[i].nodes[j]);
+        }
     }
     SMTool._updateSel();
 };
@@ -1448,8 +1554,11 @@ SMTool.alignRight = function () {
     SMTool.pushUndo();
     var bb = SMTool._getSelBounds(items);
     for (var i = 0; i < items.length; i++) {
-        items[i].node.x += bb.right - items[i].rect.right;
-        SMTool._updatePos(items[i].node);
+        var dx = bb.right - items[i].rect.right;
+        for (var j = 0; j < items[i].nodes.length; j++) {
+            items[i].nodes[j].x += dx;
+            SMTool._updatePos(items[i].nodes[j]);
+        }
     }
     SMTool._updateSel();
 };
@@ -1460,7 +1569,6 @@ SMTool.distributeH = function () {
     var items = SMTool._getSelectedRects();
     if (items.length < 3) return;
     SMTool.pushUndo();
-    // 按 left 排序
     items.sort(function (a, b) { return a.rect.left - b.rect.left; });
     var leftmost = items[0].rect.left;
     var rightmost = items[items.length - 1].rect.right;
@@ -1470,8 +1578,11 @@ SMTool.distributeH = function () {
     var curX = items[0].rect.left;
     for (var i = 1; i < items.length - 1; i++) {
         curX += items[i - 1].rect.width + gap;
-        items[i].node.x += curX - items[i].rect.left;
-        SMTool._updatePos(items[i].node);
+        var dx = curX - items[i].rect.left;
+        for (var j = 0; j < items[i].nodes.length; j++) {
+            items[i].nodes[j].x += dx;
+            SMTool._updatePos(items[i].nodes[j]);
+        }
     }
     SMTool._updateSel();
 };
@@ -1480,7 +1591,6 @@ SMTool.distributeV = function () {
     var items = SMTool._getSelectedRects();
     if (items.length < 3) return;
     SMTool.pushUndo();
-    // 按 top 排序
     items.sort(function (a, b) { return a.rect.top - b.rect.top; });
     var topmost = items[0].rect.top;
     var bottommost = items[items.length - 1].rect.bottom;
@@ -1490,8 +1600,11 @@ SMTool.distributeV = function () {
     var curY = items[0].rect.top;
     for (var i = 1; i < items.length - 1; i++) {
         curY += items[i - 1].rect.height + gap;
-        items[i].node.y += curY - items[i].rect.top;
-        SMTool._updatePos(items[i].node);
+        var dy = curY - items[i].rect.top;
+        for (var j = 0; j < items[i].nodes.length; j++) {
+            items[i].nodes[j].y += dy;
+            SMTool._updatePos(items[i].nodes[j]);
+        }
     }
     SMTool._updateSel();
 };
@@ -1517,30 +1630,32 @@ SMTool.applyGapDistribute = function () {
     var input = document.getElementById('gapInput');
     var gapVal = input ? parseFloat(input.value) : 0;
     if (isNaN(gapVal) || gapVal < 0) return;
-    // 转为世界坐标间距
     var gap = gapVal / Math.max(0.03, SMData.view.zoom);
 
     SMTool.pushUndo();
     var bb = SMTool._getSelBounds(items);
 
-    // 根据包围盒宽高比判断方向：宽度更大 → 水平分布，否则垂直分布
     if (bb.width >= bb.height) {
-        // 水平间距分布：按 left 排序，左端不动，逐个右移
         items.sort(function (a, b) { return a.rect.left - b.rect.left; });
         var curX = items[0].rect.left;
         for (var i = 1; i < items.length; i++) {
             curX += items[i - 1].rect.width + gap;
-            items[i].node.x += curX - items[i].rect.left;
-            SMTool._updatePos(items[i].node);
+            var dx = curX - items[i].rect.left;
+            for (var j = 0; j < items[i].nodes.length; j++) {
+                items[i].nodes[j].x += dx;
+                SMTool._updatePos(items[i].nodes[j]);
+            }
         }
     } else {
-        // 垂直间距分布：按 top 排序，顶端不动，逐个下移
         items.sort(function (a, b) { return a.rect.top - b.rect.top; });
         var curY = items[0].rect.top;
         for (var i = 1; i < items.length; i++) {
             curY += items[i - 1].rect.height + gap;
-            items[i].node.y += curY - items[i].rect.top;
-            SMTool._updatePos(items[i].node);
+            var dy = curY - items[i].rect.top;
+            for (var j = 0; j < items[i].nodes.length; j++) {
+                items[i].nodes[j].y += dy;
+                SMTool._updatePos(items[i].nodes[j]);
+            }
         }
     }
     SMTool._updateSel();
