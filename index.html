@@ -35,6 +35,29 @@
         <button onclick="SMTool.importData()">📥 导入</button>
     </div>
 
+    <!-- ===== 对齐排版工具栏（多选 ≥2 时显示）===== -->
+    <div id="alignBar" style="display:none">
+        <button title="横向-居上对齐" onclick="SMTool.alignTop()">⊤ 上</button>
+        <button title="横向-居中对齐" onclick="SMTool.alignMidH()">⊟ 中</button>
+        <button title="横向-居下对齐" onclick="SMTool.alignBottom()">⊥ 下</button>
+        <span class="sep"></span>
+        <button title="竖向-靠左对齐" onclick="SMTool.alignLeft()">⊏ 左</button>
+        <button title="竖向-居中对齐" onclick="SMTool.alignMidV()">⊞ 中</button>
+        <button title="竖向-靠右对齐" onclick="SMTool.alignRight()">⊐ 右</button>
+        <span class="sep"></span>
+        <button title="横向平均分布" onclick="SMTool.distributeH()">↔ 横</button>
+        <button title="竖向平均分布" onclick="SMTool.distributeV()">↕ 竖</button>
+        <span class="sep"></span>
+        <span class="gap-wrap">
+            <button class="gap-btn" onclick="SMTool._gapStep(-1)" title="减少间距">◀</button>
+            <input type="number" id="gapInput" placeholder="间距" min="0" value="200" onkeydown="if(event.key==='Enter')SMTool.applyGapDistribute()">
+            <button class="gap-btn" onclick="SMTool._gapStep(1)" title="增加间距">▶</button>
+        </span>
+        <button onclick="SMTool.applyGapDistribute()" title="按指定间距分布">确定</button>
+        <span class="sep"></span>
+        <button id="btnSnap" class="active" onclick="SMTool.toggleSnap()" title="吸附对齐">🧲 吸附</button>
+    </div>
+
     <!-- ===== 缺失状态通知面板 ===== -->
     <div id="missingPanel">
         <div class="mp-header">⚠️ 缺失状态<button class="mp-close" onclick="SMTool._closeMissingPanel()" title="关闭提示">✕</button></div>
@@ -125,6 +148,10 @@
         </div>
         <div class="app-canvas-wrap">
             <canvas id="appCanvas"></canvas>
+            <div class="app-zoom-bar" id="appZoomBar">
+                <span class="app-zoom-label" id="appZoomLabel">100%</span>
+                <button class="app-zoom-reset" id="appZoomReset" title="恢复 100%" onclick="SMTool._resetAnimPreviewZoom()">1:1</button>
+            </div>
         </div>
         <div class="app-resize-handle"></div>
     </div>

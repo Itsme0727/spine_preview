@@ -344,7 +344,7 @@ SMTool.init = function () {
 
     // 滚轮缩放（面板内滚动内容，不缩放画布）
     window.addEventListener('wheel', function (e) {
-        if (!e.target.closest('.state-list') && !e.target.closest('.anim-bar') && !e.target.closest('.anim-select') && !e.target.closest('.ip-body') && !e.target.closest('#conditionEditor') && !e.target.closest('#dataFloatPanel')) {
+        if (!e.target.closest('.state-list') && !e.target.closest('.anim-bar') && !e.target.closest('.anim-select') && !e.target.closest('.ip-body') && !e.target.closest('#conditionEditor') && !e.target.closest('#dataFloatPanel') && !e.target.closest('#animPreviewPanel')) {
             e.preventDefault();
             SMTool._onWheel(e);
         }
@@ -616,10 +616,11 @@ SMTool.init = function () {
             var n = SMData.nodes.get(nid);
             if (!n) return;
             any = true;
-            minX = Math.min(minX, n.x);
-            minY = Math.min(minY, n.y);
-            maxX = Math.max(maxX, n.x + n.width);
-            maxY = Math.max(maxY, n.y + (n._canvasHeight || 200) + 100);
+            var r = SMTool._getNodeWorldRect(n);
+            minX = Math.min(minX, r.left);
+            minY = Math.min(minY, r.top);
+            maxX = Math.max(maxX, r.right);
+            maxY = Math.max(maxY, r.bottom);
         });
         return any ? { left: minX, top: minY, right: maxX, bottom: maxY } : null;
     };
@@ -1321,6 +1322,228 @@ SMTool.init = function () {
     console.log('🎬 Spine Animation State Machine ready!');
     console.log('  拖拽 spine 文件三件套 (.json/.skel + .atlas + .png) 到画布上');
     console.log('  Alt+拖拽=平移 | 滚轮=缩放 | 右键=平移');
+};
+
+// ================================================================
+//  对齐排版功能（多选 ≥2 个节点时可用）
+// ================================================================
+
+// 获取节点在世界空间中的矩形（基于 DOM 实际渲染尺寸）
+SMTool._getNodeWorldRect = function (node) {
+    var el = SMTool._getEl(node.id);
+    if (el) {
+        var rect = el.getBoundingClientRect();
+        var tl = SMTool.canvasToWorld(rect.left, rect.top);
+        var br = SMTool.canvasToWorld(rect.right, rect.bottom);
+        return {
+            left: node.x, top: node.y,
+            right: node.x + (br.x - tl.x),
+            bottom: node.y + (br.y - tl.y),
+            width: br.x - tl.x,
+            height: br.y - tl.y,
+            cx: node.x + (br.x - tl.x) / 2,
+            cy: node.y + (br.y - tl.y) / 2
+        };
+    }
+    var h = (node._canvasHeight || 200) + 150;
+    var w = node.width || 300;
+    return {
+        left: node.x, top: node.y,
+        right: node.x + w, bottom: node.y + h,
+        width: w, height: h,
+        cx: node.x + w / 2, cy: node.y + h / 2
+    };
+};
+
+// 获取所有选中节点的世界矩形数组
+SMTool._getSelectedRects = function () {
+    var rects = [];
+    SMData.selectedNodes.forEach(function (nid) {
+        var n = SMData.nodes.get(nid);
+        if (n) rects.push({ node: n, rect: SMTool._getNodeWorldRect(n) });
+    });
+    return rects;
+};
+
+// 计算选中节点的包围盒
+SMTool._getSelBounds = function (items) {
+    var minL = Infinity, minT = Infinity, maxR = -Infinity, maxB = -Infinity;
+    for (var i = 0; i < items.length; i++) {
+        var r = items[i].rect;
+        if (r.left < minL) minL = r.left;
+        if (r.top < minT) minT = r.top;
+        if (r.right > maxR) maxR = r.right;
+        if (r.bottom > maxB) maxB = r.bottom;
+    }
+    return { left: minL, top: minT, right: maxR, bottom: maxB, width: maxR - minL, height: maxB - minT, cx: (minL + maxR) / 2, cy: (minT + maxB) / 2 };
+};
+
+// ---- 横向对齐 ----
+
+SMTool.alignTop = function () {
+    var items = SMTool._getSelectedRects();
+    if (items.length < 2) return;
+    SMTool.pushUndo();
+    var bb = SMTool._getSelBounds(items);
+    for (var i = 0; i < items.length; i++) {
+        items[i].node.y += bb.top - items[i].rect.top;
+        SMTool._updatePos(items[i].node);
+    }
+    SMTool._updateSel();
+};
+
+SMTool.alignMidH = function () {
+    var items = SMTool._getSelectedRects();
+    if (items.length < 2) return;
+    SMTool.pushUndo();
+    var bb = SMTool._getSelBounds(items);
+    for (var i = 0; i < items.length; i++) {
+        items[i].node.y += bb.cy - items[i].rect.cy;
+        SMTool._updatePos(items[i].node);
+    }
+    SMTool._updateSel();
+};
+
+SMTool.alignBottom = function () {
+    var items = SMTool._getSelectedRects();
+    if (items.length < 2) return;
+    SMTool.pushUndo();
+    var bb = SMTool._getSelBounds(items);
+    for (var i = 0; i < items.length; i++) {
+        items[i].node.y += bb.bottom - items[i].rect.bottom;
+        SMTool._updatePos(items[i].node);
+    }
+    SMTool._updateSel();
+};
+
+// ---- 竖向对齐 ----
+
+SMTool.alignLeft = function () {
+    var items = SMTool._getSelectedRects();
+    if (items.length < 2) return;
+    SMTool.pushUndo();
+    var bb = SMTool._getSelBounds(items);
+    for (var i = 0; i < items.length; i++) {
+        items[i].node.x += bb.left - items[i].rect.left;
+        SMTool._updatePos(items[i].node);
+    }
+    SMTool._updateSel();
+};
+
+SMTool.alignMidV = function () {
+    var items = SMTool._getSelectedRects();
+    if (items.length < 2) return;
+    SMTool.pushUndo();
+    var bb = SMTool._getSelBounds(items);
+    for (var i = 0; i < items.length; i++) {
+        items[i].node.x += bb.cx - items[i].rect.cx;
+        SMTool._updatePos(items[i].node);
+    }
+    SMTool._updateSel();
+};
+
+SMTool.alignRight = function () {
+    var items = SMTool._getSelectedRects();
+    if (items.length < 2) return;
+    SMTool.pushUndo();
+    var bb = SMTool._getSelBounds(items);
+    for (var i = 0; i < items.length; i++) {
+        items[i].node.x += bb.right - items[i].rect.right;
+        SMTool._updatePos(items[i].node);
+    }
+    SMTool._updateSel();
+};
+
+// ---- 平均分布 ----
+
+SMTool.distributeH = function () {
+    var items = SMTool._getSelectedRects();
+    if (items.length < 3) return;
+    SMTool.pushUndo();
+    // 按 left 排序
+    items.sort(function (a, b) { return a.rect.left - b.rect.left; });
+    var leftmost = items[0].rect.left;
+    var rightmost = items[items.length - 1].rect.right;
+    var totalW = 0;
+    for (var i = 0; i < items.length; i++) totalW += items[i].rect.width;
+    var gap = (rightmost - leftmost - totalW) / (items.length - 1);
+    var curX = items[0].rect.left;
+    for (var i = 1; i < items.length - 1; i++) {
+        curX += items[i - 1].rect.width + gap;
+        items[i].node.x += curX - items[i].rect.left;
+        SMTool._updatePos(items[i].node);
+    }
+    SMTool._updateSel();
+};
+
+SMTool.distributeV = function () {
+    var items = SMTool._getSelectedRects();
+    if (items.length < 3) return;
+    SMTool.pushUndo();
+    // 按 top 排序
+    items.sort(function (a, b) { return a.rect.top - b.rect.top; });
+    var topmost = items[0].rect.top;
+    var bottommost = items[items.length - 1].rect.bottom;
+    var totalH = 0;
+    for (var i = 0; i < items.length; i++) totalH += items[i].rect.height;
+    var gap = (bottommost - topmost - totalH) / (items.length - 1);
+    var curY = items[0].rect.top;
+    for (var i = 1; i < items.length - 1; i++) {
+        curY += items[i - 1].rect.height + gap;
+        items[i].node.y += curY - items[i].rect.top;
+        SMTool._updatePos(items[i].node);
+    }
+    SMTool._updateSel();
+};
+
+SMTool.toggleSnap = function () {
+    SMData._snapEnabled = !SMData._snapEnabled;
+    var btn = document.getElementById('btnSnap');
+    if (btn) btn.classList.toggle('active', SMData._snapEnabled);
+};
+
+// ---- 按指定间距分布 ----
+SMTool._gapStep = function (dir) {
+    var input = document.getElementById('gapInput');
+    if (!input) return;
+    var v = parseFloat(input.value) || 0;
+    v = Math.max(0, v + dir * 5);
+    input.value = v;
+};
+
+SMTool.applyGapDistribute = function () {
+    var items = SMTool._getSelectedRects();
+    if (items.length < 2) return;
+    var input = document.getElementById('gapInput');
+    var gapVal = input ? parseFloat(input.value) : 0;
+    if (isNaN(gapVal) || gapVal < 0) return;
+    // 转为世界坐标间距
+    var gap = gapVal / Math.max(0.03, SMData.view.zoom);
+
+    SMTool.pushUndo();
+    var bb = SMTool._getSelBounds(items);
+
+    // 根据包围盒宽高比判断方向：宽度更大 → 水平分布，否则垂直分布
+    if (bb.width >= bb.height) {
+        // 水平间距分布：按 left 排序，左端不动，逐个右移
+        items.sort(function (a, b) { return a.rect.left - b.rect.left; });
+        var curX = items[0].rect.left;
+        for (var i = 1; i < items.length; i++) {
+            curX += items[i - 1].rect.width + gap;
+            items[i].node.x += curX - items[i].rect.left;
+            SMTool._updatePos(items[i].node);
+        }
+    } else {
+        // 垂直间距分布：按 top 排序，顶端不动，逐个下移
+        items.sort(function (a, b) { return a.rect.top - b.rect.top; });
+        var curY = items[0].rect.top;
+        for (var i = 1; i < items.length; i++) {
+            curY += items[i - 1].rect.height + gap;
+            items[i].node.y += curY - items[i].rect.top;
+            SMTool._updatePos(items[i].node);
+        }
+    }
+    SMTool._updateSel();
 };
 
 // ---- 自动启动 ----

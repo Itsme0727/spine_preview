@@ -288,6 +288,36 @@ SMTool._renderConnections = function () {
     }
 };
 
+// ---- 吸附对齐紫线渲染 ----
+SMTool._renderSnapLines = function () {
+    var ctx = SMTool.connCtx;
+    var w = SMTool.connCanvas.width;
+    var h = SMTool.connCanvas.height;
+    var z = SMData.view.zoom;
+
+    for (var i = 0; i < SMData._snapLines.length; i++) {
+        var sl = SMData._snapLines[i];
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255, 105, 180, 0.7)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 3]);
+        ctx.beginPath();
+        if (sl.dir === 'v') {
+            // 竖向紫线（贯穿全屏 X 方向）
+            var sx = SMTool.worldToCanvas(sl.pos, 0).x;
+            ctx.moveTo(sx, 0);
+            ctx.lineTo(sx, h);
+        } else {
+            // 横向紫线（贯穿全屏 Y 方向）
+            var sy = SMTool.worldToCanvas(0, sl.pos).y;
+            ctx.moveTo(0, sy);
+            ctx.lineTo(w, sy);
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.restore();
+    }
+};
 // ---- 获取状态连接点位置 ----
 SMTool._getStateConnectorPos = function (node, stateName, type) {
     var el = SMTool._getEl(node.id);

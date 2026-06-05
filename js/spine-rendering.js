@@ -495,6 +495,7 @@ SMTool._loop = function (now) {
     SMTool._renderGrid();
     SMTool._renderGroupBoxes(SMTool.gridCtx);
     SMTool._renderConnections();
+    SMTool._renderSnapLines();
 
     // 鸟瞰图（小地图）
     SMTool._renderMinimap();
@@ -578,12 +579,14 @@ SMTool._initAnimPreview = function (node) {
     pp._spineVer = useVer;
     var physParam = (useVer !== '3.8' && SP.Physics) ? SP.Physics.update : undefined;
 
-    // 设置面板尺寸和画布
-    canvas.width = 280;
-    canvas.height = 420;
+    // 设置面板尺寸和画布（保留用户缩放后的尺寸，首次默认 280×420）
+    var savedW = pp.panelW || 320;
+    var savedH = pp.panelH || 500;
+    canvas.width = savedW;
+    canvas.height = savedH;
     pp.canvas = canvas;
-    pp.panelW = 280;
-    pp.panelH = 420;
+    pp.panelW = savedW;
+    pp.panelH = savedH;
 
     // 获取画布 WebGL 上下文
     var gl = canvas.getContext('webgl2', { alpha: true, antialias: true, preserveDrawingBuffer: false, stencil: true }) ||
@@ -603,21 +606,31 @@ SMTool._initAnimPreview = function (node) {
         ? node._srcTexDataUrls
         : [{ name: 'texture', dataUrl: node._srcTexDataUrl }];
 
-    // 加载图片（同步使用已缓存的 Image，因为源节点已加载过）
+    // ================================================================
+    // 🔒🔒🔒 [LOCK-2] 预览贴图校验 dataUrl
+    // ⚠️ 解锁策略：除非用户明确说「解锁 LOCK-2」，或我主动问询
+    //    「是否解锁 LOCK-2 以修改XX功能」且用户同意，否则绝不改动此块。
+    //
+    // 不能仅凭 _texImgs[pi] 存在就复用，必须比对 dataUrl 一致。
+    // 否则切换不同文件时 B 预览会错拿 A 贴图。
+    // ================================================================
     var imgs = [];
     var needLoad = false;
     for (var pi = 0; pi < pageDataUrls.length; pi++) {
         var existingImg = null;
-        // 尝试从共享缓存中查找已加载的图片
+        var targetUrl = pageDataUrls[pi].dataUrl;
+        // 必须校验同 dataUrl，防止跨文件错拿贴图
         var nodesIter2 = SMData.nodes.values();
         var r2 = nodesIter2.next();
         while (!r2.done) {
             var nd = r2.value;
-            if (nd._texImgs && nd._texImgs[pi]) {
+            var ndUrls = nd._srcTexDataUrls;
+            var ndUrl = (ndUrls && ndUrls[pi]) ? ndUrls[pi].dataUrl : (pi === 0 ? nd._srcTexDataUrl : '');
+            if (ndUrl === targetUrl && nd._texImgs && nd._texImgs[pi]) {
                 existingImg = nd._texImgs[pi];
                 break;
             }
-            if (nd.textureImg && pi === 0) {
+            if (ndUrl === targetUrl && nd.textureImg && pi === 0) {
                 existingImg = nd.textureImg;
                 break;
             }
@@ -628,10 +641,11 @@ SMTool._initAnimPreview = function (node) {
         } else {
             needLoad = true;
             var img = new Image();
-            img.src = pageDataUrls[pi].dataUrl;
+            img.src = targetUrl;
             imgs[pi] = img;
         }
     }
+    // 🔒 [LOCK-2] END
 
     function doSetup() {
         try {
@@ -700,6 +714,9 @@ SMTool._initAnimPreview = function (node) {
             pp._refCh = ch;
             pp._boundsOffset = { x: boundsOff.x, y: boundsOff.y };
             pp._boundsSize = { x: boundsSize.x, y: boundsSize.y };
+            // ★ 保留已有的内容缩放（不同源文件重建时继承用户缩放级别）
+            pp._contentZoom = pp._contentZoom || 1.0;
+            var zoom = pp._contentZoom;
             sk.x = cw / 2 - (boundsOff.x + boundsSize.x / 2);
             sk.y = ch / 2 - (boundsOff.y + boundsSize.y / 2);
 
@@ -713,8 +730,8 @@ SMTool._initAnimPreview = function (node) {
                 pp._shader = null;
 
                 renderer.camera.position.set(cw / 2, ch / 2, 0);
-                renderer.camera.viewportWidth = cw;
-                renderer.camera.viewportHeight = ch;
+                renderer.camera.viewportWidth = cw / zoom;
+                renderer.camera.viewportHeight = ch / zoom;
                 renderer.camera.update();
 
                 for (var i = 0; i < atlas.pages.length; i++) {
@@ -731,7 +748,7 @@ SMTool._initAnimPreview = function (node) {
                 pp._batcher = new WGL.PolygonBatcher(gl);
                 pp._mvp = new WGL.Matrix4();
                 pp._skeletonRenderer = new WGL.SkeletonRenderer(gl);
-                pp._mvp.ortho2d(0, 0, cw - 1, ch - 1);
+                pp._mvp.ortho2d(cw / 2 - cw / (2 * zoom), ch / 2 - ch / (2 * zoom), cw / zoom, ch / zoom);
 
                 for (var j = 0; j < atlas.pages.length; j++) {
                     var page2 = atlas.pages[j];
@@ -860,6 +877,82 @@ SMTool._renderAnimPreview = function (now) {
     }
 };
 
+// ---- 同步预览面板视口（缩放面板时调用，重新计算相机/投影/骨架位置） ----
+SMTool._syncAnimPreviewViewport = function (pp, newW, newH) {
+    if (!pp || !pp.skeleton || !pp.gl) return;
+
+    var canvas = pp.canvas;
+    if (canvas) {
+        canvas.width = newW;
+        canvas.height = newH;
+    }
+    pp._canvasWidth = newW;
+    pp._canvasHeight = newH;
+
+    var cw = newW, ch = newH;
+    var sk = pp.skeleton;
+    var useVer = pp._spineVer;
+    var bo = pp._boundsOffset;
+    var bs = pp._boundsSize;
+    var zoom = pp._contentZoom || 1.0;
+
+    // 重新居中骨架
+    if (bo && bs) {
+        sk.x = cw / 2 - (bo.x + bs.x / 2);
+        sk.y = ch / 2 - (bo.y + bs.y / 2);
+    }
+
+    // 更新相机/投影矩阵（含内容缩放）
+    if (useVer === '4.3' || useVer === '4.2') {
+        if (pp._sceneRenderer) {
+            pp._sceneRenderer.camera.position.set(cw / 2, ch / 2, 0);
+            pp._sceneRenderer.camera.viewportWidth = cw / zoom;
+            pp._sceneRenderer.camera.viewportHeight = ch / zoom;
+            pp._sceneRenderer.camera.update();
+        }
+    } else {
+        if (pp._mvp) {
+            pp._mvp.ortho2d(cw / 2 - cw / (2 * zoom), ch / 2 - ch / (2 * zoom), cw / zoom, ch / zoom);
+        }
+    }
+
+    // ★ 更新缩放标签
+    SMTool._updateAnimPreviewZoomLabel(zoom);
+};
+
+// ---- 更新缩放标签 ----
+SMTool._updateAnimPreviewZoomLabel = function (zoom) {
+    var label = document.getElementById('appZoomLabel');
+    if (label) {
+        var pct = Math.round(zoom * 100);
+        label.textContent = pct + '%';
+        // 非 100% 时高亮显示
+        var bar = document.getElementById('appZoomBar');
+        if (bar) {
+            if (pct === 100) {
+                bar.classList.remove('visible');
+            } else {
+                bar.classList.add('visible');
+            }
+        }
+    }
+};
+
+// ---- 重置预览缩放为 100% ----
+SMTool._resetAnimPreviewZoom = function () {
+    var pp = SMData._animPreview;
+    if (!pp || !pp.visible) return;
+    pp._contentZoom = 1.0;
+    // 🔒 [LOCK-1] 重置按钮回写 100% 到文件记录
+    var sourceNode = SMData.nodes.get(pp.nodeId);
+    if (sourceNode && sourceNode.sourceFile) {
+        SMData._previewZooms[sourceNode.sourceFile] = 1.0;
+    }
+    var cw = pp._canvasWidth || pp.panelW || 320;
+    var ch = pp._canvasHeight || pp.panelH || 500;
+    SMTool._syncAnimPreviewViewport(pp, cw, ch);
+};
+
 // ---- 销毁预览资源 ----
 SMTool._destroyAnimPreview = function () {
     var pp = SMData._animPreview;
@@ -923,6 +1016,8 @@ SMTool._updateAnimPreviewAnim = function (animName) {
 // ---- 将源节点的轨道混合配置复制到预览 AnimationState ----
 SMTool._applyPreviewTracks = function (pp, previewState, stateData, skeletonData, sourceNode) {
     previewState.clearTracks();
+    // ★ 清除轨道后立刻重置骨骼到绑定姿态，防止上一动画最后一帧残留闪烁
+    if (pp.skeleton) pp.skeleton.setToSetupPose();
 
     var tracks = sourceNode.tracks;
     if (!tracks || tracks.length === 0) {
@@ -964,6 +1059,19 @@ SMTool._applyPreviewTracks = function (pp, previewState, stateData, skeletonData
     }
 
     pp.animName = sourceNode.currentAnim || (tracks.length > 0 ? tracks[0].animName : '');
+
+    // ▲ flow 播放时强制不循环（flow 控制节奏）；非 flow 时跟随节点自身循环设置
+    if (SMData._fullPlayback && SMData._fullPlayback.isPlaying) {
+        for (var ti = 0; ti < 5; ti++) {
+            var e = previewState.getCurrent(ti);
+            if (e) e.loop = false;
+        }
+    }
+
+    // ★ 立即应用第一帧，消除 setup pose 闪烁
+    previewState.update(0);
+    previewState.apply(pp.skeleton);
+    pp.skeleton.updateWorldTransform(pp._physParam);
 };
 
 // ---- 同步预览浮窗的 PMA 和皮肤到源节点状态 ----

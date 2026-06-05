@@ -498,7 +498,11 @@ SMTool._buildBoneRowHtml = function (node, boneName) {
                 '透明度淡入淡出' +
             '</label>' +
             '<span class="dfp-fade-input-wrap' + (fadeData.enabled ? '' : ' hidden') + '">' +
-                '<input type="number" class="dfp-fade-dur" value="' + fadeDur + '" min="0.1" max="60" step="0.1" onchange="SMTool._setBoneFadeDur(\'' + SMTool._esc(boneName) + '\', parseFloat(this.value)||1.0)">' +
+                '<span class="dfp-fade-wrap">' +
+                    '<button class="dfp-fade-btn" onclick="SMTool._fadeStepInput(this,-1)" title="减少">◀</button>' +
+                    '<input type="number" class="dfp-fade-dur" value="' + fadeDur + '" min="0.1" max="60" step="0.1" onchange="SMTool._setBoneFadeDur(\'' + SMTool._esc(boneName) + '\', parseFloat(this.value)||1.0)">' +
+                    '<button class="dfp-fade-btn" onclick="SMTool._fadeStepInput(this,1)" title="增加">▶</button>' +
+                '</span>' +
                 '<span class="dfp-fade-unit">S</span>' +
             '</span>' +
         '</div>';
@@ -696,6 +700,18 @@ SMTool._setBoneFadeDur = function (boneName, value) {
             badge.title = '透明度淡入淡出: ' + node._boneFade[boneName].duration + 's';
         }
     }
+};
+
+// ★ 淡入淡出数值框步进按钮
+SMTool._fadeStepInput = function (btn, dir) {
+    var wrap = btn.parentElement;
+    if (!wrap) return;
+    var inp = wrap.querySelector('.dfp-fade-dur');
+    if (!inp) return;
+    var v = parseFloat(inp.value) || 1;
+    v = dir < 0 ? Math.max(0.1, v - 0.5) : Math.min(60, v + 0.5);
+    inp.value = v.toFixed(1);
+    if (typeof inp.onchange === 'function') inp.onchange();
 };
 
 // ---- 生成缩略图（max 128px，大幅减小面板渲染开销）----
@@ -1351,6 +1367,12 @@ SMTool._updateSel = function () {
     }
     SMTool._updateFloatPanel();
     SMTool._updateFlowPanel();
+
+    // ★ 多选 ≥2 时显示对齐排版工具栏
+    var alignBar = document.getElementById('alignBar');
+    if (alignBar) {
+        alignBar.style.display = (SMData.selectedNodes.size >= 2) ? 'flex' : 'none';
+    }
 };
 
 // ---- 清除节点面板缓存（截图/备注变更时调用）----
@@ -1401,6 +1423,22 @@ SMTool._showAnimPreview = function (node) {
 
     var pp = SMData._animPreview;
 
+    // ================================================================
+    // 🔒🔒🔒 [LOCK-1] 每个动画文件独立预览缩放
+    // ⚠️ 解锁策略：除非用户明确说「解锁 LOCK-1」，或我主动问询
+    //    「是否解锁 LOCK-1 以修改XX功能」且用户同意，否则绝不改动此块。
+    //
+    // _previewZooms[sourceFile] 记录每文件缩放值，点击节点查表恢复，
+    // 无记录默认100%。滚轮缩放回写 _previewZooms。同源切换必须同步相机。
+    // 联动位置：1)此处加载 2)wheel保存 3)_resetAnimPreviewZoom 4)_syncAnimPreviewViewport
+    // ================================================================
+    var fileZoom = SMData._previewZooms && SMData._previewZooms[node.sourceFile];
+    pp._contentZoom = (fileZoom !== undefined) ? fileZoom : 1.0;
+    // 🔒 [LOCK-1] END
+
+    // 🔒 [LOCK-3] 节点被点击时解除 flow 暂停冻结
+    if (pp._flowFrozen) pp._flowFrozen = false;
+
     // ★ 如果同一节点已显示 → 仅更新动画（若非当前动画）
     if (pp.visible && pp.nodeId === node.id && pp.skeleton && pp.state) {
         if (pp.animName !== targetAnim) {
@@ -1429,6 +1467,8 @@ SMTool._showAnimPreview = function (node) {
         }
         // ★ 同步 PMA 和皮肤（同源不同节点时可能不一致）
         SMTool._syncPreviewPmaAndSkin(pp, node);
+        // ★ 同步相机（确保缩放值匹配当前文件的记录）
+        SMTool._syncAnimPreviewViewport(pp, pp._canvasWidth || pp.panelW, pp._canvasHeight || pp.panelH);
         return;
     }
 
@@ -1530,15 +1570,10 @@ SMTool._initAnimPreviewPanel = function () {
                 panel.style.height = newH + 'px';
                 pp.panelW = newW;
                 pp.panelH = newH;
-                // 同步 canvas 尺寸
+                // 同步 canvas 尺寸并更新视口（相机/投影/骨架位置重新计算）
                 var canvas = document.getElementById('appCanvas');
                 if (canvas) {
-                    canvas.width = newW;
-                    canvas.height = newH;
-                    pp._canvasWidth = newW;
-                    pp._canvasHeight = newH;
-                    // ★ 只更新 GL 视口尺寸，不动相机/投影/骨架位置
-                    //    初始参考尺寸的相机+投影 → 内容自然等比缩放并保持居中
+                    SMTool._syncAnimPreviewViewport(pp, newW, newH);
                 }
             }
 
@@ -1551,6 +1586,22 @@ SMTool._initAnimPreviewPanel = function () {
             document.addEventListener('mouseup', onUp);
         });
     }
+
+    // 面板内鼠标滚轮 → 缩放 Spine 动画内容
+    panel.addEventListener('wheel', function (e) {
+        if (!pp.visible || !pp.skeleton || !pp.gl) return;
+        e.preventDefault();
+        e.stopPropagation();
+        pp._contentZoom = pp._contentZoom || 1.0;
+        var factor = e.deltaY > 0 ? 0.9 : 1.1;
+        pp._contentZoom = Math.max(0.1, Math.min(10, pp._contentZoom * factor));
+        // 🔒 [LOCK-1] 滚轮缩放回写到文件记录
+        var sourceNode = SMData.nodes.get(pp.nodeId);
+        if (sourceNode && sourceNode.sourceFile) {
+            SMData._previewZooms[sourceNode.sourceFile] = pp._contentZoom;
+        }
+        SMTool._syncAnimPreviewViewport(pp, pp._canvasWidth || pp.panelW, pp._canvasHeight || pp.panelH);
+    }, { passive: false });
 };
 
 // ---- 更新左侧浮窗面板数据 ----（页签式布局：皮肤 | 骨骼 | 插槽 | 信息）
@@ -2651,7 +2702,8 @@ SMTool._selectFullPath = function (pathIdx) {
     SMData._fullPlayback._stepped = false;
     if (SMData._fullPlayback._timer) { clearTimeout(SMData._fullPlayback._timer); SMData._fullPlayback._timer = null; }
     SMTool._clearAllProgressBars();
-    SMTool._resumeAllNodes();
+    // ★ 选路径时重置所有节点到各自动画第一帧
+    SMTool._resetAllToAnimFrame1();
     SMTool._setFullComponentFocus(SMData.selectedNode);
     SMTool._updateFullFlowPanel(document.getElementById('flpContent'), document.getElementById('flowPanel'));
     SMTool._updateSel();
@@ -2672,6 +2724,12 @@ SMTool._startFullPlayback = function () {
     var maxStep = path.nodes.length;
     if (path.nodes[maxStep - 1] && path.nodes[maxStep - 1].cycleClose) maxStep--;
     if (pb.currentStep >= maxStep) pb.currentStep = 0;
+
+    // ★ 全新开始时重置所有节点到各自动画第一帧（暂停后恢复则跳过）
+    if (pb.currentStep === 0) {
+        SMTool._resetAllToAnimFrame1();
+    }
+
     pb._stepped = false;
     pb.isPlaying = true;
     SMTool._playFullStep();
@@ -2717,6 +2775,50 @@ SMTool._freezeAllNodes = function () {
     }
 };
 
+// ================================================================
+// 🔒🔒🔒 [LOCK-3] 动画流播放节点状态管理
+// ⚠️ 解锁策略：除非用户明确说「解锁 LOCK-3」，或我主动问询
+//    「是否解锁 LOCK-3 以修改XX功能」且用户同意，否则绝不改动此块。
+//
+// 核心规则（用户最终确定）：
+//   未轮到 → 该节点自身动画第一帧（冻结）
+//   正在播 → 不循环播放 loop=false
+//   已播完 → 该节点自身动画最后一帧
+//   切换不同文件流 → 先清理所有节点，再初始化新流
+// 联动函数（修改任一个前必须理解全部）：
+//   _resetAllToAnimFrame1 / _pauseAllNodesExcept /
+//   _applyStepToMainNode / _selectFullPath / _startFullPlayback / _freezeAllNodes
+// ================================================================
+
+// ★ 所有节点重置到各自动画的第一帧并冻结（动画流开始时的初始状态）
+SMTool._resetAllToAnimFrame1 = function () {
+    var nodesIter = SMData.nodes.values();
+    var r = nodesIter.next();
+    while (!r.done) {
+        var n = r.value;
+        if (n.skeleton && n.state && n.skeletonData) {
+            try { n.state.clearTracks(); } catch (e) {}
+            try { n.skeleton.setToSetupPose(); } catch (e) {}
+            // 应用节点自身的动画第一帧
+            var animName = n.currentAnim || (n.animations.length > 0 ? n.animations[0].name : '');
+            if (animName) {
+                try {
+                    n.state.setAnimation(0, animName, false);
+                    n.state.update(0);
+                    n.state.apply(n.skeleton);
+                    n.skeleton.updateWorldTransform(n._physParam);
+                    // 冻结在第一帧（timeScale=0 确保后续不会被 _loop 推进）
+                    var entry = n.state.getCurrent(0);
+                    if (entry) entry.timeScale = 0;
+                } catch (e) {}
+            }
+            n._pausedByFlow = false;
+            n._savedTracks = undefined;
+        }
+        r = nodesIter.next();
+    }
+};
+
 // 暂停除指定节点外的所有 Spine 动画节点（保存完整 tracks 配置以便恢复）
 SMTool._pauseAllNodesExcept = function (exceptId) {
     var nodesIter = SMData.nodes.values();
@@ -2724,7 +2826,6 @@ SMTool._pauseAllNodesExcept = function (exceptId) {
     while (!r.done) {
         var n = r.value;
         if (n.id !== exceptId && n.state && n.skeletonData) {
-            // 保存完整 tracks 数组 + loop 状态，以便后续恢复多轨道配置
             if (!n._pausedByFlow) {
                 n._savedTracks = n.tracks ? JSON.parse(JSON.stringify(n.tracks)) : null;
                 n._savedLoop = n.loop;
@@ -2807,6 +2908,15 @@ SMTool._applyStepToMainNode = function (stepNode) {
                 spineNode.skeleton.setToSetupPose();
                 spineNode.state.clearTracks();
                 SMTool._applyTracksToState(spineNode);
+                // ★ 动画组播放：强制不循环，停留在最后一帧
+                for (var ti = 0; ti < 5; ti++) {
+                    var e = spineNode.state.getCurrent(ti);
+                    if (e) e.loop = false;
+                }
+                // ★ 立即应用第一帧，消除 setup pose 闪烁
+                spineNode.state.update(0);
+                spineNode.state.apply(spineNode.skeleton);
+                spineNode.skeleton.updateWorldTransform(spineNode._physParam);
             }
         }
     }

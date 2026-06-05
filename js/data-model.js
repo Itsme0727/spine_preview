@@ -128,8 +128,8 @@ var SMData = {
         animName: '',         // 当前播放的动画名
         panelX: 0,            // 面板 left px
         panelY: 0,            // 面板 top px
-        panelW: 280,          // 面板宽度 px
-        panelH: 420,          // 面板高度 px
+        panelW: 320,          // 面板宽度 px
+        panelH: 500,          // 面板高度 px
         _spineVer: '',        // Spine 版本 ('3.8' | '4.2' | '4.3')
         _batcher: null,       // PolygonBatcher
         _shader: null,        // Shader
@@ -145,7 +145,14 @@ var SMData = {
         _boundsSize: null,    // {x, y} 骨架包围盒尺寸
         _physParam: null,     // 物理参数
         _lastTime: 0          // 上一帧时间
-    }
+    },
+
+    // ★ 每个动画文件的预览缩放值 { sourceFile: zoomNumber }
+    _previewZooms: {},
+
+    // ★ 拖拽吸附线 { dir: 'h'|'v', pos: worldCoord }
+    _snapLines: [],
+    _snapEnabled: true   // 吸附功能开关
 };
 
 // ---- 快速采样 hash（非加密，用于去重查找的 O(1) 索引） ----

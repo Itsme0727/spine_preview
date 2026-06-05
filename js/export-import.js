@@ -449,6 +449,7 @@ SMTool._serializeData = function () {
             id: n.id,
             name: n.name,
             nodeType: n.nodeType,
+            sourceFile: n.sourceFile || '',
             x: n.x,
             y: n.y,
             animations: n.animations,
@@ -500,6 +501,12 @@ SMTool._serializeData = function () {
 
     // 保存全局骨骼标签
     data._boneLabelStore = SMData._boneLabelStore;
+
+    // ★ 保存预览缩放、吸附开关、动画流模式
+    data._previewZooms = SMData._previewZooms || {};
+    data._snapEnabled = SMData._snapEnabled !== false;
+    data.flowMode = SMData.flowMode || 'three';
+    data.renderMode = SMData.renderMode || 'perf';
 
     return JSON.stringify(data, null, 2);
 };
@@ -1006,6 +1013,20 @@ SMTool._processImportJson = function (jsonText, fileHandle) {
             var node = new SpineNodeData(nd.id);
             node.name = nd.name;
             node.nodeType = nd.nodeType || 'spine';
+            node.sourceFile = nd.sourceFile || '';
+            // ★ 旧工程兼容：若 sourceFile 为空但保留了原始文件名，则从文件名重建
+            if (!node.sourceFile && node._srcFileNames && node._srcFileNames.length > 0) {
+                for (var fi = 0; fi < node._srcFileNames.length; fi++) {
+                    var fn = node._srcFileNames[fi].toLowerCase();
+                    if (fn.indexOf('.json') > 0 || fn.indexOf('.skel') > 0) {
+                        node.sourceFile = node._srcFileNames[fi].replace(/\.(json|skel)$/i, '');
+                        break;
+                    }
+                }
+                if (!node.sourceFile) {
+                    node.sourceFile = node._srcFileNames[0].replace(/\.[^.]+$/, '');
+                }
+            }
             node.x = nd.x || 0;
             node.y = nd.y || 0;
             node.animations = nd.animations || [];
@@ -1099,6 +1120,18 @@ SMTool._processImportJson = function (jsonText, fileHandle) {
 
         // 恢复全局骨骼标签
         if (d._boneLabelStore) SMData._boneLabelStore = d._boneLabelStore;
+
+        // ★ 恢复预览缩放、吸附开关、动画流模式
+        if (d._previewZooms) SMData._previewZooms = d._previewZooms;
+        if (d._snapEnabled !== undefined) SMData._snapEnabled = d._snapEnabled;
+        if (d.flowMode) SMData.flowMode = d.flowMode;
+        if (d.renderMode) SMData.renderMode = d.renderMode;
+
+        // ★ 同步 UI 按钮状态
+        var btnSnap = document.getElementById('btnSnap');
+        if (btnSnap) btnSnap.classList.toggle('active', SMData._snapEnabled);
+        if (d.flowMode) SMTool.setFlowMode(d.flowMode);
+        if (d.renderMode) SMTool.setRenderMode(d.renderMode);
 
         SMTool._updateAllPos();
         SMTool._updateSB();

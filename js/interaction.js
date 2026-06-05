@@ -51,17 +51,36 @@ SMTool._onMD = function (e) {
         }
     }
 
-    // 中键/右键/Alt+左键 → 平移
+    // 中键/右键 → 平移；Alt+左键 → 若点组内节点则穿透选单个，否则平移
     if (e.button === 2) {
         SMTool._onPanStart(e);
         SMTool.gridCanvas.style.cursor = 'grab';
         return;
     }
-    if (e.button === 1 || (e.button === 0 && e.altKey)) {
+    if (e.button === 1) {
         e.preventDefault();
         SMTool._onPanStart(e);
         SMTool.gridCanvas.style.cursor = 'grab';
         return;
+    }
+    if (e.button === 0 && e.altKey) {
+        // Alt+左键：检测是否点中组内节点
+        var wpAlt = SMTool.canvasToWorld(e.clientX, e.clientY);
+        var foundAlt = null;
+        var nodesIterAlt = SMData.nodes.values();
+        var rAlt = nodesIterAlt.next();
+        while (!rAlt.done) {
+            if (SMTool._hitTest(rAlt.value, wpAlt.x, wpAlt.y)) { foundAlt = rAlt.value; break; }
+            rAlt = nodesIterAlt.next();
+        }
+        if (foundAlt && SMTool._findGroupOf(foundAlt.id)) {
+            // Alt+点组内节点 → 穿透，不平移，到下方普通点击逻辑选单个节点
+        } else {
+            e.preventDefault();
+            SMTool._onPanStart(e);
+            SMTool.gridCanvas.style.cursor = 'grab';
+            return;
+        }
     }
 
     // 左键 — 画布点击
@@ -179,10 +198,10 @@ SMTool._onMD = function (e) {
                 SMTool._updateStateRowColors();
                 SMTool._updateSel();
             } else {
-                // 普通点击：单选，如在组内则全选整组
+                // 普通点击：单选，如在组内则全选整组（Alt+点击则穿透选单个）
                 SMData.selectedNodes.clear();
                 var grp = SMTool._findGroupOf(found.id);
-                if (grp) {
+                if (grp && !e.altKey) {
                     SMData._pendingDragSnap = SMTool._snapshotState();
                     grp.nodeIds.forEach(function (gid) { SMData.selectedNodes.add(gid); });
                     SMData.isMultiDragging = true;
@@ -331,11 +350,13 @@ SMTool._onMM = function (e) {
         SMData.draggedNode.x = wp2.x - SMData.dragOffset.x;
         SMData.draggedNode.y = wp2.y - SMData.dragOffset.y;
         SMTool._updatePos(SMData.draggedNode);
+        SMTool._applySnapToDrag([SMData.draggedNode], false);
     }
 
     // 多节点拖拽（含组拖拽）
     if (SMData.isMultiDragging) {
         var wp3 = SMTool.canvasToWorld(e.clientX, e.clientY);
+        var draggedList = [];
         var nodesIter3 = SMData.nodes.values();
         var result3 = nodesIter3.next();
         while (!result3.done) {
@@ -345,9 +366,11 @@ SMTool._onMM = function (e) {
                 n3.x = wp3.x - off.x;
                 n3.y = wp3.y - off.y;
                 SMTool._updatePos(n3);
+                draggedList.push(n3);
             }
             result3 = nodesIter3.next();
         }
+        SMTool._applySnapToDrag(draggedList, true);
     }
 
     // 控制点/标签悬停检测
@@ -392,6 +415,120 @@ SMTool._onMM = function (e) {
     }
     if (!foundTooltip) {
         tt.classList.remove('show');
+    }
+};
+
+// ---- 拖拽吸附对齐 ----
+SMTool._applySnapToDrag = function (draggedNodesM, isMulti) {
+    if (!draggedNodesM || draggedNodesM.length === 0) return;
+    if (!SMData._snapEnabled) { SMData._snapLines = []; return; }
+    var THRESHOLD = 4 / Math.max(0.03, SMData.view.zoom); // 屏幕 4px 转为世界坐标
+
+    // 计算拖拽对象的包围盒
+    var dMinX = Infinity, dMaxX = -Infinity, dMinY = Infinity, dMaxY = -Infinity;
+    for (var i = 0; i < draggedNodesM.length; i++) {
+        var r = SMTool._getNodeWorldRect(draggedNodesM[i]);
+        if (r.left < dMinX) dMinX = r.left;
+        if (r.right > dMaxX) dMaxX = r.right;
+        if (r.top < dMinY) dMinY = r.top;
+        if (r.bottom > dMaxY) dMaxY = r.bottom;
+    }
+    var dCX = (dMinX + dMaxX) / 2;
+    var dCY = (dMinY + dMaxY) / 2;
+
+    var bestX = null, bestDx = 0, bestDistX = THRESHOLD;
+    var bestY = null, bestDy = 0, bestDistY = THRESHOLD;
+
+    // 遍历所有非拖拽节点，检测边缘对齐
+    var nodesIter = SMData.nodes.values();
+    var result = nodesIter.next();
+    while (!result.done) {
+        var n = result.value;
+        var isDragged = false;
+        for (var j = 0; j < draggedNodesM.length; j++) {
+            if (draggedNodesM[j].id === n.id) { isDragged = true; break; }
+        }
+        if (!isDragged) {
+            var nr = SMTool._getNodeWorldRect(n);
+            var nCX = (nr.left + nr.right) / 2;
+            var nCY = (nr.top + nr.bottom) / 2;
+
+            // X 方向：拖拽对象左/右/中 ↔ 参考节点左/右/中
+            var pairsX = [
+                [dMinX, nr.left], [dMinX, nr.right], [dMinX, nCX],
+                [dMaxX, nr.left], [dMaxX, nr.right], [dMaxX, nCX],
+                [dCX, nr.left], [dCX, nr.right], [dCX, nCX]
+            ];
+            for (var xi = 0; xi < pairsX.length; xi++) {
+                var dist = Math.abs(pairsX[xi][0] - pairsX[xi][1]);
+                if (dist < bestDistX) {
+                    bestDistX = dist;
+                    bestX = pairsX[xi][1];
+                    bestDx = pairsX[xi][1] - pairsX[xi][0];
+                }
+            }
+
+            // Y 方向：拖拽对象上/下/中 ↔ 参考节点上/下/中
+            var pairsY = [
+                [dMinY, nr.top], [dMinY, nr.bottom], [dMinY, nCY],
+                [dMaxY, nr.top], [dMaxY, nr.bottom], [dMaxY, nCY],
+                [dCY, nr.top], [dCY, nr.bottom], [dCY, nCY]
+            ];
+            for (var yi = 0; yi < pairsY.length; yi++) {
+                var dist = Math.abs(pairsY[yi][0] - pairsY[yi][1]);
+                if (dist < bestDistY) {
+                    bestDistY = dist;
+                    bestY = pairsY[yi][1];
+                    bestDy = pairsY[yi][1] - pairsY[yi][0];
+                }
+            }
+        }
+        result = nodesIter.next();
+    }
+
+    SMData._snapLines = [];
+
+    // 应用 X 吸附：调整节点位置 + 同步修正拖拽偏移量（防止下一帧被鼠标位置覆盖）
+    if (bestX !== null && bestDistX < THRESHOLD) {
+        for (var i = 0; i < draggedNodesM.length; i++) {
+            draggedNodesM[i].x += bestDx;
+            SMTool._updatePos(draggedNodesM[i]);
+        }
+        // 同步修正拖拽偏移，使吸附生效后不会被鼠标覆盖
+        if (!isMulti && SMData.draggedNode) {
+            SMData.dragOffset.x -= bestDx;
+        }
+        if (isMulti) {
+            var keysIter = SMData.multiDragOffsets.keys();
+            var kResult = keysIter.next();
+            while (!kResult.done) {
+                var off = SMData.multiDragOffsets.get(kResult.value);
+                if (off) off.x -= bestDx;
+                kResult = keysIter.next();
+            }
+        }
+        SMData._snapLines.push({ dir: 'v', pos: bestX });
+    }
+
+    // 应用 Y 吸附
+    if (bestY !== null && bestDistY < THRESHOLD) {
+        for (var i = 0; i < draggedNodesM.length; i++) {
+            draggedNodesM[i].y += bestDy;
+            SMTool._updatePos(draggedNodesM[i]);
+        }
+        if (!isMulti && SMData.draggedNode) {
+            SMData.dragOffset.y -= bestDy;
+        }
+        if (isMulti) {
+            var keysIter = SMData.multiDragOffsets.keys();
+            var kResult = keysIter.next();
+            while (!kResult.done) {
+                var off = SMData.multiDragOffsets.get(kResult.value);
+                if (off) off.y -= bestDy;
+                kResult = keysIter.next();
+            }
+        }
+        SMData._snapLines.push({ dir: 'h', pos: bestY });
     }
 };
 
@@ -553,6 +690,7 @@ SMTool._onMU = function (e) {
     SMData.draggedNode = null;
     SMData.isMultiDragging = false;
     SMData.multiDragOffsets.clear();
+    SMData._snapLines = [];
     SMTool._commitDragUndo();
     SMTool.gridCanvas.style.cursor = SMData.connectMode ? 'crosshair' : 'default';
 };
