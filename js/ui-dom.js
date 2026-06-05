@@ -2641,7 +2641,7 @@ SMTool._updateFullFlowPanel = function (content, panel) {
 
     // 初始化右侧 Spine 画布（已移除，改为使用浮窗预览）
 
-    // ★ 锚钉激活时，选中组后自动进入流预览模式并选第一个路径（退出锁期间跳过）
+    // 🔒 [LOCK-4] 锚钉激活+锁未锁定时，自动进入流预览
     if (pb.activePathIdx < 0 && paths.length > 0 && !pb.isPlaying && SMData._flowPanel.pinned && !SMData._flowExitLock) {
         SMTool._selectFullPath(0);
     }
@@ -2851,7 +2851,12 @@ SMTool._resetAllToAnimFrame1 = function () {
     }
 };
 
-// ★ 强制重置所有节点到正常播放（暴力恢复，用于退出动画流模式）
+// ================================================================
+// 🔒🔒🔒 [LOCK-4] 强制重置所有节点到正常播放（退出动画流时调用）
+// ⚠️ 解锁策略：除非用户明确说「解锁 LOCK-4」，否则绝不改动。
+// 暴力恢复：清轨道→setToSetupPose→_savedTracks恢复→applyTracks→update(0)
+// 无视任何残留的 timeScale=0 / clearTracks / _pausedByFlow 状态
+// ================================================================
 SMTool._forceResetAllNodes = function () {
     var nodesIter = SMData.nodes.values();
     var r = nodesIter.next();

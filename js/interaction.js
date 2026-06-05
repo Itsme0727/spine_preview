@@ -8,11 +8,17 @@ var SMTool = window.SMTool || {};
 
 // ---- 鼠标按下 ----
 SMTool._onMD = function (e) {
-    // ★ 最高优先级：左键点击画布任意位置 → 退出动画流模式，强制恢复所有节点正常播放
+    // ================================================================
+    // 🔒🔒🔒 [LOCK-4] 动画流退出机制 — 严禁随意改动！
+    // ⚠️ 解锁策略：除非用户明确说「解锁 LOCK-4」，否则绝不改动此块。
+    // 核心：左键点击画布 → 退出动画流 → 强制恢复所有节点播放
+    // 顺序：1)_flowExitLock  2)清流状态  3)_forceResetAllNodes
+    //   4)_updateFullFlowPanel(锁生效)  5)200ms解鎖
+    // 联动：_forceResetAllNodes / _updateFullFlowPanel / _expandFlowPanel
+    // ================================================================
     if (e.button === 0) {
         var pb = SMData._fullPlayback;
         if (pb.activePathIdx >= 0) {
-            // ★ 先上锁，防止后续任何逻辑重新拉回流模式
             SMData._flowExitLock = true;
             pb.isPlaying = false;
             pb.activePathIdx = -1;
@@ -28,6 +34,7 @@ SMTool._onMD = function (e) {
             setTimeout(function () { SMData._flowExitLock = false; }, 200);
         }
     }
+    // 🔒 [LOCK-4] END
 
     // 优先检测控制点点击
     if (e.button === 0 && !e.altKey) {
@@ -1744,7 +1751,7 @@ SMTool._expandFlowPanel = function () {
     SMData._flowPanel.expanded = true;
     var panel = document.getElementById('flowPanel');
     if (panel) panel.classList.add('expanded');
-    // ★ 展开时刷新面板并默认选中第一个路径（退出锁期间跳过）
+    // 🔒 [LOCK-4] 展开面板时自动选第一个路径（退出锁期间跳过）
     SMTool._updateFlowPanel();
     var pb = SMData._fullPlayback;
     var paths = SMData._fullPaths;
