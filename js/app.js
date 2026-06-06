@@ -137,6 +137,10 @@ SMTool.copyNode = function (nid, offsetX, offsetY) {
     node.bones = orig.bones.slice();
     node.version = orig.version;
     node._customScale = orig._customScale;
+    node._debugOffsetX = orig._debugOffsetX || 0;
+    node._debugOffsetY = orig._debugOffsetY || 0;
+    node._debugCanvasW = orig._debugCanvasW || 0;
+    node._debugCanvasH = orig._debugCanvasH || 0;
     node._boneTags = orig._boneTags ? JSON.parse(JSON.stringify(orig._boneTags)) : {};
     node._boneNotes = orig._boneNotes ? JSON.parse(JSON.stringify(orig._boneNotes)) : {};
     // ★ 性能优化：共享截图引用而非深拷贝 dataUrl。
@@ -344,6 +348,8 @@ SMTool.init = function () {
 
     // 滚轮缩放（面板内滚动内容，不缩放画布）
     window.addEventListener('wheel', function (e) {
+        // ★ 调试模式：滚轮始终用于缩放动画层
+        if (SMData._debugMode) { e.preventDefault(); SMTool._onWheel(e); return; }
         if (!e.target.closest('.state-list') && !e.target.closest('.anim-bar') && !e.target.closest('.anim-select') && !e.target.closest('.ip-body') && !e.target.closest('#conditionEditor') && !e.target.closest('#dataFloatPanel') && !e.target.closest('#animPreviewPanel')) {
             e.preventDefault();
             SMTool._onWheel(e);
@@ -929,6 +935,10 @@ SMTool.init = function () {
                 _exitText: n._exitText || '',
                 _textContent: n._textContent || '',
                 _customScale: n._customScale !== undefined ? n._customScale : 1.0,
+                _debugOffsetX: n._debugOffsetX || 0,
+                _debugOffsetY: n._debugOffsetY || 0,
+                _debugCanvasW: n._debugCanvasW || 0,
+                _debugCanvasH: n._debugCanvasH || 0,
                 infoCollapsed: !!n.infoCollapsed
             });
             result = nodesIter.next();
@@ -1039,6 +1049,10 @@ SMTool.init = function () {
                 existing._exitText = nd._exitText || '';
                 existing._textContent = nd._textContent || '';
                 existing._customScale = nd._customScale !== undefined ? nd._customScale : 1.0;
+                existing._debugOffsetX = nd._debugOffsetX || 0;
+                existing._debugOffsetY = nd._debugOffsetY || 0;
+                existing._debugCanvasW = nd._debugCanvasW || 0;
+                existing._debugCanvasH = nd._debugCanvasH || 0;
                 existing.infoCollapsed = !!nd.infoCollapsed;
 
                 // 更新动画（即时切换，无需重载）
@@ -1149,6 +1163,10 @@ SMTool.init = function () {
                 node._exitText = nd._exitText || '';
                 node._textContent = nd._textContent || '';
                 node._customScale = nd._customScale !== undefined ? nd._customScale : 1.0;
+                node._debugOffsetX = nd._debugOffsetX || 0;
+                node._debugOffsetY = nd._debugOffsetY || 0;
+                node._debugCanvasW = nd._debugCanvasW || 0;
+                node._debugCanvasH = nd._debugCanvasH || 0;
                 node.infoCollapsed = !!nd.infoCollapsed;
 
                 SMData.nodes.set(nd.id, node);

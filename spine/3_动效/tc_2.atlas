@@ -1,0 +1,48 @@
+
+tc_2.png
+size: 356,299
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+Front_2_1
+  rotate: false
+  xy: 2, 115
+  size: 236, 182
+  orig: 236, 182
+  offset: 0, 0
+  index: -1
+Sand_01
+  rotate: false
+  xy: 2, 2
+  size: 149, 111
+  orig: 150, 127
+  offset: 1, 6
+  index: -1
+Sand_02
+  rotate: false
+  xy: 240, 66
+  size: 112, 115
+  orig: 118, 115
+  offset: 0, 0
+  index: -1
+Sand_03
+  rotate: true
+  xy: 237, 40
+  size: 24, 100
+  orig: 25, 103
+  offset: 0, 0
+  index: -1
+light
+  rotate: false
+  xy: 153, 31
+  size: 82, 82
+  orig: 100, 100
+  offset: 9, 9
+  index: -1
+lizi_01
+  rotate: false
+  xy: 240, 183
+  size: 114, 114
+  orig: 128, 128
+  offset: 8, 9
+  index: -1

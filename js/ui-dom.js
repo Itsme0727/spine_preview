@@ -129,6 +129,7 @@ SMTool._createEl = function (node) {
                 '<span class="name">' + SMTool._esc(node.currentAnim || node.name) + '</span>' +
             '</div>' +
             '<div class="btns">' +
+                '<button onclick="event.stopPropagation();SMTool._debugNode(' + node.id + ')" title="调试动画层位置/缩放">🔍</button>' +
                 '<button onclick="event.stopPropagation();SMTool.copyNode(' + node.id + ',50,50);" title="复制节点">📋</button>' +
                 '<button onclick="event.stopPropagation();SMTool.deleteNode(' + node.id + ')" title="删除节点">✕</button>' +
             '</div>' +

@@ -5,7 +5,7 @@
 :root {
     --bg: #1c1c20;
     --panel-bg: #282830;
-    --node-bg: #303038;
+    --node-bg: #1c1c20;
     --accent: #4a9eff;
     --accent2: #4a9eff;
     --text: #b8b8bc;
@@ -369,7 +369,7 @@ body {
 /* ===== Spine 节点卡片 ===== */
 .spine-node {
     position: absolute;
-    background: var(--panel-bg);
+    background: #1c1c20;
     border: 2px solid var(--border);
     border-radius: 16px;
     box-shadow: var(--shadow);
@@ -3283,3 +3283,13 @@ body {
     padding: 4px 14px;
     border-radius: 6px;
 }
+
+/* ===== 调试模式 ===== */
+body.debugging .spine-node { pointer-events: none !important; }
+body.debugging #toolbar { pointer-events: none !important; }
+body.debugging #dataFloatPanel { pointer-events: none !important; }
+body.debugging #flowPanel { pointer-events: none !important; }
+body.debugging #minimap { pointer-events: none !important; }
+body.debugging #sharedSpineCanvas { pointer-events: none !important; }
+body.debugging #debugBar { pointer-events: auto !important; }
+body.debugging #debugBar button { pointer-events: auto !important; }

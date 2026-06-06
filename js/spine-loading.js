@@ -971,43 +971,52 @@ SMTool._centerSkeletonAfterAnim = function (node) {
     var setupValid = setupBounds && setupBounds.size &&
         isFinite(setupBounds.size.x) && setupBounds.size.x > 0 &&
         isFinite(setupBounds.offset.x);
-    if (setupValid) return; // 正常文件，不需要居中
+    if (setupValid) return;
     var cw = node._canvasWidth || 400;
     var ch = node._canvasHeight || 400;
-    var animOff = new SP.Vector2();
-    var animSize = new SP.Vector2();
     try {
-        // ★ 有些动画的首帧 keyframe 在 time > 0（如 strat），时间 0 无附件
-        //    尝试多个时间点：t=0 → t=0.5*duration → t=0.25*duration
-        var state = node.state;
-        var tryTimes = [0];
-        var entry = state.getCurrent(0);
-        if (entry) {
-            var dur = (entry.animation && entry.animation.duration) || (entry._animation && entry._animation.duration) || 1;
-            tryTimes.push(dur * 0.5, dur * 0.25);
-        }
-        var foundBounds = false;
-        for (var ti = 0; ti < tryTimes.length; ti++) {
-            state.update(tryTimes[ti] - (entry ? entry.trackTime : 0));
-            state.apply(sk);
+        // ★ 用临时 AnimationState 在动画周期内均匀采样，
+        //    计算所有采样点内容中心的平均值，以此作为骨架的"视觉中心"
+        var sd = node.skeletonData;
+        if (!sd) return;
+        var tmpStateData = new SP.AnimationStateData(sd);
+        var tmpState = new SP.AnimationState(tmpStateData);
+        var trackAnim = (node.tracks && node.tracks[0] && node.tracks[0].animName) || node.currentAnim;
+        if (!trackAnim) return;
+        tmpState.setAnimation(0, trackAnim, true);
+        var tmpEntry = tmpState.getCurrent(0);
+        var dur = (tmpEntry && tmpEntry.animation && tmpEntry.animation.duration) ||
+                  (tmpEntry && tmpEntry._animation && tmpEntry._animation.duration) || 1;
+        var sampleCount = 8;
+        var sumCX = 0, sumCY = 0, validSamples = 0;
+        var tmpOff = new SP.Vector2();
+        var tmpSize = new SP.Vector2();
+        for (var s = 0; s < sampleCount; s++) {
+            var t = (s / sampleCount) * dur;
+            if (tmpEntry) { tmpEntry.trackTime = t; }
+            tmpState.apply(sk);
             sk.updateWorldTransform(node._physParam);
             if (typeof sk.getBounds === 'function') {
-                sk.getBounds(animOff, animSize, []);
+                sk.getBounds(tmpOff, tmpSize, []);
             } else {
-                SMTool._computeBoundsManually(sk, animOff, animSize);
+                SMTool._computeBoundsManually(sk, tmpOff, tmpSize);
             }
-            if (isFinite(animOff.x) && isFinite(animSize.x) && animSize.x > 0) {
-                foundBounds = true;
-                break;
+            if (isFinite(tmpOff.x) && isFinite(tmpSize.x) && tmpSize.x > 0) {
+                sumCX += tmpOff.x + tmpSize.x / 2;
+                sumCY += tmpOff.y + tmpSize.y / 2;
+                validSamples++;
             }
         }
-        // 重置到时间 0
-        state.update(-(entry ? entry.trackTime : 0));
-        state.apply(sk);
-        if (foundBounds) {
-            sk.x = cw / 2 - (animOff.x + animSize.x / 2);
-            sk.y = ch / 2 - (animOff.y + animSize.y / 2);
-            node.bounds = { offset: animOff, size: animSize };
+        // ★ 恢复节点真实状态
+        node.state.apply(sk);
+        if (validSamples > 0) {
+            var avgCX = sumCX / validSamples;
+            var avgCY = sumCY / validSamples;
+            sk.x = cw / 2 - avgCX;
+            sk.y = ch / 2 - avgCY;
+            // ★ 保存自然位置（调试偏移会在此基础上叠加）
+            node._baseSkX = sk.x;
+            node._baseSkY = sk.y;
         } else {
             sk.x = 0; sk.y = 0;
         }

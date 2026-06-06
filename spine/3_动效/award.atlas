@@ -1,0 +1,76 @@
+
+award.png
+size: 1576,974
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+baoShi_1
+  rotate: true
+  xy: 1394, 490
+  size: 179, 180
+  orig: 181, 182
+  offset: 1, 1
+  index: -1
+baoShi_2
+  rotate: false
+  xy: 1196, 473
+  size: 196, 196
+  orig: 211, 210
+  offset: 7, 6
+  index: -1
+di_1
+  rotate: false
+  xy: 276, 176
+  size: 372, 151
+  orig: 374, 153
+  offset: 1, 1
+  index: -1
+di_2
+  rotate: false
+  xy: 276, 23
+  size: 372, 151
+  orig: 374, 153
+  offset: 1, 1
+  index: -1
+gm_3
+  rotate: false
+  xy: 660, 2
+  size: 472, 460
+  orig: 475, 467
+  offset: 2, 6
+  index: -1
+guang_1
+  rotate: true
+  xy: 1134, 44
+  size: 418, 420
+  orig: 436, 443
+  offset: 10, 13
+  index: -1
+guang_2
+  rotate: false
+  xy: 660, 464
+  size: 534, 508
+  orig: 568, 563
+  offset: 19, 19
+  index: -1
+guang_3
+  rotate: true
+  xy: 2, 329
+  size: 643, 656
+  orig: 905, 922
+  offset: 146, 116
+  index: -1
+quan_1
+  rotate: true
+  xy: 2, 57
+  size: 270, 272
+  orig: 274, 276
+  offset: 2, 2
+  index: -1
+quan_2
+  rotate: false
+  xy: 1196, 671
+  size: 301, 301
+  orig: 315, 315
+  offset: 7, 7
+  index: -1

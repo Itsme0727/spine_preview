@@ -476,6 +476,10 @@ SMTool._serializeData = function () {
             _exitText: n._exitText,
             _stateDesc: n._stateDesc,
             _customScale: n._customScale,
+            _debugOffsetX: n._debugOffsetX || 0,
+            _debugOffsetY: n._debugOffsetY || 0,
+            _debugCanvasW: n._debugCanvasW || 0,
+            _debugCanvasH: n._debugCanvasH || 0,
             _boneTags: n._boneTags,
             _boneNotes: n._boneNotes,
             _boneFade: n._boneFade,
@@ -1053,6 +1057,10 @@ SMTool._processImportJson = function (jsonText, fileHandle) {
             node.loop = (nd.loop !== undefined ? nd.loop : true);
             node.tracks = nd.tracks || [];
             node._customScale = (nd._customScale !== undefined ? nd._customScale : 1.0);
+            node._debugOffsetX = (nd._debugOffsetX !== undefined ? nd._debugOffsetX : 0);
+            node._debugOffsetY = (nd._debugOffsetY !== undefined ? nd._debugOffsetY : 0);
+            node._debugCanvasW = (nd._debugCanvasW !== undefined ? nd._debugCanvasW : 0);
+            node._debugCanvasH = (nd._debugCanvasH !== undefined ? nd._debugCanvasH : 0);
             node._boneTags = nd._boneTags || {};
             node._boneNotes = nd._boneNotes || {};
             node._boneFade = nd._boneFade || {};

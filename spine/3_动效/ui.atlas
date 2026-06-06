@@ -1,0 +1,125 @@
+
+ui.png
+size: 1605,80
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+Add/Add_Line_Light
+  rotate: false
+  xy: 313, 12
+  size: 91, 24
+  orig: 100, 100
+  offset: 5, 37
+  index: -1
+Add/Add_Point1
+  rotate: false
+  xy: 438, 25
+  size: 22, 22
+  orig: 40, 40
+  offset: 9, 9
+  index: -1
+Add/FX_Light_04_b
+  rotate: false
+  xy: 2, 2
+  size: 179, 76
+  orig: 180, 76
+  offset: 1, 0
+  index: -1
+Add/FX_Line_01
+  rotate: true
+  xy: 183, 4
+  size: 32, 128
+  orig: 38, 128
+  offset: 3, 0
+  index: -1
+FX_Win/FX_Line_2
+  rotate: false
+  xy: 183, 38
+  size: 239, 40
+  orig: 239, 40
+  offset: 0, 0
+  index: -1
+FX_Win/Fx_BetTip_PG1
+  rotate: false
+  xy: 905, 2
+  size: 99, 76
+  orig: 100, 76
+  offset: 1, 0
+  index: -1
+FX_Win/Fx_BetTip_PG2
+  rotate: false
+  xy: 462, 18
+  size: 146, 60
+  orig: 146, 60
+  offset: 0, 0
+  index: -1
+FX_Win/Fx_BetTip_PP1
+  rotate: false
+  xy: 1107, 3
+  size: 98, 75
+  orig: 98, 75
+  offset: 0, 0
+  index: -1
+FX_Win/Fx_BetTip_PR1
+  rotate: false
+  xy: 1207, 3
+  size: 98, 75
+  orig: 98, 75
+  offset: 0, 0
+  index: -1
+FX_Win/Fx_Bet_PG1
+  rotate: false
+  xy: 1006, 2
+  size: 99, 76
+  orig: 100, 76
+  offset: 1, 0
+  index: -1
+FX_Win/Fx_Bet_PG2
+  rotate: false
+  xy: 610, 18
+  size: 146, 60
+  orig: 154, 68
+  offset: 4, 4
+  index: -1
+FX_Win/Fx_Bet_PP1
+  rotate: false
+  xy: 1307, 3
+  size: 98, 75
+  orig: 98, 75
+  offset: 0, 0
+  index: -1
+FX_Win/Fx_Bet_PR1
+  rotate: false
+  xy: 1407, 3
+  size: 98, 75
+  orig: 98, 75
+  offset: 0, 0
+  index: -1
+FX_Win/Fx_Win_PG1
+  rotate: false
+  xy: 1507, 4
+  size: 96, 74
+  orig: 100, 77
+  offset: 2, 2
+  index: -1
+FX_Win/Fx_Win_PG2
+  rotate: false
+  xy: 758, 18
+  size: 145, 60
+  orig: 154, 68
+  offset: 4, 4
+  index: -1
+FX_Win/pic_circle
+  rotate: false
+  xy: 406, 6
+  size: 30, 30
+  orig: 40, 40
+  offset: 5, 5
+  index: -1
+FX_Win/pic_round
+  rotate: false
+  xy: 424, 49
+  size: 28, 29
+  orig: 40, 40
+  offset: 6, 5
+  index: -1

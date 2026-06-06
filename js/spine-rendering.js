@@ -390,7 +390,8 @@ SMTool._loop = function (now) {
 
         if (!node.gl) { result = nodesIter.next(); continue; }
 
-        var nodeW = node._canvasWidth, nodeH = node._canvasHeight;
+        var nodeW = node._debugCanvasW || node._canvasWidth;
+        var nodeH = node._debugCanvasH || node._canvasHeight;
         var nodeScale = (node._customScale !== undefined ? node._customScale : 1.0);
         var scaledW = nodeW * nodeScale;
         var scaledH = nodeH * nodeScale;
@@ -472,6 +473,14 @@ SMTool._loop = function (now) {
         if (isNaN(node.skeleton.y)) node.skeleton.y = 0;
         if (isNaN(node.skeleton.scaleX)) node.skeleton.scaleX = 1;
         if (isNaN(node.skeleton.scaleY)) node.skeleton.scaleY = 1;
+
+        // ★ 调试偏移：在自然位置上叠加用户拖拽的位移
+        if (node._debugOffsetX || node._debugOffsetY) {
+            if (node._baseSkX === undefined) { node._baseSkX = node.skeleton.x; node._baseSkY = node.skeleton.y; }
+            node.skeleton.x = (node._baseSkX || 0) + (node._debugOffsetX || 0);
+            node.skeleton.y = (node._baseSkY || 0) + (node._debugOffsetY || 0);
+            node.skeleton.updateWorldTransform(node._physParam);
+        }
 
         var glY = chFull - sy - sh;
         gl.scissor(sx, glY, sw, sh);
@@ -555,6 +564,22 @@ SMTool._loop = function (now) {
 
 // ---- 缩放 ----
 SMTool._onWheel = function (e) {
+    // ★ 调试模式：滚轮缩放动画层
+    if (SMData._debugMode) {
+        e.preventDefault();
+        var dm = SMData._debugMode;
+        var node = SMData.nodes.get(dm.nodeId);
+        if (node) {
+            var factor = e.deltaY > 0 ? 0.95 : 1.05;
+            var newScale = (node._customScale || 1.0) * factor;
+            newScale = Math.max(0.2, Math.min(5.0, newScale));
+            node._customScale = newScale;
+            SMTool._syncDebugToSameSource(node);
+            SMTool._updateDebugBar(node);
+        }
+        return;
+    }
+
     var oz = SMData.view.zoom;
     var factor = e.deltaY > 0 ? 0.95 : 1.05;
     SMData.view.zoom = Math.max(0.03, Math.min(5, SMData.view.zoom * factor));
@@ -844,7 +869,7 @@ SMTool._initAnimPreview = function (node) {
                 var animOff2 = new SP.Vector2();
                 var animSize2 = new SP.Vector2();
                 try {
-                    // ★ 尝试多个时间点（有些动画首帧不在 t=0）
+                    // 尝试多个时间点（有些动画首帧不在 t=0）
                     var tryTimes2 = [0];
                     var entry2 = state.getCurrent(0);
                     if (entry2) {
@@ -853,7 +878,7 @@ SMTool._initAnimPreview = function (node) {
                     }
                     var foundBounds2 = false;
                     for (var t2 = 0; t2 < tryTimes2.length; t2++) {
-                        state.update(tryTimes2[t2] - (entry2 ? entry2.trackTime : 0));
+                        if (entry2) { entry2.trackTime = tryTimes2[t2]; }
                         state.apply(sk);
                         sk.updateWorldTransform(physParam);
                         if (typeof sk.getBounds === 'function') {
@@ -867,7 +892,7 @@ SMTool._initAnimPreview = function (node) {
                         }
                     }
                     // 重置回时间 0
-                    state.update(-(entry2 ? entry2.trackTime : 0));
+                    if (entry2) { entry2.trackTime = 0; }
                     state.apply(sk);
                     if (foundBounds2) {
                         sk.x = cw / 2 - (animOff2.x + animSize2.x / 2);

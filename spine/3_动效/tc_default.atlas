@@ -1,0 +1,34 @@
+
+tc_default.png
+size: 448,184
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+baoShi_you
+  rotate: false
+  xy: 372, 32
+  size: 74, 74
+  orig: 74, 74
+  offset: 0, 0
+  index: -1
+baoShi_zuo
+  rotate: false
+  xy: 372, 108
+  size: 74, 74
+  orig: 74, 74
+  offset: 0, 0
+  index: -1
+yz_1
+  rotate: true
+  xy: 2, 2
+  size: 180, 183
+  orig: 180, 183
+  offset: 0, 0
+  index: -1
+yz_2
+  rotate: true
+  xy: 187, 2
+  size: 180, 183
+  orig: 180, 183
+  offset: 0, 0
+  index: -1

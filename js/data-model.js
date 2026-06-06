@@ -365,6 +365,10 @@ var SpineNodeData = (function () {
         this._stateDesc = '';       // 状态描述文本
         this._exitText = '';        // 出口节点文本内容
         this._customScale = 1.0;    // 用户自定义缩放比例（拖拽缩放图标调整）
+        this._debugOffsetX = 0;     // 调试模式：动画层水平偏移（世界单位）
+        this._debugOffsetY = 0;     // 调试模式：动画层垂直偏移（世界单位）
+        this._debugCanvasW = 0;     // 调试模式：裁剪区域宽度（0=使用默认 _canvasWidth）
+        this._debugCanvasH = 0;     // 调试模式：裁剪区域高度（0=使用默认 _canvasHeight）
 
         // ---- 多轨道动画混合 ----
         // tracks: [{ animName, alpha, mixBlend, enabled, loop }]

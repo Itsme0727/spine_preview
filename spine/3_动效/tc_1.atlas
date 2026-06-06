@@ -1,0 +1,62 @@
+
+tc_1.png
+size: 542,269
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+Add_FX/Add_Flip_Glow
+  rotate: false
+  xy: 2, 84
+  size: 221, 183
+  orig: 250, 220
+  offset: 15, 20
+  index: -1
+Front
+  rotate: false
+  xy: 225, 121
+  size: 181, 146
+  orig: 181, 146
+  offset: 0, 0
+  index: -1
+Line
+  rotate: false
+  xy: 2, 67
+  size: 198, 15
+  orig: 198, 15
+  offset: 0, 0
+  index: -1
+Sand_01
+  rotate: true
+  xy: 408, 118
+  size: 149, 111
+  orig: 150, 127
+  offset: 1, 6
+  index: -1
+Sand_02
+  rotate: true
+  xy: 225, 7
+  size: 112, 115
+  orig: 118, 115
+  offset: 0, 0
+  index: -1
+Sand_03
+  rotate: true
+  xy: 2, 41
+  size: 24, 100
+  orig: 25, 103
+  offset: 0, 0
+  index: -1
+light
+  rotate: false
+  xy: 458, 34
+  size: 82, 82
+  orig: 100, 100
+  offset: 9, 9
+  index: -1
+lizi_01
+  rotate: false
+  xy: 342, 2
+  size: 114, 114
+  orig: 128, 128
+  offset: 8, 9
+  index: -1

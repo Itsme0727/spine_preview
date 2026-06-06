@@ -8,6 +8,53 @@ var SMTool = window.SMTool || {};
 
 // ---- 鼠标按下 ----
 SMTool._onMD = function (e) {
+    // ★ 调试模式：mousedown 开始拖拽位移 / 边缘调整画布大小
+    if (SMData._debugMode) {
+        if (e.button === 0) {
+            var dm = SMData._debugMode;
+            var node = SMData.nodes.get(dm.nodeId);
+            if (!node) { e.preventDefault(); return; }
+            
+            // 检测是否在画布边缘（拉边调整裁剪区域大小）
+            var edgeThreshold = 14;
+            var z = SMData.view.zoom || 1;
+            var nodeScale = node._customScale || 1.0;
+            var cw = (node._debugCanvasW || node._canvasWidth || 400) * nodeScale;
+            var ch = (node._debugCanvasH || node._canvasHeight || 400) * nodeScale;
+            var sp = SMTool.worldToCanvas(node.x, node.y);
+            var sx = Math.round(sp.x);
+            var sy = Math.round(sp.y);
+            var headerH = node._headerH || 70;
+            sy += Math.round(headerH * z * nodeScale);
+            var sw = Math.round(cw * z);
+            var sh = Math.round(ch * z);
+            
+            var nearLeft = Math.abs(e.clientX - sx) < edgeThreshold && e.clientY > sy && e.clientY < sy + sh;
+            var nearRight = Math.abs(e.clientX - (sx + sw)) < edgeThreshold && e.clientY > sy && e.clientY < sy + sh;
+            var nearTop = Math.abs(e.clientY - sy) < edgeThreshold && e.clientX > sx && e.clientX < sx + sw;
+            var nearBottom = Math.abs(e.clientY - (sy + sh)) < edgeThreshold && e.clientX > sx && e.clientX < sx + sw;
+            
+            if (nearLeft || nearRight || nearTop || nearBottom) {
+                dm.resizing = true;
+                dm.resizeEdge = nearLeft ? 'left' : nearRight ? 'right' : nearTop ? 'top' : 'bottom';
+                dm.startMx = e.clientX;
+                dm.startMy = e.clientY;
+                dm.savedCanvasW = node._debugCanvasW || node._canvasWidth || 400;
+                dm.savedCanvasH = node._debugCanvasH || node._canvasHeight || 400;
+                if (nearLeft || nearRight) SMTool.gridCanvas.style.cursor = 'ew-resize';
+                else SMTool.gridCanvas.style.cursor = 'ns-resize';
+            } else {
+                dm.dragging = true;
+                dm.startMx = e.clientX;
+                dm.startMy = e.clientY;
+                dm.savedOffX = node._debugOffsetX || 0;
+                dm.savedOffY = node._debugOffsetY || 0;
+            }
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+    }
     // ================================================================
     // 🔒🔒🔒 [LOCK-5] 画布点击退出动画流
     // ⚠️ 解锁策略：仅用户明确说「解锁 LOCK-5」才能改！
@@ -292,6 +339,83 @@ SMTool._onMM = function (e) {
     SMData._mx = e.clientX;
     SMData._my = e.clientY;
 
+    // ★ 调试模式：拖拽位移 / 边缘调整画布大小
+    if (SMData._debugMode) {
+        var dm2 = SMData._debugMode;
+        var node3 = SMData.nodes.get(dm2.nodeId);
+        if (!node3) return;
+        
+        // 检测鼠标是否在画布边缘（用于 resize 光标提示）
+        var edgeThreshold = 12;
+        var z2 = SMData.view.zoom || 1;
+        var nodeScale2 = node3._customScale || 1.0;
+        var cw2 = (node3._debugCanvasW || node3._canvasWidth || 400) * nodeScale2;
+        var ch2 = (node3._debugCanvasH || node3._canvasHeight || 400) * nodeScale2;
+        var sp2 = SMTool.worldToCanvas(node3.x, node3.y);
+        var sx2 = Math.round(sp2.x);
+        var sy2 = Math.round(sp2.y);
+        var headerH2 = node3._headerH || 70;
+        sy2 += Math.round(headerH2 * z2 * nodeScale2);
+        var sw2 = Math.round(cw2 * z2);
+        var sh2 = Math.round(ch2 * z2);
+        
+        var nearLeft = Math.abs(e.clientX - sx2) < edgeThreshold && e.clientY > sy2 && e.clientY < sy2 + sh2;
+        var nearRight = Math.abs(e.clientX - (sx2 + sw2)) < edgeThreshold && e.clientY > sy2 && e.clientY < sy2 + sh2;
+        var nearTop = Math.abs(e.clientY - sy2) < edgeThreshold && e.clientX > sx2 && e.clientX < sx2 + sw2;
+        var nearBottom = Math.abs(e.clientY - (sy2 + sh2)) < edgeThreshold && e.clientX > sx2 && e.clientX < sx2 + sw2;
+        var nearEdge = nearLeft || nearRight || nearTop || nearBottom;
+        
+        // 更新光标样式
+        if (!dm2.dragging && !dm2.resizing) {
+            if (nearLeft || nearRight) {
+                SMTool.gridCanvas.style.cursor = 'ew-resize';
+            } else if (nearTop || nearBottom) {
+                SMTool.gridCanvas.style.cursor = 'ns-resize';
+            } else {
+                SMTool.gridCanvas.style.cursor = 'move';
+            }
+        }
+        
+        if (dm2.resizing) {
+            var ddx = e.clientX - dm2.startMx;
+            var ddy = e.clientY - dm2.startMy;
+            var baseW = node3._canvasWidth || 400;
+            var baseH = node3._canvasHeight || 400;
+            if (dm2.resizeEdge === 'right') {
+                var newW = Math.max(100, dm2.savedCanvasW + ddx / z2 / nodeScale2);
+                node3._debugCanvasW = newW;
+            } else if (dm2.resizeEdge === 'left') {
+                var newW2 = Math.max(100, dm2.savedCanvasW - ddx / z2 / nodeScale2);
+                node3._debugCanvasW = newW2;
+            } else if (dm2.resizeEdge === 'bottom') {
+                var newH = Math.max(100, dm2.savedCanvasH + ddy / z2 / nodeScale2);
+                node3._debugCanvasH = newH;
+            } else if (dm2.resizeEdge === 'top') {
+                var newH2 = Math.max(100, dm2.savedCanvasH - ddy / z2 / nodeScale2);
+                node3._debugCanvasH = newH2;
+            }
+            SMTool._syncDebugToSameSource(node3);
+            SMTool._updateDebugBar(node3);
+            var outline3 = document.getElementById('debugOutline');
+            if (outline3) SMTool._updateDebugOutlinePos(outline3, node3);
+        } else if (dm2.dragging) {
+            var dx = e.clientX - dm2.startMx;
+            var dy = e.clientY - dm2.startMy;
+            var z = SMData.view.zoom || 1;
+            var node = SMData.nodes.get(dm2.nodeId);
+            if (node) {
+                node._debugOffsetX = dm2.savedOffX + dx / z;
+                node._debugOffsetY = dm2.savedOffY - dy / z;
+                SMTool._syncDebugToSameSource(node);
+                SMTool._updateDebugBar(node);
+            }
+        }
+        // 持续更新红色裁剪边框位置
+        var outline4 = document.getElementById('debugOutline');
+        if (outline4 && node3) SMTool._updateDebugOutlinePos(outline4, node3);
+        return;
+    }
+
     // 框选模式：更新框选矩形
     if (SMData.marqueeActive) {
         SMData.marqueeEnd.x = e.clientX;
@@ -574,6 +698,14 @@ SMTool._applySnapToDrag = function (draggedNodesM, isMulti) {
 
 // ---- 鼠标释放 ----
 SMTool._onMU = function (e) {
+    // ★ 调试模式：停止拖拽/缩放
+    if (SMData._debugMode) {
+        SMData._debugMode.dragging = false;
+        SMData._debugMode.resizing = false;
+        return;
+    }
+
+    // 结束节点缩放拖拽
     // 结束节点缩放拖拽
     if (SMData.scalingNode) {
         SMData.scalingNode = null;
@@ -1974,4 +2106,153 @@ SMTool._removeBoneLabel = function (boneName) {
 
     SMData._lastPanelNodeId = -1;
     SMTool._updateFloatPanel();
+};
+
+// ================================================================
+//  ★ 调试模式：拖拽位移 + 滚轮缩放动画层
+// ================================================================
+
+// ---- 进入调试模式 ----
+SMTool._debugNode = function (nodeId) {
+    var node = SMData.nodes.get(nodeId);
+    if (!node || !node.skeleton) return;
+
+    SMData._debugMode = {
+        nodeId: nodeId,
+        savedScale: node._customScale || 1.0,
+        savedOffX: node._debugOffsetX || 0,
+        savedOffY: node._debugOffsetY || 0,
+        startMx: 0,
+        startMy: 0,
+        dragging: false
+    };
+
+    SMTool._showDebugBar(node);
+    SMTool.gridCanvas.style.cursor = 'move';
+    SMTool.gridCanvas.style.pointerEvents = 'auto';
+    document.body.classList.add('debugging');
+};
+
+// ---- 退出调试并保存 ----
+SMTool._debugConfirm = function () {
+    if (!SMData._debugMode) return;
+    var dm = SMData._debugMode;
+    var node = SMData.nodes.get(dm.nodeId);
+    if (node) { SMTool._syncDebugToSameSource(node); }
+    SMTool._exitDebugMode();
+};
+
+// ---- 退出调试并还原 ----
+SMTool._debugCancel = function () {
+    if (!SMData._debugMode) return;
+    var dm = SMData._debugMode;
+    var node = SMData.nodes.get(dm.nodeId);
+    if (node) {
+        node._customScale = dm.savedScale;
+        node._debugOffsetX = dm.savedOffX;
+        node._debugOffsetY = dm.savedOffY;
+        SMTool._syncDebugToSameSource(node);
+    }
+    SMTool._exitDebugMode();
+};
+
+// ---- 清理调试模式 ----
+SMTool._exitDebugMode = function () {
+    SMData._debugMode = null;
+    SMTool.gridCanvas.style.cursor = '';
+    SMTool.gridCanvas.style.pointerEvents = '';
+    document.body.classList.remove('debugging');
+    var bar = document.getElementById('debugBar');
+    if (bar) bar.remove();
+    var outline = document.getElementById('debugOutline');
+    if (outline) outline.remove();
+};
+
+// ---- 显示/更新红色裁剪区域边框 ----
+SMTool._showDebugOutline = function (node) {
+    var outline = document.getElementById('debugOutline');
+    if (!outline) {
+        outline = document.createElement('div');
+        outline.id = 'debugOutline';
+        outline.style.cssText = 'position:fixed;pointer-events:none;z-index:9998;border:2px solid #f04040;border-radius:2px';
+        document.body.appendChild(outline);
+    }
+    SMTool._updateDebugOutlinePos(outline, node);
+};
+
+SMTool._updateDebugOutlinePos = function (outline, node) {
+    if (!outline || !node) return;
+    var z = SMData.view.zoom || 1;
+    var nodeScale = node._customScale || 1.0;
+    var cw = (node._debugCanvasW || node._canvasWidth || 400) * nodeScale;
+    var ch = (node._debugCanvasH || node._canvasHeight || 400) * nodeScale;
+    var sp = SMTool.worldToCanvas(node.x, node.y);
+    var sx = Math.round(sp.x);
+    var sy = Math.round(sp.y);
+    var headerH = node._headerH || 70;
+    sy += Math.round(headerH * z * nodeScale);
+    var sw = Math.round(cw * z);
+    var sh = Math.round(ch * z);
+    outline.style.left = sx + 'px';
+    outline.style.top = sy + 'px';
+    outline.style.width = sw + 'px';
+    outline.style.height = sh + 'px';
+};
+
+// ---- 同步调试值到同源文件节点 ----
+SMTool._syncDebugToSameSource = function (node) {
+    if (!node || !node.sourceFile) return;
+    var scale = node._customScale || 1.0;
+    var offX = node._debugOffsetX || 0;
+    var offY = node._debugOffsetY || 0;
+    var cw = node._debugCanvasW || 0;
+    var ch = node._debugCanvasH || 0;
+    var nodesIter = SMData.nodes.values();
+    var r = nodesIter.next();
+    while (!r.done) {
+        var n = r.value;
+        if (n.sourceFile === node.sourceFile && n.id !== node.id) {
+            n._customScale = scale;
+            n._debugOffsetX = offX;
+            n._debugOffsetY = offY;
+            n._debugCanvasW = cw;
+            n._debugCanvasH = ch;
+        }
+        r = nodesIter.next();
+    }
+};
+
+// ---- 显示调试工具栏 ----
+SMTool._showDebugBar = function (node) {
+    var old = document.getElementById('debugBar');
+    if (old) old.remove();
+    var bar = document.createElement('div');
+    bar.id = 'debugBar';
+    bar.innerHTML = SMTool._debugBarHTML(node);
+    bar.style.cssText = 'position:fixed;top:124px;left:50%;transform:translateX(-50%);z-index:9999;display:flex;align-items:center;gap:12px;background:#1c1c20;border:1px solid #4a9eff;border-radius:12px;padding:10px 20px;box-shadow:0 8px 32px rgba(0,0,0,.6)';
+    document.body.appendChild(bar);
+
+    // ★ 显示红色裁剪区域边框
+    SMTool._showDebugOutline(node);
+};
+
+// ---- 生成调试工具栏 HTML ----
+SMTool._debugBarHTML = function (node) {
+    var cw = node._debugCanvasW || node._canvasWidth || 400;
+    var ch = node._debugCanvasH || node._canvasHeight || 400;
+    return '<span style="color:#fff;font-size:14px">🔍 调试: ' + SMTool._esc(node.name) +
+        ' | 偏移(' + (node._debugOffsetX||0).toFixed(0) + ',' + (node._debugOffsetY||0).toFixed(0) +
+        ') | 缩放' + ((node._customScale||1)*100).toFixed(0) + '%' +
+        ' | 画布' + cw.toFixed(0) + '×' + ch.toFixed(0) + '</span>' +
+        '<span style="flex:1"></span>' +
+        '<button onclick="SMTool._debugConfirm()" style="background:#4ec96e;color:#000;border:none;padding:6px 16px;border-radius:6px;cursor:pointer;font-size:14px">✓ 确定</button>' +
+        '<button onclick="SMTool._debugCancel()" style="background:#f04040;color:#fff;border:none;padding:6px 16px;border-radius:6px;cursor:pointer;font-size:14px;margin-left:8px">✕ 取消</button>';
+};
+
+// ---- 更新调试工具栏显示 ----
+SMTool._updateDebugBar = function (node) {
+    var bar = document.getElementById('debugBar');
+    if (bar && node) {
+        bar.innerHTML = SMTool._debugBarHTML(node);
+    }
 };

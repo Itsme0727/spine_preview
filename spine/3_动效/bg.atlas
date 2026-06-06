@@ -1,0 +1,41 @@
+
+bg.png
+size: 1325,617
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+bg_guang
+  rotate: true
+  xy: 2, 2
+  size: 613, 973
+  orig: 683, 1093
+  offset: 33, 112
+  index: -1
+you_1
+  rotate: true
+  xy: 977, 432
+  size: 183, 312
+  orig: 183, 312
+  offset: 0, 0
+  index: -1
+you_2
+  rotate: true
+  xy: 977, 247
+  size: 183, 312
+  orig: 183, 312
+  offset: 0, 0
+  index: -1
+zuo_1
+  rotate: false
+  xy: 977, 25
+  size: 172, 220
+  orig: 172, 220
+  offset: 0, 0
+  index: -1
+zuo_2
+  rotate: false
+  xy: 1151, 25
+  size: 172, 220
+  orig: 172, 220
+  offset: 0, 0
+  index: -1
