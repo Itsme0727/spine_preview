@@ -961,17 +961,22 @@ SMTool._computeBoundsManually = function (skeleton, offset, size) {
     size.set(maxX - minX, maxY - minY);
 };
 
-// ---- 动画后重新居中骨架（治本方案 v6：同源节点统一中心，零骨架污染）----
-// 核心思路：
-//   同源节点（同一份 Spine 文件的不同动画状态）应共享相同的画布尺寸和相同的视觉中心。
-//   全局动画范围只计算一次（缓存），其几何中心即为所有同源节点的"参考中心"。
-//   sk.x = cw/2 - refCX, sk.y = ch/2 - refCY
-//   不再采样当前动画（避免骨架污染），各动画自然偏移由动画自身内容决定。
+// ---- 动画后处理：画布自适应扩展（v8：参照浮窗预览，有效 setup 皮肤免采样）----
+// 骨架居中由 _setupWebGLRenderer 的 setup pose 边界完成，稳定可靠。
+// 仅对空默认皮肤文件（setup 无边）做动画采样 + 画布扩展。
+// 有皮肤文件：setup 画布已有充足 padding，不再重复处理。
 SMTool._centerSkeletonAfterAnim = function (node) {
     var sk = node.skeleton;
     var SP = node._SP || window.spine38;
     if (!sk || !SP) return;
 
+    // ★ 参照浮窗预览：有效 setup bounds → 不采样动画、不修改骨架
+    var bo = node.bounds && node.bounds.offset;
+    var bs = node.bounds && node.bounds.size;
+    var setupValid = bo && bs && isFinite(bo.x) && bs.x > 0;
+    if (setupValid) return;
+
+    // ====== 以下仅对空默认皮肤文件执行 ======
     var cw = node._canvasWidth || 400;
     var ch = node._canvasHeight || 400;
 
@@ -979,11 +984,9 @@ SMTool._centerSkeletonAfterAnim = function (node) {
         var sd = node.skeletonData;
         if (!sd) return;
 
-        // ====== 获取全局动画范围和参考中心（同源共享、只算一次） ======
         var global = SMTool._getSourceGlobalBounds(node, SP, sd);
-        if (!global) return;  // 无动画数据，保持 _setupWebGLRenderer 的居中
+        if (!global) return;
 
-        // 画布自适应扩展
         var padX = Math.max(60, Math.ceil(global.w * 0.15));
         var padY = Math.max(60, Math.ceil(global.h * 0.15));
         var neededW = Math.max(400, Math.ceil(global.w) + padX * 2);
@@ -993,25 +996,26 @@ SMTool._centerSkeletonAfterAnim = function (node) {
         if (neededW > cw || neededH > ch) {
             console.log('[Center] Auto-expand for #' + node.id +
                 ': ' + cw + 'x' + ch + ' → ' + neededW + 'x' + neededH +
-                ' (global: ' + global.w.toFixed(0) + 'x' + global.h.toFixed(0) +
-                ', center: ' + global.cx.toFixed(1) + ',' + global.cy.toFixed(1) + ')');
+                ' (global: ' + global.w.toFixed(0) + 'x' + global.h.toFixed(0) + ')');
             SMTool._resolveSourceCanvasSize(node, neededW, neededH, cw, ch);
+            // 画布扩展后用全局中心重新居中
             cw = node._canvasWidth;
             ch = node._canvasHeight;
+            sk.x = cw / 2 - global.cx;
+            sk.y = ch / 2 - global.cy;
+            node._baseSkX = sk.x;
+            node._baseSkY = sk.y;
         }
-
-        // ====== 居中：使用全局参考中心（所有同源节点相同） ======
-        var refCX = global.cx;  // 全部动画包围盒的几何中心 X
-        var refCY = global.cy;  // 全部动画包围盒的几何中心 Y
-        sk.x = cw / 2 - refCX;
-        sk.y = ch / 2 - refCY;
-        node._baseSkX = sk.x;
-        node._baseSkY = sk.y;
 
     } catch (e) {
         console.warn('[Center] Failed for #' + node.id + ': ' + e.message);
     }
-    // 最终更新（不需要额外 apply，骨架一直在 node.state 管理下）
+    // ★ 确保动画状态正确（参照浮窗预览：重置 trackTime=0 + apply）
+    try {
+        var e0 = node.state && node.state.getCurrent(0);
+        if (e0) { e0.trackTime = 0; }
+        node.state.apply(sk);
+    } catch (e2) {}
     sk.updateWorldTransform(node._physParam);
 };
 
