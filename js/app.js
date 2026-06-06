@@ -1383,7 +1383,54 @@ SMTool.init = function () {
     console.log('  拖拽 spine 文件三件套 (.json/.skel + .atlas + .png) 到画布上');
     console.log('  Alt+拖拽=平移 | 滚轮=缩放 | 右键=平移');
 
-    // ★ 第二道防线：定期巡检（200ms），检测异常 timeScale=0 冻结并修复
+    // ================================================================
+    // ★ 显示/隐藏切换按钮（左上角）
+    // 逻辑：可见（默认）= 高亮，隐藏 = 置灰
+    // ================================================================
+    SMTool._toggleHideLabels = function () {
+        SMData._hideLabels = !SMData._hideLabels;
+        var app = document.getElementById('app');
+        var btn = document.getElementById('btnToggleLabels');
+        if (SMData._hideLabels) {
+            app.classList.add('hide-labels');
+            btn.classList.remove('active');
+            btn.textContent = '📝 标题';
+        } else {
+            app.classList.remove('hide-labels');
+            btn.classList.add('active');
+            btn.textContent = '📝 标题';
+        }
+    };
+    SMTool._toggleHideBubbles = function () {
+        SMData._hideBubbles = !SMData._hideBubbles;
+        var app = document.getElementById('app');
+        var btn = document.getElementById('btnToggleBubbles');
+        if (SMData._hideBubbles) {
+            app.classList.add('hide-bubbles');
+            btn.classList.remove('active');
+            btn.textContent = '💬 特效';
+        } else {
+            app.classList.remove('hide-bubbles');
+            btn.classList.add('active');
+            btn.textContent = '💬 特效';
+        }
+    };
+    SMTool._toggleHideBoneImgs = function () {
+        SMData._hideBoneImgs = !SMData._hideBoneImgs;
+        var btn = document.getElementById('btnToggleBoneImgs');
+        if (SMData._hideBoneImgs) {
+            btn.classList.remove('active');
+            btn.textContent = '🖼️ 挂点';
+        } else {
+            btn.classList.add('active');
+            btn.textContent = '🖼️ 挂点';
+        }
+    };
+
+    // 🔒 [LOCK-5] 第二道防线：200ms 定期巡检，仅修复 timeScale=0 残留冻结
+    // 跳过条件：面板展开且有选中节点（正常流模式）、流正在播放
+    // 巡检条件：鼠标在面板外 或 面板已收起
+    // 规则：只解冻 timeScale，不做 _applyTracksToState（避免重置正常动画）
     setInterval(function () {
         if (SMData._flowPanel.expanded && SMData.selectedNode) return;
         if (SMData._fullPlayback.isPlaying) return;

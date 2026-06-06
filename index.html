@@ -35,6 +35,13 @@
         <button onclick="SMTool.importData()">📥 导入</button>
     </div>
 
+    <!-- ===== 显示/隐藏切换按钮（左上角） ===== -->
+    <div id="viewToggles">
+        <button id="btnToggleLabels" class="vt-btn vt-green active" onclick="SMTool._toggleHideLabels()" title="隐藏标题：隐藏节点顶部的翻译标题和状态名">📝 标题</button>
+        <button id="btnToggleBubbles" class="vt-btn vt-purple active" onclick="SMTool._toggleHideBubbles()" title="隐藏特效：隐藏关键帧事件气泡提示">💬 特效</button>
+        <button id="btnToggleBoneImgs" class="vt-btn vt-pink active" onclick="SMTool._toggleHideBoneImgs()" title="挂点图：隐藏骨骼上挂载的图片">🖼️ 挂点</button>
+    </div>
+
     <!-- ===== 对齐排版工具栏（多选 ≥2 时显示）===== -->
     <div id="alignBar" style="display:none">
         <button title="横向-居上对齐" onclick="SMTool.alignTop()">⊤ 上</button>

@@ -231,9 +231,10 @@ SMData._shotRegister = function (dataUrl) {
     var shotId = SMData._nextShotId++;
     SMData._shotStore[shotId] = {
         dataUrl: dataUrl,
-        thumbDataUrl: null,   // 懒生成：首次请求时才生成缩略图
+        thumbDataUrl: null,
         refCount: 1,
-        hashKey: hk
+        hashKey: hk,
+        _fileName: null  // 上传时的原始文件名
     };
 
     // 加入 hash 索引

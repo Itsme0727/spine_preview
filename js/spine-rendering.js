@@ -418,7 +418,9 @@ SMTool._loop = function (now) {
 
         if (sw < 4 || sh < 4) { result = nodesIter.next(); continue; }
 
-        // ★ 看门狗：仅修复 timeScale=0 残留冻结，不重建轨道（避免误重置正常动画）
+        // 🔒 [LOCK-5] 渲染循环看门狗：仅修复 timeScale=0 残留冻结
+        // 触发条件：面板未展开 且 流未播放（正常模式下的异常残留修复）
+        // 规则：只解冻 timeScale，不做 _applyTracksToState（避免重置正常动画）
         if (node.state && node.skeletonData && !SMData._flowPanel.expanded && !SMData._fullPlayback.isPlaying) {
             try {
                 for (var wdi = 0; wdi < 5; wdi++) {
@@ -439,6 +441,29 @@ SMTool._loop = function (now) {
         if (SMData.renderMode === 'dyn' || z >= 0.20 || isPlayingNode) {
             node.state.update(dt);
             node.state.apply(node.skeleton);
+
+            // ★ 事件帧气泡：用本地循环时间（trackTime % duration）检测跨帧
+            SMTool._ensureEventFrames(node);
+            if (node._eventFrames && node._eventFrames.length > 0) {
+                var trackEntry = node.state.getCurrent(0);
+                if (trackEntry) {
+                    var anim = trackEntry.animation || trackEntry._animation;
+                    var duration = anim ? anim.duration : 1;
+                    // trackTime 跨循环累加，取模得到当前循环内的时间
+                    var rawTime = trackEntry.trackTime;
+                    var curTime = rawTime % Math.max(duration, 0.001);
+                    var prevTime = node._lastEventCheckTime || 0;
+                    // 检测循环：当前本地时间 < 上次 说明动画已重新开始
+                    if (curTime < prevTime - 0.001) prevTime = 0;
+                    for (var efi = 0; efi < node._eventFrames.length; efi++) {
+                        var ef = node._eventFrames[efi];
+                        if (ef.time >= prevTime && ef.time <= curTime) {
+                            SMTool._showEventBubble(node, ef);
+                        }
+                    }
+                    node._lastEventCheckTime = curTime;
+                }
+            }
         }
         node.skeleton.updateWorldTransform(node._physParam);
 
@@ -498,8 +523,10 @@ SMTool._loop = function (now) {
             node.shader.unbind();
         }
 
-        // ★ 渲染骨骼挂图（截图绑定到骨骼，跟随动画实时渲染）
-        SMTool._renderNodeBoneImages(node, gl, nodeW, nodeH, sx, glY, sw, sh);
+        // ★ 渲染骨骼挂图（可被左上角"挂点"按钮隐藏）
+        if (!SMData._hideBoneImgs) {
+            SMTool._renderNodeBoneImages(node, gl, nodeW, nodeH, sx, glY, sw, sh);
+        }
 
         result = nodesIter.next();
     }
@@ -1199,6 +1226,63 @@ SMTool.resize = function () {
 };
 
 // ================================================================
+// ★ 事件帧气泡提示 — 动画播放到事件帧时在节点旁弹出气泡
+// ================================================================
+
+// 提取节点的当前动画事件帧数据（缓存到 node._eventFrames，动画切换时自动重建）
+SMTool._ensureEventFrames = function (node) {
+    var animName = node.currentAnim || (node.animations.length > 0 ? node.animations[0].name : '');
+    // 动画名变了 → 清缓存重建
+    if (node._eventFrames && node._cachedEventAnim === animName) return;
+    node._eventFrames = null;
+    node._cachedEventAnim = animName;
+    node._lastEventCheckTime = 0;
+    if (!node.skeletonData) return;
+    var animName = node.currentAnim || (node.animations.length > 0 ? node.animations[0].name : '');
+    if (!animName) return;
+    var sd = node.skeletonData;
+    var anim = null;
+    for (var ai = 0; ai < sd.animations.length; ai++) {
+        if (sd.animations[ai].name === animName) { anim = sd.animations[ai]; break; }
+    }
+    if (!anim) return;
+    var frames = [];
+    var timelines = anim.timelines || (typeof anim.getTimelines === 'function' ? anim.getTimelines() : []);
+    for (var ti = 0; ti < timelines.length; ti++) {
+        var tl = timelines[ti];
+        if (!tl.frames || !tl.events) continue;
+        for (var fi = 0; fi < tl.events.length; fi++) {
+            var evt = tl.events[fi];
+            var name = evt.data ? evt.data.name : (evt.name || '');
+            if (!name) continue;
+            frames.push({ time: tl.frames[fi] || 0, name: name });
+        }
+    }
+    node._eventFrames = frames;
+    node._lastEventCheckTime = 0;
+};
+
+// 显示事件气泡（复用节点上的气泡元素，避免反复创建DOM）
+SMTool._showEventBubble = function (node, eventFrame) {
+    var el = SMTool._getEl(node.id);
+    if (!el) return;
+    var bubble = el.querySelector('.event-bubble');
+    if (!bubble) {
+        bubble = document.createElement('div');
+        bubble.className = 'event-bubble';
+        bubble.innerHTML = '<span class="event-bubble-name"></span><span class="event-bubble-time"></span>';
+        el.appendChild(bubble);
+    }
+    // 更新内容
+    bubble.querySelector('.event-bubble-name').textContent = eventFrame.name;
+    bubble.querySelector('.event-bubble-time').textContent = eventFrame.time.toFixed(2) + 's';
+    // 重新触发动画：移除类→强制回流→加回类
+    bubble.classList.remove('event-bubble');
+    void bubble.offsetWidth;
+    bubble.classList.add('event-bubble');
+};
+
+// ================================================================
 // ★ 骨骼挂图渲染 — 将骨骼截图以程序化挂点方式绑定到 Spine 骨骼
 //    跟随骨骼的位移/旋转/缩放，在动画节点和预览浮窗内实时渲染
 // ================================================================
@@ -1461,6 +1545,8 @@ SMTool._renderNodeBoneImages = function (node, gl, nodeW, nodeH, sx, glY, sw, sh
         for (var si = 0; si < shotIds.length; si++) {
             var shotId = shotIds[si];
             if (typeof shotId !== 'number') continue;
+            // ★ 检查挂载状态：false 则不渲染（性能优化）
+            if (node._boneShotMounted && node._boneShotMounted[boneName] && node._boneShotMounted[boneName][si] === false) continue;
 
             var tex = SMTool._ensureBoneTexture(gl, shotId);
             if (!tex) continue;

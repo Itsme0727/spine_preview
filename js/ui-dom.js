@@ -525,13 +525,17 @@ SMTool._buildBoneRowHtml = function (node, boneName) {
             // - 旧格式（dataUrl 字符串）：直接显示（兼容已保存的旧项目）
             var isNewFormat = (typeof shotVal === 'number');
             if (isNewFormat) {
-                // ★ 优先使用真实缩略图（已预生成），无缩略图时降级为原图，极端情况才用 SVG 占位符
                 var shotSrc = SMData._shotGetThumb(shotVal);
                 if (!shotSrc) {
                     shotSrc = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="128" height="96" viewBox="0 0 128 96"><rect fill="%232a2a35" width="128" height="96"/><text fill="%23666" x="64" y="52" text-anchor="middle" font-size="12">📷 ' + (si + 1) + '</text></svg>');
                 }
-                shotsHtml += '<div class="dfp-shot-item" onclick="event.stopPropagation();SMTool._openScreenshot(\'' + SMTool._esc(boneName) + '\',' + si + ')">' +
-                    '<img src="' + shotSrc + '" data-shotid="' + shotVal + '" data-bone="' + SMTool._esc(boneName) + '" data-idx="' + si + '" data-nid="' + node.id + '" alt="截图' + (si + 1) + '">' +
+                // ★ 挂载状态：默认挂载，点击可取消/恢复
+                var isMounted = !(node._boneShotMounted && node._boneShotMounted[boneName] && node._boneShotMounted[boneName][si] === false);
+                var mountClass = isMounted ? 'dfp-shot-mount' : 'dfp-shot-mount active';
+                var mountText = isMounted ? '取消挂点' : '挂点';
+                shotsHtml += '<div class="dfp-shot-item">' +
+                    '<button class="' + mountClass + '" onclick="event.stopPropagation();SMTool._toggleBoneShotMount(\'' + SMTool._esc(boneName) + '\',' + si + ')">' + mountText + '</button>' +
+                    '<img src="' + shotSrc + '" alt="截图' + (si + 1) + '" onclick="event.stopPropagation();SMTool._openScreenshot(\'' + SMTool._esc(boneName) + '\',' + si + ')">' +
                     '<span class="dfp-shot-del" onclick="event.stopPropagation();SMTool._removeBoneScreenshot(\'' + SMTool._esc(boneName) + '\',' + si + ')" title="删除此截图">×</span>' +
                 '</div>';
             } else {
@@ -587,31 +591,180 @@ SMTool._hasSlotContent = function (node) {
     return false;
 };
 
-// ---- 骨骼标记 ----
-SMTool._toggleBoneTag = function (boneName) {
-    // 多选时应用到所有选中节点
-    if (SMData.selectedNodes.size > 1) {
-        SMData.selectedNodes.forEach(function (nid) {
-            var n = SMData.nodes.get(nid);
-            if (!n || n.nodeType !== 'spine') return;
-            if (!n._boneTags) n._boneTags = {};
-            if (n._boneTags[boneName]) {
-                delete n._boneTags[boneName];
-            } else {
-                n._boneTags[boneName] = [];
-            }
-            SMTool._refreshBoneTagsUI(n);
-        });
-    } else {
-        var node = SMData.nodes.get(SMData.selectedNode);
-        if (!node || node.nodeType !== 'spine') return;
-        if (!node._boneTags) node._boneTags = {};
-        if (node._boneTags[boneName]) {
-            delete node._boneTags[boneName];
-        } else {
-            node._boneTags[boneName] = [];
+// ★ 判断当前动画是否有事件帧（用于页签红点）
+SMTool._hasEventContent = function (node) {
+    if (!node || !node.skeletonData) return false;
+    var animName = node.currentAnim || (node.animations.length > 0 ? node.animations[0].name : '');
+    if (!animName) return false;
+    var sd = node.skeletonData;
+    for (var ai = 0; ai < sd.animations.length; ai++) {
+        if (sd.animations[ai].name !== animName) continue;
+        var timelines = sd.animations[ai].timelines || (typeof sd.animations[ai].getTimelines === 'function' ? sd.animations[ai].getTimelines() : []);
+        for (var ti = 0; ti < timelines.length; ti++) {
+            if (timelines[ti].events && timelines[ti].events.length > 0) return true;
         }
-        SMTool._refreshBoneTagsUI(node);
+    }
+    // 也检查是否已有事件备注或截图
+    if (node._eventNotes && Object.keys(node._eventNotes).length > 0) return true;
+    if (node._eventScreenshots && Object.keys(node._eventScreenshots).length > 0) return true;
+    return false;
+};
+
+// ================================================================
+// ★ 事件帧辅助函数 — 备注 / 截图 / 展开收起
+// ================================================================
+
+SMTool._toggleEventExpand = function (eventName) {
+    var node = SMData.nodes.get(SMData.selectedNode);
+    if (!node) return;
+    if (!node._eventExpanded) node._eventExpanded = {};
+    node._eventExpanded[eventName] = !node._eventExpanded[eventName];
+    SMData._lastPanelNodeId = -1;
+    SMTool._updateFloatPanel();
+};
+
+SMTool._updateEventNote = function (eventName, value) {
+    var node = SMData.nodes.get(SMData.selectedNode);
+    if (!node) return;
+    var sameSourceNodes = SMTool._getSameSourceNodes(node);
+    for (var si = 0; si < sameSourceNodes.length; si++) {
+        var n = sameSourceNodes[si];
+        if (!n._eventNotes) n._eventNotes = {};
+        n._eventNotes[eventName] = value;
+    }
+};
+
+SMTool._pickEventScreenshot = function (eventName) {
+    SMData._pasteTargetBone = eventName;  // 复用粘贴目标
+    var input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.multiple = true;
+    input.onchange = function () {
+        var files = input.files;
+        if (!files || files.length === 0) return;
+        var loaded = 0;
+        var dataUrls = [];
+        for (var i = 0; i < files.length; i++) {
+            (function (file) {
+                var reader = new FileReader();
+                reader.onload = function () {
+                    dataUrls.push(reader.result);
+                    loaded++;
+                    if (loaded === files.length) SMTool._addEventScreenshots(eventName, dataUrls);
+                };
+                reader.readAsDataURL(file);
+            })(files[i]);
+        }
+    };
+    input.click();
+};
+
+SMTool._dropEventScreenshot = function (e, eventName) {
+    var files = e.dataTransfer.files;
+    if (!files || files.length === 0) return;
+    var loaded = 0;
+    var dataUrls = [];
+    for (var i = 0; i < files.length; i++) {
+        var file = files[i];
+        if (!file.type.startsWith('image/')) continue;
+        (function (f) {
+            var reader = new FileReader();
+            reader.onload = function () {
+                dataUrls.push(reader.result);
+                loaded++;
+                if (loaded === files.length) SMTool._addEventScreenshots(eventName, dataUrls);
+            };
+            reader.readAsDataURL(f);
+        })(file);
+    }
+};
+
+SMTool._addEventScreenshots = function (eventName, dataUrls) {
+    var node = SMData.nodes.get(SMData.selectedNode);
+    if (!node || node.nodeType !== 'spine') return;
+    var sameSourceNodes = SMTool._getSameSourceNodes(node);
+    var newShotIds = [];
+    var thumbPromises = [];
+    for (var i = 0; i < dataUrls.length; i++) {
+        var shotId = SMData._shotRegister(dataUrls[i]);
+        newShotIds.push(shotId);
+        for (var ni = 0; ni < sameSourceNodes.length; ni++) {
+            var sn = sameSourceNodes[ni];
+            if (!sn._eventScreenshots) sn._eventScreenshots = {};
+            if (!sn._eventScreenshots[eventName]) sn._eventScreenshots[eventName] = [];
+            sn._eventScreenshots[eventName].push(shotId);
+        }
+        var entry = SMData._shotStore[shotId];
+        if (entry && !entry.thumbDataUrl) {
+            thumbPromises.push(
+                SMTool._generateThumbnail(entry.dataUrl).then(function (thumb) { entry.thumbDataUrl = thumb; })
+            );
+        }
+    }
+    var refreshPanel = function () {
+        SMData._lastPanelNodeId = -1;
+        SMTool._updateFloatPanel();
+    };
+    if (thumbPromises.length > 0) {
+        Promise.all(thumbPromises).then(refreshPanel);
+    } else {
+        refreshPanel();
+    }
+};
+
+SMTool._removeEventScreenshot = function (eventName, index) {
+    var node = SMData.nodes.get(SMData.selectedNode);
+    if (!node || !node._eventScreenshots || !node._eventScreenshots[eventName]) return;
+    var shotId = node._eventScreenshots[eventName][index];
+    if (typeof shotId === 'number') { SMData._shotRelease(shotId); }
+    var sameSourceNodes = SMTool._getSameSourceNodes(node);
+    for (var ni = 0; ni < sameSourceNodes.length; ni++) {
+        var sn = sameSourceNodes[ni];
+        if (sn._eventScreenshots && sn._eventScreenshots[eventName]) {
+            sn._eventScreenshots[eventName].splice(index, 1);
+            if (sn._eventScreenshots[eventName].length === 0) delete sn._eventScreenshots[eventName];
+        }
+    }
+    SMData._lastPanelNodeId = -1;
+    SMTool._updateFloatPanel();
+};
+
+// ---- 骨骼标记 ----
+// ================================================================
+// ★ 获取与指定节点共享同一源文件且已被选中的节点（含自身）
+//    仅多选（≥2 个节点）时同步，单选时只返回自身
+// ================================================================
+SMTool._getSameSourceNodes = function (node) {
+    if (!node || !node.sourceFile) return [node];
+    // 单选 → 只操作当前节点，不同步
+    if (SMData.selectedNodes.size <= 1) return [node];
+    var sf = node.sourceFile;
+    var sameNodes = [];
+    SMData.selectedNodes.forEach(function (nid) {
+        var n = SMData.nodes.get(nid);
+        if (n && n.sourceFile === sf && n.nodeType === 'spine') {
+            sameNodes.push(n);
+        }
+    });
+    return sameNodes.length > 0 ? sameNodes : [node];
+};
+
+SMTool._toggleBoneTag = function (boneName) {
+    var node = SMData.nodes.get(SMData.selectedNode);
+    if (!node || node.nodeType !== 'spine') return;
+    // ★ 获取所有同源节点（共享同一 sourceFile 的节点）
+    var sameSourceNodes = SMTool._getSameSourceNodes(node);
+    var newState = !(node._boneTags && node._boneTags[boneName]);
+    for (var si = 0; si < sameSourceNodes.length; si++) {
+        var n = sameSourceNodes[si];
+        if (!n._boneTags) n._boneTags = {};
+        if (newState) {
+            n._boneTags[boneName] = [];
+        } else {
+            delete n._boneTags[boneName];
+        }
+        SMTool._refreshBoneTagsUI(n);
     }
     SMData._lastPanelNodeId = -1;
     SMTool._updateFloatPanel();
@@ -655,17 +808,25 @@ SMTool._refreshBoneTagsUI = function (node) {
 SMTool._updateBoneNote = function (boneName, value) {
     var node = SMData.nodes.get(SMData.selectedNode);
     if (!node) return;
-    if (!node._boneNotes) node._boneNotes = {};
-    node._boneNotes[boneName] = value;
+    var sameSourceNodes = SMTool._getSameSourceNodes(node);
+    for (var si = 0; si < sameSourceNodes.length; si++) {
+        var n = sameSourceNodes[si];
+        if (!n._boneNotes) n._boneNotes = {};
+        n._boneNotes[boneName] = value;
+    }
 };
 
 // ---- 骨骼淡入淡出开关 ----
 SMTool._toggleBoneFade = function (boneName, enabled) {
     var node = SMData.nodes.get(SMData.selectedNode);
     if (!node) return;
-    if (!node._boneFade) node._boneFade = {};
-    if (!node._boneFade[boneName]) node._boneFade[boneName] = { enabled: false, duration: 1.0 };
-    node._boneFade[boneName].enabled = enabled;
+    var sameSourceNodes = SMTool._getSameSourceNodes(node);
+    for (var si = 0; si < sameSourceNodes.length; si++) {
+        var n = sameSourceNodes[si];
+        if (!n._boneFade) n._boneFade = {};
+        if (!n._boneFade[boneName]) n._boneFade[boneName] = { enabled: false, duration: 1.0 };
+        n._boneFade[boneName].enabled = enabled;
+    }
     // 显示/隐藏数值框
     var wrap = document.querySelector('.dfp-bone-note-area[data-bone-note="' + boneName + '"]');
     if (wrap) {
@@ -696,13 +857,17 @@ SMTool._toggleBoneFade = function (boneName, enabled) {
     }
 };
 
-// ---- 骨骼淡入淡出时长 ----
+// ---- 骨骼淡入淡出时长（同步到所有同源节点）----
 SMTool._setBoneFadeDur = function (boneName, value) {
     var node = SMData.nodes.get(SMData.selectedNode);
     if (!node) return;
-    if (!node._boneFade) node._boneFade = {};
-    if (!node._boneFade[boneName]) node._boneFade[boneName] = { enabled: true, duration: 1.0 };
-    node._boneFade[boneName].duration = Math.max(0.1, Math.min(60, value || 1.0));
+    var sameSourceNodes = SMTool._getSameSourceNodes(node);
+    for (var si = 0; si < sameSourceNodes.length; si++) {
+        var n = sameSourceNodes[si];
+        if (!n._boneFade) n._boneFade = {};
+        if (!n._boneFade[boneName]) n._boneFade[boneName] = { enabled: true, duration: 1.0 };
+        n._boneFade[boneName].duration = Math.max(0.1, Math.min(60, value || 1.0));
+    }
     // ★ 更新淡入淡出图标的 title（显示最新时长）
     var row = document.querySelector('.dfp-bone-row[data-bone="' + boneName + '"]');
     if (row) {
@@ -750,31 +915,39 @@ SMTool._generateThumbnail = function (dataUrl) {
 };
 
 // ---- 添加截图到骨骼（统一入口，使用全局注册表去重）----
-SMTool._addBoneScreenshots = function (boneName, dataUrls) {
+SMTool._addBoneScreenshots = function (boneName, dataUrls, fileNames) {
     var node = SMData.nodes.get(SMData.selectedNode);
     if (!node || node.nodeType !== 'spine') return;
-    if (!node._boneScreenshots) node._boneScreenshots = {};
-    if (!node._boneScreenshots[boneName]) node._boneScreenshots[boneName] = [];
-    // 兼容旧数据格式
-    if (!Array.isArray(node._boneScreenshots[boneName])) node._boneScreenshots[boneName] = node._boneScreenshots[boneName] ? [node._boneScreenshots[boneName]] : [];
+    var sameSourceNodes = SMTool._getSameSourceNodes(node);
 
-    // ★ 注册到全局截图表，每张图片只存一份 dataUrl
     var newShotIds = [];
+    var thumbPromises = [];
     for (var i = 0; i < dataUrls.length; i++) {
         var shotId = SMData._shotRegister(dataUrls[i]);
-        node._boneScreenshots[boneName].push(shotId);
-        // 记录新注册的 shotId（refCount===1 表示首次注册，需生成缩略图）
+        // ★ 保存原始文件名到 shot 条目
         var entry = SMData._shotStore[shotId];
-        if (entry && entry.refCount === 1) {
-            newShotIds.push(shotId);
+        if (entry && fileNames && fileNames[i] && !entry._fileName) {
+            entry._fileName = fileNames[i];
+        }
+        newShotIds.push(shotId);
+        // 为所有同源节点添加此 shotId 引用
+        for (var ni = 0; ni < sameSourceNodes.length; ni++) {
+            var sn = sameSourceNodes[ni];
+            if (!sn._boneScreenshots) sn._boneScreenshots = {};
+            if (!sn._boneScreenshots[boneName]) sn._boneScreenshots[boneName] = [];
+            if (!Array.isArray(sn._boneScreenshots[boneName])) sn._boneScreenshots[boneName] = sn._boneScreenshots[boneName] ? [sn._boneScreenshots[boneName]] : [];
+            sn._boneScreenshots[boneName].push(shotId);
+            // ★ shotId 引用计数已在 _shotRegister 中 +1，这里记录为共享引用
         }
     }
 
-    // 清除面板缓存以强制刷新
-    SMData._lastPanelNodeId = -1;
-    SMTool._updateFloatPanel();
+    // 清除面板缓存，等缩略图全部就绪后统一刷新（保证首次渲染就是真实缩略图）
+    var refreshPanel = function () {
+        SMData._lastPanelNodeId = -1;
+        SMTool._updateFloatPanel();
+    };
 
-    // ★ 预生成缩略图：异步生成所有新截图的缩略图，完成后刷新面板
+    // ★ 预生成缩略图，就绪后刷新面板
     if (newShotIds.length > 0) {
         var _genThumb = SMTool._generateThumbnail;
         var _thumbPromises = [];
@@ -789,15 +962,29 @@ SMTool._addBoneScreenshots = function (boneName, dataUrls) {
             })(newShotIds[j]);
         }
         if (_thumbPromises.length > 0) {
-            Promise.all(_thumbPromises).then(function () {
-                // 缩略图全部就绪后刷新面板
-                if (SMData._lastPanelNodeId >= 0) {
-                    SMData._lastPanelNodeId = -1;
-                    SMTool._updateFloatPanel();
-                }
-            });
+            Promise.all(_thumbPromises).then(refreshPanel);
+        } else {
+            refreshPanel();
         }
+    } else {
+        refreshPanel();
     }
+};
+
+// ★ 切换骨骼截图的挂载状态（同步到所有多选同源节点）
+SMTool._toggleBoneShotMount = function (boneName, index) {
+    var node = SMData.nodes.get(SMData.selectedNode);
+    if (!node) return;
+    var sameSourceNodes = SMTool._getSameSourceNodes(node);
+    for (var ni = 0; ni < sameSourceNodes.length; ni++) {
+        var n = sameSourceNodes[ni];
+        if (!n._boneShotMounted) n._boneShotMounted = {};
+        if (!n._boneShotMounted[boneName]) n._boneShotMounted[boneName] = {};
+        var cur = n._boneShotMounted[boneName][index];
+        n._boneShotMounted[boneName][index] = (cur === false);
+    }
+    SMData._lastPanelNodeId = -1;
+    SMTool._updateFloatPanel();
 };
 
 // ---- 截图文件选择 ----
@@ -811,16 +998,18 @@ SMTool._pickScreenshot = function (boneName) {
         if (!files || files.length === 0) return;
         var loaded = 0;
         var dataUrls = [];
+        var fileNames = [];
         for (var i = 0; i < files.length; i++) {
-            (function (file) {
+            fileNames.push(files[i].name);
+            (function (file, idx) {
                 var reader = new FileReader();
                 reader.onload = function () {
-                    dataUrls.push(reader.result);
+                    dataUrls[idx] = reader.result;
                     loaded++;
-                    if (loaded === files.length) SMTool._addBoneScreenshots(boneName, dataUrls);
+                    if (loaded === files.length) SMTool._addBoneScreenshots(boneName, dataUrls, fileNames);
                 };
                 reader.readAsDataURL(file);
-            })(files[i]);
+            })(files[i], i);
         }
     };
     input.click();
@@ -832,18 +1021,20 @@ SMTool._dropScreenshot = function (e, boneName) {
     if (!files || files.length === 0) return;
     var loaded = 0;
     var dataUrls = [];
+    var fileNames = [];
     for (var i = 0; i < files.length; i++) {
         var file = files[i];
         if (!file.type.startsWith('image/')) continue;
-        (function (f) {
+        fileNames.push(file.name);
+        (function (f, idx) {
             var reader = new FileReader();
             reader.onload = function () {
-                dataUrls.push(reader.result);
+                dataUrls[idx] = reader.result;
                 loaded++;
-                if (loaded === files.length) SMTool._addBoneScreenshots(boneName, dataUrls);
+                if (loaded === files.length) SMTool._addBoneScreenshots(boneName, dataUrls, fileNames);
             };
             reader.readAsDataURL(f);
-        })(file);
+        })(file, i);
     }
 };
 
@@ -854,13 +1045,29 @@ SMTool._removeBoneScreenshot = function (boneName, index) {
     if (!Array.isArray(node._boneScreenshots[boneName])) return;
 
     var shotId = node._boneScreenshots[boneName][index];
-    // 从全局注册表释放引用
-    if (typeof shotId === 'number') {
-        SMData._shotRelease(shotId);
-    }
-
+    // 仅移除当前节点的引用
     node._boneScreenshots[boneName].splice(index, 1);
     if (node._boneScreenshots[boneName].length === 0) delete node._boneScreenshots[boneName];
+
+    // ★ 未保存 + 无任何节点引用 → 允许释放内存
+    if (!SMData._hasEverSaved && typeof shotId === 'number') {
+        var stillUsed = false;
+        var nodesIter = SMData.nodes.values();
+        var nr = nodesIter.next();
+        while (!nr.done) {
+            var n = nr.value;
+            if (n._boneScreenshots) {
+                var boneKeys = Object.keys(n._boneScreenshots);
+                for (var bk = 0; bk < boneKeys.length; bk++) {
+                    var shots = n._boneScreenshots[boneKeys[bk]];
+                    if (Array.isArray(shots) && shots.indexOf(shotId) >= 0) { stillUsed = true; break; }
+                }
+            }
+            if (stillUsed) break;
+            nr = nodesIter.next();
+        }
+        if (!stillUsed) SMData._shotRelease(shotId);
+    }
     SMData._lastPanelNodeId = -1;
     SMTool._updateFloatPanel();
 };
@@ -1747,9 +1954,10 @@ SMTool._updateFloatPanel = function () {
         if (!animsHtml) animsHtml = '<div class="dfp-row">无</div>';
         infoHtml += '<div class="dfp-section"><div class="dfp-section-title">🎬 动画 (' + node.animations.length + ')</div>' + animsHtml + '</div>';
 
-        // ★ 骨骼/插槽页签红点：有内容时显示
+        // ★ 骨骼/插槽/事件帧页签红点：有内容时显示
         var boneDotHtml = SMTool._hasBoneContent(node) ? '<span class="dfp-tab-dot"></span>' : '';
         var slotDotHtml = SMTool._hasSlotContent(node) ? '<span class="dfp-tab-dot"></span>' : '';
+        var eventDotHtml = SMTool._hasEventContent(node) ? '<span class="dfp-tab-dot"></span>' : '';
 
         // ===== 渲染页签栏 =====
         tabsEl.innerHTML =
@@ -1759,6 +1967,9 @@ SMTool._updateFloatPanel = function () {
             '<button class="dfp-tab-btn" data-tab="bone" onclick="SMTool._switchPanelTab(\'bone\')">' +
                 '🦴 骨骼 <span class="dfp-tab-count">' + node.bones.length + '</span>' + boneDotHtml +
             '</button>' +
+            '<button class="dfp-tab-btn" data-tab="event" onclick="SMTool._switchPanelTab(\'event\')">' +
+                '⚡ 事件帧' + eventDotHtml +
+            '</button>' +
             '<button class="dfp-tab-btn" data-tab="slot" onclick="SMTool._switchPanelTab(\'slot\')">' +
                 '🔧 插槽 <span class="dfp-tab-count">' + node.slots.length + '</span>' + slotDotHtml +
             '</button>' +
@@ -1767,9 +1978,11 @@ SMTool._updateFloatPanel = function () {
             '</button>';
 
         // ===== 渲染页签内容 =====
+        var eventHtml = SMTool._buildEventFramesHtml(node);
         content.innerHTML =
             '<div class="dfp-tab-panel" data-panel="skin">' + skinRows + '</div>' +
             '<div class="dfp-tab-panel" data-panel="bone">' + boneRows + '</div>' +
+            '<div class="dfp-tab-panel" data-panel="event">' + eventHtml + '</div>' +
             '<div class="dfp-tab-panel" data-panel="slot">' + slotRows + '</div>' +
             '<div class="dfp-tab-panel" data-panel="info">' + infoHtml + '</div>';
 
@@ -1842,9 +2055,10 @@ SMTool._updateFloatPanel = function () {
             if (!animsHtml2) animsHtml2 = '<div class="dfp-row">无</div>';
             infoHtml2 += '<div class="dfp-section"><div class="dfp-section-title">🎬 动画 (' + node2.animations.length + ')</div>' + animsHtml2 + '</div>';
 
-            // ★ 骨骼/插槽页签红点：有内容时显示
+            // ★ 骨骼/插槽/事件帧页签红点
             var boneDotHtml2 = SMTool._hasBoneContent(node2) ? '<span class="dfp-tab-dot"></span>' : '';
             var slotDotHtml2 = SMTool._hasSlotContent(node2) ? '<span class="dfp-tab-dot"></span>' : '';
+            var eventDotHtml2 = SMTool._hasEventContent(node2) ? '<span class="dfp-tab-dot"></span>' : '';
 
             // 渲染
             tabsEl.innerHTML =
@@ -1854,15 +2068,20 @@ SMTool._updateFloatPanel = function () {
                 '<button class="dfp-tab-btn" data-tab="bone" onclick="SMTool._switchPanelTab(\'bone\')">' +
                     '🦴 骨骼 <span class="dfp-tab-count">' + node2.bones.length + '</span>' + boneDotHtml2 +
                 '</button>' +
+                '<button class="dfp-tab-btn" data-tab="event" onclick="SMTool._switchPanelTab(\'event\')">' +
+                    '⚡ 事件帧' + eventDotHtml2 +
+                '</button>' +
                 '<button class="dfp-tab-btn" data-tab="slot" onclick="SMTool._switchPanelTab(\'slot\')">' +
                     '🔧 插槽 <span class="dfp-tab-count">' + node2.slots.length + '</span>' + slotDotHtml2 +
                 '</button>' +
                 '<button class="dfp-tab-btn" data-tab="info" onclick="SMTool._switchPanelTab(\'info\')">' +
                     '📋 信息' +
                 '</button>';
+            var eventHtml2 = SMTool._buildEventFramesHtml(node2);
             content.innerHTML =
                 '<div class="dfp-tab-panel" data-panel="skin">' + skinRows2 + '</div>' +
                 '<div class="dfp-tab-panel" data-panel="bone">' + boneRows2 + '</div>' +
+                '<div class="dfp-tab-panel" data-panel="event">' + eventHtml2 + '</div>' +
                 '<div class="dfp-tab-panel" data-panel="slot">' + slotRows2 + '</div>' +
                 '<div class="dfp-tab-panel" data-panel="info">' + infoHtml2 + '</div>';
             footer.innerHTML = _pmaBtnHtml(null, true, allPma);
@@ -1900,6 +2119,106 @@ SMTool._switchPanelTab = function (tabName) {
     for (var j = 0; j < panels.length; j++) {
         panels[j].classList.toggle('active', panels[j].getAttribute('data-panel') === tabName);
     }
+};
+
+// ================================================================
+// ★ 提取动画中的事件帧数据（兼容 Spine 3.8 / 4.x）
+// ================================================================
+SMTool._buildEventFramesHtml = function (node) {
+    if (!node || !node.skeletonData) return '<div class="dfp-row">无骨架数据</div>';
+    var animName = node.currentAnim || (node.animations.length > 0 ? node.animations[0].name : '');
+    if (!animName) return '<div class="dfp-row">无当前动画</div>';
+
+    var sd = node.skeletonData;
+    var anim = null;
+    for (var ai = 0; ai < sd.animations.length; ai++) {
+        if (sd.animations[ai].name === animName) { anim = sd.animations[ai]; break; }
+    }
+    if (!anim) return '<div class="dfp-row">动画 "' + SMTool._esc(animName) + '" 未找到</div>';
+
+    // 提取事件时间线
+    var eventEntries = [];
+    var timelines = anim.timelines || (typeof anim.getTimelines === 'function' ? anim.getTimelines() : []);
+    for (var ti = 0; ti < timelines.length; ti++) {
+        var tl = timelines[ti];
+        var frames = tl.frames;
+        var events = tl.events;
+        if (!frames || !events) continue;
+        for (var fi = 0; fi < events.length; fi++) {
+            var evt = events[fi];
+            var evtName = evt.data ? evt.data.name : (evt.name || '');
+            if (!evtName) continue;
+            var time = (frames[fi] !== undefined) ? frames[fi] : 0;
+            eventEntries.push({
+                time: time,
+                name: evtName,
+                intValue: evt.intValue !== undefined ? evt.intValue : (evt.data ? evt.data.intValue : 0),
+                floatValue: evt.floatValue !== undefined ? evt.floatValue : (evt.data ? evt.data.floatValue : 0),
+                stringValue: evt.stringValue || (evt.data ? evt.data.stringValue : '') || ''
+            });
+        }
+    }
+    if (eventEntries.length === 0) {
+        return '<div class="dfp-row" style="color:var(--text2)">动画 "' + SMTool._esc(animName) + '" 无事件帧</div>';
+    }
+    eventEntries.sort(function (a, b) { return a.time - b.time; });
+
+    // ★ 生成可展开的事件行（含备注和截图，无淡入淡出和标记功能）
+    var html = '<div class="dfp-section"><div class="dfp-section-title">⚡ ' + SMTool._esc(animName) + ' 事件帧 (' + eventEntries.length + ')</div>';
+    for (var ei = 0; ei < eventEntries.length; ei++) {
+        var e = eventEntries[ei];
+        var evtName = e.name;
+        // ★ 默认展开，只有用户手动收起才折叠
+        var isExpanded = !(node._eventExpanded && node._eventExpanded[evtName] === false);
+        var arrowIcon = isExpanded ? '▼' : '▶';
+        var noteText = (node._eventNotes && node._eventNotes[evtName]) ? node._eventNotes[evtName] : '';
+        var shots = (node._eventScreenshots && node._eventScreenshots[evtName]) ? node._eventScreenshots[evtName] : [];
+        if (!Array.isArray(shots)) shots = shots ? [shots] : [];
+        var hasContent = shots.length > 0 || noteText.trim().length > 0;
+
+        var previewBadges = '';
+        if (shots.length > 0) previewBadges += '<span class="dfp-bone-badge" title="' + shots.length + ' 张截图">📷' + shots.length + '</span>';
+        if (noteText.trim().length > 0) previewBadges += '<span class="dfp-bone-badge" title="有备注">📝</span>';
+
+        html += '<div class="dfp-row dfp-bone-row' + (isExpanded ? ' expanded' : '') + '" data-bone="' + SMTool._esc(evtName) + '" onclick="SMTool._toggleEventExpand(\'' + SMTool._esc(evtName) + '\')" style="cursor:pointer">' +
+            '<span class="dfp-bone-name">' +
+                '<span class="dfp-event-time">' + e.time.toFixed(2) + 's</span> ' + SMTool._esc(evtName) + previewBadges +
+            '</span>' +
+            '<span class="dfp-bone-right"><span class="dfp-event-arrow' + (hasContent ? ' has-content' : '') + '">' + arrowIcon + '</span></span>' +
+            '<span class="dfp-bone-right"></span>' +
+        '</div>';
+
+        if (isExpanded) {
+            var noteTextEsc = SMTool._esc(noteText);
+            var shotsHtml = '';
+            for (var si = 0; si < shots.length; si++) {
+                var shotVal = shots[si];
+                var isNewFormat = (typeof shotVal === 'number');
+                if (isNewFormat) {
+                    var shotSrc = SMData._shotGetThumb(shotVal);
+                    if (!shotSrc) shotSrc = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="128" height="96" viewBox="0 0 128 96"><rect fill="%232a2a35" width="128" height="96"/><text fill="%23666" x="64" y="52" text-anchor="middle" font-size="12">📷 ' + (si + 1) + '</text></svg>');
+                    shotsHtml += '<div class="dfp-shot-item" onclick="event.stopPropagation();">' +
+                        '<img src="' + shotSrc + '" alt="截图' + (si + 1) + '">' +
+                        '<span class="dfp-shot-del" onclick="event.stopPropagation();SMTool._removeEventScreenshot(\'' + SMTool._esc(evtName) + '\',' + si + ')" title="删除此截图">×</span>' +
+                    '</div>';
+                } else {
+                    shotsHtml += '<div class="dfp-shot-item" onclick="event.stopPropagation();">' +
+                        '<img src="' + shotVal + '" alt="截图' + (si + 1) + '">' +
+                        '<span class="dfp-shot-del" onclick="event.stopPropagation();SMTool._removeEventScreenshot(\'' + SMTool._esc(evtName) + '\',' + si + ')" title="删除此截图">×</span>' +
+                    '</div>';
+                }
+            }
+            html += '<div class="dfp-bone-note-area show" data-bone-note="' + SMTool._esc(evtName) + '">' +
+                '<textarea placeholder="事件备注..." oninput="SMTool._updateEventNote(\'' + SMTool._esc(evtName) + '\', this.value)" onclick="event.stopPropagation()">' + noteTextEsc + '</textarea>' +
+                '<div class="dfp-bone-shot-area show">' +
+                    '<div class="dfp-shot-list">' + shotsHtml + '</div>' +
+                    '<button class="dfp-shot-add" onclick="event.stopPropagation();SMTool._pickEventScreenshot(\'' + SMTool._esc(evtName) + '\')" ondragover="event.preventDefault();event.stopPropagation()" ondrop="event.preventDefault();event.stopPropagation();SMTool._dropEventScreenshot(event,\'' + SMTool._esc(evtName) + '\')" title="选取图片 / 拖入图片">📁 选取图片</button>' +
+                '</div>' +
+            '</div>';
+        }
+    }
+    html += '</div>';
+    return html;
 };
 
 // ---- 更新底部 PMA 按钮（不重建整个面板，保持当前页签） ----
@@ -2732,7 +3051,13 @@ SMTool._setFullComponentFocus = function (sourceId) {
 // ★ 右侧画布播放器已移除（改为使用浮窗动画预览）
 // _initFullCanvas, _disposeFullCanvasResources, _updateFullCanvasForStep, _drawFullCanvasFallback 已删除
 
-// 选择完整路径
+// ================================================================
+// 🔒🔒🔒 [LOCK-5] 选择完整路径 — 仅高亮，不打断画布动画
+// ⚠️ 解锁策略：仅用户明确说「解锁 LOCK-5」才能改！
+// 调用方：_expandFlowPanel（自动选第一个路径）、面板内点击路径
+// 规则：只设置 activePathIdx 和更新 UI，不调 _resetAllToAnimFrame1
+//       动画暂停仅发生在 _startFullPlayback / _goToPrevStep / _goToNextStep
+// ================================================================
 SMTool._selectFullPath = function (pathIdx) {
     SMData._fullPlayback.activePathIdx = pathIdx;
     SMData._fullPlayback.currentStep = 0;
@@ -2740,7 +3065,7 @@ SMTool._selectFullPath = function (pathIdx) {
     SMData._fullPlayback._stepped = false;
     if (SMData._fullPlayback._timer) { clearTimeout(SMData._fullPlayback._timer); SMData._fullPlayback._timer = null; }
     SMTool._clearAllProgressBars();
-    // ★ 仅高亮选中路径，不打断画布动画（播放/上一步/下一步才暂停）
+    // ★ [LOCK-5] 仅高亮选中路径，不打断画布动画（播放/上一步/下一步才暂停）
     SMTool._setFullComponentFocus(SMData.selectedNode);
     SMTool._updateFullFlowPanel(document.getElementById('flpContent'), document.getElementById('flowPanel'));
     SMTool._updateSel();

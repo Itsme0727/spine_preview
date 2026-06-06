@@ -9,7 +9,13 @@ var SMTool = window.SMTool || {};
 // ---- 鼠标按下 ----
 SMTool._onMD = function (e) {
     // ================================================================
-    // 🔒 [LOCK-4] 画布点击退出：仅当实际播放/导航过时退出（仅选中路径不算）
+    // 🔒🔒🔒 [LOCK-5] 画布点击退出动画流
+    // ⚠️ 解锁策略：仅用户明确说「解锁 LOCK-5」才能改！
+    //
+    // 退出条件：isPlaying（点了播放）或 _stepped（点了上一步/下一步）
+    //          或存在 _pausedByFlow 节点（兜底）
+    // 仅选中路径（未播放/未导航）→ 不退出，画布动画继续
+    // ================================================================
     if (e.button === 0) {
         var pb = SMData._fullPlayback;
         var inFlow = pb.isPlaying || pb._stepped;
@@ -27,6 +33,7 @@ SMTool._onMD = function (e) {
             if (pb._timer) { clearTimeout(pb._timer); pb._timer = null; }
             if (SMData._animPreview) SMData._animPreview._flowFrozen = false;
             SMTool._clearAllProgressBars();
+            // ★ 强制恢复所有节点（_forceResetAllNodes 不依赖状态标记，暴力恢复）
             SMTool._forceResetAllNodes();
             SMTool._updateFullFlowPanel(document.getElementById('flpContent'), document.getElementById('flowPanel'));
             SMTool._updateSel();
@@ -34,7 +41,7 @@ SMTool._onMD = function (e) {
             setTimeout(function () { SMData._flowExitLock = false; }, 200);
         }
     }
-    // 🔒 [LOCK-4] END
+    // 🔒 [LOCK-5] END
 
     // 优先检测控制点点击
     if (e.button === 0 && !e.altKey) {
@@ -1762,17 +1769,47 @@ SMTool._expandFlowPanel = function () {
     }
 };
 
+// ================================================================
+// 🔒🔒🔒 [LOCK-5] 展开/收起底部动画组合面板
+// ⚠️ 解锁策略：仅用户明确说「解锁 LOCK-5」才能改！
+//
+// 核心规则（详见各函数内注释）：
+//   - 无选中节点时面板纯视觉，不碰任何动画
+//   - 选中节点 + 展开 → 仅高亮路径，不打断动画
+//   - 只有点击播放/导航按钮才暂停
+//   - 播放/导航后退出（画布点击/面板收起）才恢复
+// ================================================================
+
+// 展开底部流程面板
+SMTool._expandFlowPanel = function () {
+    if (SMData._flowPanel.expanded) return;
+    SMData._flowPanel.expanded = true;
+    var panel = document.getElementById('flowPanel');
+    if (panel) panel.classList.add('expanded');
+    SMTool._updateFlowPanel();
+    // ★ [LOCK-5] 无选中节点 → 仅展开面板展示提示，不碰动画
+    if (!SMData.selectedNode) return;
+    // ★ [LOCK-5] 有选中节点 → 自动高亮第一个路径（仅高亮，不暂停动画）
+    var pb = SMData._fullPlayback;
+    var paths = SMData._fullPaths;
+    if (pb.activePathIdx < 0 && paths && paths.length > 0 && !pb.isPlaying && !SMData._flowExitLock) {
+        SMTool._selectFullPath(0);
+    }
+};
+
 // 收起底部流程面板
 SMTool._collapseFlowPanel = function () {
     if (!SMData._flowPanel.expanded) return;
     SMData._flowPanel.expanded = false;
     var panel = document.getElementById('flowPanel');
-    // ★ 无选中节点时：仅收起面板视觉，不触碰任何动画/流状态
+    // ★ [LOCK-5] 无选中节点 → 仅收起面板，不碰动画
     if (!SMData.selectedNode) {
         if (panel) { panel.classList.remove('expanded'); panel.classList.remove('maximized'); }
         return;
     }
-    // 有选中节点：仅当真正播放/导航过才恢复动画（仅选中路径不触发）
+    // ★ [LOCK-5] 仅当真正播放/导航过才恢复动画
+    //   判断依据：isPlaying（点了播放）或 _stepped（点了上一步/下一步）
+    //   仅选中路径但未播放 → hadFlowActive=false → 不恢复（没打断过所以无需恢复）
     var pb = SMData._fullPlayback;
     var hadFlowActive = pb.isPlaying || pb._stepped;
     SMData._flowPanel.maximized = false;

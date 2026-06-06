@@ -1494,7 +1494,7 @@ body {
 
 /* 面板主体 */
 #dataFloatPanel .dfp-body {
-    width: 290px;
+    width: 340px;
     height: 80vh;
     max-height: 80vh;
     background: var(--panel-bg);
@@ -1597,6 +1597,62 @@ body {
     color: var(--accent2);
     border-bottom-color: var(--accent2);
     font-weight: 600;
+}
+
+/* ===== 事件帧页签 ===== */
+#dataFloatPanel .dfp-event-row {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+}
+#dataFloatPanel .dfp-event-row:last-child {
+    border-bottom: none;
+}
+#dataFloatPanel .dfp-event-arrow {
+    font-size: 10px;
+    margin-right: 4px;
+    color: var(--text2);
+    display: inline-block;
+    width: 12px;
+    text-align: center;
+}
+#dataFloatPanel .dfp-event-arrow.has-content {
+    color: #e03131;
+    font-weight: bold;
+}
+#dataFloatPanel .dfp-event-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+#dataFloatPanel .dfp-event-time {
+    font-size: 11px;
+    color: var(--accent2);
+    background: rgba(74,158,255,0.12);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: monospace;
+    white-space: nowrap;
+}
+#dataFloatPanel .dfp-event-name {
+    font-size: 13px;
+    color: var(--text);
+    font-weight: 500;
+}
+#dataFloatPanel .dfp-event-params {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 2px;
+    padding-left: 2px;
+}
+#dataFloatPanel .dfp-event-param {
+    font-size: 10px;
+    color: var(--text2);
+    background: var(--input-bg);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: monospace;
 }
 #dataFloatPanel .dfp-tab-count {
     font-size: 10px;
@@ -1983,22 +2039,25 @@ body {
 }
 #dataFloatPanel .dfp-shot-item {
     width: 64px;
-    height: 64px;
     border-radius: 6px;
-    overflow: hidden;
     border: 2px solid var(--border);
     cursor: pointer;
     position: relative;
     flex-shrink: 0;
     transition: border-color 0.2s;
+    display: flex;
+    flex-direction: column;
+    overflow: visible;
 }
 #dataFloatPanel .dfp-shot-item:hover {
     border-color: var(--accent2);
 }
 #dataFloatPanel .dfp-shot-item img {
-    width: 100%;
-    height: 100%;
+    width: 64px;
+    height: 64px;
     object-fit: cover;
+    border-radius: 4px;
+    display: block;
 }
 #dataFloatPanel .dfp-shot-del {
     position: absolute;
@@ -2018,6 +2077,30 @@ body {
 }
 #dataFloatPanel .dfp-shot-item:hover .dfp-shot-del {
     display: block;
+}
+/* 挂点按钮（截图缩略图上方，同宽实心） */
+#dataFloatPanel .dfp-shot-mount {
+    width: 64px;
+    padding: 3px 0;
+    background: #555;
+    color: #ccc;
+    border: none;
+    border-radius: 3px;
+    font-size: 10px;
+    cursor: pointer;
+    text-align: center;
+    transition: background 0.2s, color 0.2s;
+    margin-bottom: 2px;
+    box-sizing: border-box;
+    flex-shrink: 0;
+}
+#dataFloatPanel .dfp-shot-mount.active {
+    background: rgba(236,72,153,0.85);
+    color: #fff;
+    font-weight: 600;
+}
+#dataFloatPanel .dfp-shot-mount:hover {
+    opacity: 0.9;
 }
 /* 选取截图按钮（占满宽度） */
 #dataFloatPanel .dfp-shot-add {
@@ -3121,5 +3204,82 @@ body {
 #flowPanel .flp-full-btn:hover {
     background: var(--accent);
     color: #fff;
-    box-shadow: 0 0 16px rgba(74, 158, 255, 0.5);
+}
+/* ================================================================
+   显示/隐藏切换按钮（左上角）
+   ================================================================ */
+#viewToggles {
+    position: fixed;
+    top: 8px;
+    left: 8px;
+    z-index: 200;
+    display: flex;
+    gap: 10px;
+}
+.vt-btn {
+    padding: 5px 10px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    background: transparent;
+    border: 1.5px solid;
+    opacity: 0.4;
+    transition: opacity 0.2s, background 0.2s, box-shadow 0.2s;
+    white-space: nowrap;
+    font-family: inherit;
+}
+.vt-btn:hover { opacity: 0.7; }
+.vt-btn.active {
+    opacity: 1;
+    background: var(--panel-bg);
+    box-shadow: 0 0 6px currentColor;
+}
+.vt-green  { color: #4ec96e; border-color: #4ec96e; }
+.vt-purple { color: #a855f7; border-color: #a855f7; }
+.vt-pink   { color: #ec4899; border-color: #ec4899; }
+
+/* 隐藏标题：仅隐藏节点外部浮动标签，不动节点内下拉框 */
+#app.hide-labels .float-label { display: none !important; }
+#app.hide-bubbles .event-bubble { display: none !important; }
+
+/* ===== 事件帧气泡提示（节点右侧浮窗，跟随节点移动） ===== */
+@keyframes eventBubbleFloat {
+    0%   { opacity: 0; margin-top: 20px; }
+    12%  { opacity: 1; margin-top: 0; }
+    60%  { opacity: 1; margin-top: -14px; }
+    100% { opacity: 0; margin-top: -40px; }
+}
+.event-bubble {
+    position: absolute;
+    left: calc(100% + 2px);
+    top: 50%;
+    z-index: 20;
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 22px 32px;
+    background: rgba(24, 24, 30, 0.95);
+    border: 2px solid #a855f7;
+    border-left: 5px solid #a855f7;
+    border-radius: 0 16px 16px 0;
+    font-size: 26px;
+    white-space: nowrap;
+    box-shadow: 6px 6px 28px rgba(0,0,0,0.6), 0 0 18px rgba(168,85,247,0.4);
+    animation: eventBubbleFloat 1.5s ease-out forwards;
+}
+.event-bubble .event-bubble-name {
+    color: #a855f7;
+    font-weight: 700;
+    font-size: 30px;
+    letter-spacing: 0.5px;
+}
+.event-bubble .event-bubble-time {
+    color: #ddd;
+    font-size: 20px;
+    background: rgba(255,255,255,0.12);
+    padding: 4px 14px;
+    border-radius: 6px;
 }

@@ -70,25 +70,43 @@ SMTool._collectAllBoneScreenshots = function () {
 SMTool._saveCompanionImages = function (dirHandle) {
     var shotMap = SMTool._collectAllBoneScreenshots();
     var shotIds = Object.keys(shotMap);
+
+    // ★ 清空所有节点的 _boneShotRefs，完全基于当前 _boneScreenshots 重建
+    var nodesIter = SMData.nodes.values();
+    var nr = nodesIter.next();
+    while (!nr.done) {
+        nr.value._boneShotRefs = {};
+        nr = nodesIter.next();
+    }
+
     if (shotIds.length === 0) return Promise.resolve();
 
-    // 获取或创建 _assets 子目录
     return dirHandle.getDirectoryHandle('_assets', { create: true }).then(function (assetsDir) {
         var promises = [];
+        var usedNames = {}; // 去重：同名文件自动加序号
         for (var i = 0; i < shotIds.length; i++) {
             var shotId = parseInt(shotIds[i]);
             var shotInfo = shotMap[shotId];
             if (!shotInfo || !shotInfo.dataUrl) continue;
 
-            // ★ 从 dataUrl 检测原始图片格式，保持上传时的 MIME 类型
-            var mime = 'image/png'; // 兜底
+            var mime = 'image/png';
             var mimeMatch = shotInfo.dataUrl.match(/^data:(image\/\w+);/);
             if (mimeMatch) mime = mimeMatch[1];
-            var ext = mime.split('/')[1]; // png, jpeg, gif, webp...
+            var ext = mime.split('/')[1];
             if (ext === 'jpeg') ext = 'jpg';
 
-            // ★ 使用 shotId 命名文件，同一 shotId 只存一份
-            var fileName = 'img_' + shotId + '.' + ext;
+            // ★ 优先使用上传时的原始文件名，无则用 shotId 生成
+            var entry = SMData._shotStore[shotId];
+            var baseName = (entry && entry._fileName) ? entry._fileName.replace(/\.[^.]+$/, '') : ('img_' + shotId);
+            // 确保扩展名正确（原始文件名可能有不同扩展名，以实际 MIME 为准）
+            var finalName = baseName + '.' + ext;
+            // 同名冲突处理
+            if (usedNames[finalName]) {
+                var counter = 2;
+                while (usedNames[baseName + '_' + counter + '.' + ext]) counter++;
+                finalName = baseName + '_' + counter + '.' + ext;
+            }
+            usedNames[finalName] = true;
 
             // ★ 为所有引用此 shotId 的节点设置 _boneShotRefs
             for (var r = 0; r < shotInfo.refs.length; r++) {
@@ -97,12 +115,11 @@ SMTool._saveCompanionImages = function (dirHandle) {
                 if (node) {
                     if (!node._boneShotRefs) node._boneShotRefs = {};
                     if (!node._boneShotRefs[ref.boneName]) node._boneShotRefs[ref.boneName] = [];
-                    node._boneShotRefs[ref.boneName][ref.idx] = '_assets/' + fileName;
+                    node._boneShotRefs[ref.boneName][ref.idx] = '_assets/' + finalName;
                 }
             }
 
-            // 异步保存图片文件（原始二进制，不经过 canvas 重编码）
-            (function (fn, dataUrl, sid, mimeType) {
+            (function (fn, dataUrl, sid) {
                 var p = Promise.resolve().then(function () {
                     var blob = SMTool._dataUrlToBlob(dataUrl);
                     return assetsDir.getFileHandle(fn, { create: true }).then(function (fileHandle) {
@@ -116,7 +133,7 @@ SMTool._saveCompanionImages = function (dirHandle) {
                     console.warn('[Export] Failed to save bone image ' + fn + ':', err);
                 });
                 promises.push(p);
-            })(fileName, shotInfo.dataUrl, shotId, mime);
+            })(finalName, shotInfo.dataUrl, shotId);
         }
         return Promise.all(promises);
     });
