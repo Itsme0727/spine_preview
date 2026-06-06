@@ -762,7 +762,19 @@ SMTool._initAnimPreview = function (node) {
             pp._skeletonData = sd;
 
             var sk = new SP.Skeleton(sd);
-            if (sd.defaultSkin) sk.setSkin(sd.defaultSkin);
+            // ★ 优先使用源节点当前皮肤，回退到默认皮肤
+            var previewSkin = null;
+            var skinName = node.currentSkin;
+            if (skinName) {
+                for (var ski = 0; ski < sd.skins.length; ski++) {
+                    if (sd.skins[ski].name === skinName) { previewSkin = sd.skins[ski]; break; }
+                }
+            }
+            if (previewSkin) {
+                sk.setSkin(previewSkin);
+            } else if (sd.defaultSkin) {
+                sk.setSkin(sd.defaultSkin);
+            }
             sk.setToSetupPose();
             sk.updateWorldTransform(physParam);
             pp.skeleton = sk;

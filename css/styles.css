@@ -81,6 +81,8 @@ body {
 }
 .float-label .fl-name {
     display: block;
+    pointer-events: auto;
+    cursor: text;
 }
 .float-label .fl-state {
     display: block;
@@ -536,6 +538,56 @@ body {
 .anim-select option.missing-option {
     color: #ff6b4a;
     background: rgba(255, 80, 60, 0.12);
+}
+
+/* ===== 节点左侧指示图标（皮肤/骨骼/事件帧/插槽） ===== */
+.spine-node .node-indicators {
+    position: absolute;
+    left: -84px;
+    top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    z-index: 10;
+    pointer-events: auto;
+}
+.spine-node .node-indicators .ndi-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 58px;
+    height: 58px;
+    border-radius: 50%;
+    background: #1c1c20;
+    border: 2px solid var(--border);
+    cursor: pointer;
+    font-size: 32px;
+    transition: all 0.2s;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    padding: 0;
+    line-height: 1;
+}
+.spine-node .node-indicators .ndi-btn:hover {
+    border-color: var(--accent);
+    background: #2a2a30;
+    transform: scale(1.15);
+    box-shadow: 0 4px 16px rgba(74,158,255,0.3);
+}
+.spine-node .node-indicators .ndi-count {
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 14px;
+    font-weight: 700;
+    min-width: 22px;
+    height: 22px;
+    border-radius: 11px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 5px;
 }
 
 /* 节点头部 */
@@ -3032,7 +3084,6 @@ body {
     display: block;
     width: 100%;
     height: 100%;
-    object-fit: contain;
 }
 
 /* 缩放手柄（右下角） */
