@@ -3378,9 +3378,13 @@ SMTool._goToPrevStep = function () {
     if (path.nodes[maxStep - 1] && path.nodes[maxStep - 1].cycleClose) maxStep--;
     if (pb.currentStep > 0) {
         do { pb.currentStep--; } while (pb.currentStep > 0 && path.nodes[pb.currentStep] && path.nodes[pb.currentStep].cycleClose);
+    } else {
+        // ★ 已在第一步 → 循环到末尾
+        pb.currentStep = maxStep - 1;
     }
-    // ★ 不再循环到末尾，已在第一步则不动
     pb._stepped = true;
+    // ★ 切换步骤时立即清除进度条
+    SMTool._clearAllProgressBars();
 
     // ★ 切换主画布动画：暂停其他节点，仅播放当前步骤的动画节点
     var stepNode = path.nodes[pb.currentStep];
@@ -3413,9 +3417,13 @@ SMTool._goToNextStep = function () {
     if (path.nodes[maxStep - 1] && path.nodes[maxStep - 1].cycleClose) maxStep--;
     if (pb.currentStep < maxStep - 1) {
         pb.currentStep++;
+    } else {
+        // ★ 已在最后一步 → 循环到开头
+        pb.currentStep = 0;
     }
-    // ★ 不再循环到开头，已在最后一步则不动
     pb._stepped = true;
+    // ★ 切换步骤时立即清除进度条
+    SMTool._clearAllProgressBars();
 
     // ★ 切换主画布动画：暂停其他节点，仅播放当前步骤的动画节点
     var stepNode = path.nodes[pb.currentStep];
