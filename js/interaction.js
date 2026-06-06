@@ -2229,7 +2229,7 @@ SMTool._showDebugBar = function (node) {
     var bar = document.createElement('div');
     bar.id = 'debugBar';
     bar.innerHTML = SMTool._debugBarHTML(node);
-    bar.style.cssText = 'position:fixed;top:124px;left:50%;transform:translateX(-50%);z-index:9999;display:flex;align-items:center;gap:12px;background:#1c1c20;border:1px solid #4a9eff;border-radius:12px;padding:10px 20px;box-shadow:0 8px 32px rgba(0,0,0,.6)';
+    bar.style.cssText = 'position:fixed;top:72px;left:50%;transform:translateX(-50%);z-index:9999;display:flex;align-items:center;gap:12px;background:#1c1c20;border:1px solid #4a9eff;border-radius:12px;padding:10px 20px;box-shadow:0 8px 32px rgba(0,0,0,.6)';
     document.body.appendChild(bar);
 
     // ★ 显示红色裁剪区域边框
