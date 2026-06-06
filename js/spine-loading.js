@@ -748,7 +748,15 @@ SMTool._resolveRuntimeVersion = function (detectedVersion, skelBin, atlasIs4x) {
     if (detectedVersion && detectedVersion.match(/^4\.[012]\./)) return '4.2';
     if (detectedVersion && detectedVersion.match(/^3\.\d/)) return '3.8';
     if (!detectedVersion) {
-        if (skelBin) return '4.3';
+        // ★ 二进制文件检测失败：尝试用首字节判断 3.x vs 4.x
+        //    3.x 格式首字节是 hash 长度（0x00-0x64），4.x 首字节是版本字符串
+        if (skelBin && skelBin.length > 0) {
+            var firstByte = skelBin[0];
+            // 3.x 格式：第一个字节是 0-100 之间的 hash 长度
+            if (firstByte >= 1 && firstByte <= 64) return '3.8';
+            // 4.x 格式：第一个字节是 ASCII 数字/字母
+            if (firstByte >= 0x30 && firstByte <= 0x7A) return '4.3';
+        }
         if (atlasIs4x) return '4.3';
     }
     return '3.8';
@@ -807,7 +815,27 @@ SMTool._parseSpineData = function (node, SP, WGL, atlasText, pageDataUrls, skelJ
 
             node.skeletonData = sd;
             node.version = sd.version || '';
-            console.log('[Spine] Skeleton v' + node.version + ': ' + sd.bones.length + ' bones');
+            console.log('[Spine] Skeleton v' + node.version + ': ' + sd.bones.length + ' bones, ' + sd.slots.length + ' slots, ' + sd.skins.length + ' skins, ' + sd.animations.length + ' anims');
+
+            // ★ 诊断：输出附件类型统计
+            try {
+                var attStats = {};
+                for (var ski = 0; ski < sd.skins.length; ski++) {
+                    var skinAtts = sd.skins[ski].attachments;
+                    if (!skinAtts) continue;
+                    for (var slotI = 0; slotI < skinAtts.length; slotI++) {
+                        var atts = skinAtts[slotI];
+                        if (!atts) continue;
+                        for (var attI = 0; attI < atts.length; attI++) {
+                            var att = atts[attI];
+                            if (!att) continue;
+                            var typeName = att.constructor ? att.constructor.name : (att.type || 'unknown');
+                            attStats[typeName] = (attStats[typeName] || 0) + 1;
+                        }
+                    }
+                }
+                console.log('[Spine] Attachment types:', JSON.stringify(attStats));
+            } catch (e3) { console.log('[Spine] Attachment stats error:', e3); }
 
             // 提取动画/皮肤/插槽/骨骼信息
             node.animations = [];
@@ -871,7 +899,12 @@ SMTool._parseSpineData = function (node, SP, WGL, atlasText, pageDataUrls, skelJ
             if (node.state && node.skeleton) {
                 node.state.update(0);
                 node.state.apply(node.skeleton);
+                // ★ 防御：修复 skeleton 根位置 NaN（空默认皮肤文件可能出现）
+                if (isNaN(node.skeleton.x)) node.skeleton.x = 0;
+                if (isNaN(node.skeleton.y)) node.skeleton.y = 0;
                 node.skeleton.updateWorldTransform(node._physParam);
+                // ★ 动画后再算一次边界，把骨架居中到画布（空默认皮肤文件 setup pose 无边）
+                SMTool._centerSkeletonAfterAnim(node);
             }
 
             SMTool._updateEl(node);
@@ -900,18 +933,22 @@ SMTool._computeBoundsManually = function (skeleton, offset, size) {
         var att;
         try { att = slot.getAttachment(); } catch (e) { att = slot.attachment; }
         if (!att || typeof att.computeWorldVertices !== 'function') continue;
-        var vc;
+        // worldVerticesLength 返回浮点数数量（每个顶点 2 个浮点数: x, y）
+        // uvs 数组同样每个顶点 2 个浮点数: u, v
+        // computeWorldVertices 第3参数 count 需要的是顶点数量（非浮点数）
+        var floatCount;
         if (att.worldVerticesLength) {
-            vc = att.worldVerticesLength;
+            floatCount = att.worldVerticesLength;
         } else if (att.uvs && att.uvs.length >= 8) {
-            vc = 8;
+            floatCount = att.uvs.length;
         } else {
             continue;
         }
-        if (verts.length < vc) verts.length = vc;
+        var vertexCount = floatCount / 2;
+        if (verts.length < floatCount) verts.length = floatCount;
         try {
-            att.computeWorldVertices(slot, 0, vc, verts, 0, 2);
-            for (var j = 0; j < vc; j += 2) {
+            att.computeWorldVertices(slot, 0, vertexCount, verts, 0, 2);
+            for (var j = 0; j < floatCount; j += 2) {
                 minX = Math.min(minX, verts[j]);
                 maxX = Math.max(maxX, verts[j]);
                 minY = Math.min(minY, verts[j + 1]);
@@ -922,6 +959,63 @@ SMTool._computeBoundsManually = function (skeleton, offset, size) {
     if (!isFinite(minX)) { offset.set(0, 0); size.set(100, 100); return; }
     offset.set(minX, minY);
     size.set(maxX - minX, maxY - minY);
+};
+
+// ---- 动画后重新居中骨架（仅用于空默认皮肤文件，setup pose 无边）----
+SMTool._centerSkeletonAfterAnim = function (node) {
+    var sk = node.skeleton;
+    var SP = node._SP || window.spine38;
+    if (!sk || !SP) return;
+    // ★ 仅当 setup pose 边界无效时才居中（空默认皮肤文件的特征）
+    var setupBounds = node.bounds;
+    var setupValid = setupBounds && setupBounds.size &&
+        isFinite(setupBounds.size.x) && setupBounds.size.x > 0 &&
+        isFinite(setupBounds.offset.x);
+    if (setupValid) return; // 正常文件，不需要居中
+    var cw = node._canvasWidth || 400;
+    var ch = node._canvasHeight || 400;
+    var animOff = new SP.Vector2();
+    var animSize = new SP.Vector2();
+    try {
+        // ★ 有些动画的首帧 keyframe 在 time > 0（如 strat），时间 0 无附件
+        //    尝试多个时间点：t=0 → t=0.5*duration → t=0.25*duration
+        var state = node.state;
+        var tryTimes = [0];
+        var entry = state.getCurrent(0);
+        if (entry) {
+            var dur = (entry.animation && entry.animation.duration) || (entry._animation && entry._animation.duration) || 1;
+            tryTimes.push(dur * 0.5, dur * 0.25);
+        }
+        var foundBounds = false;
+        for (var ti = 0; ti < tryTimes.length; ti++) {
+            state.update(tryTimes[ti] - (entry ? entry.trackTime : 0));
+            state.apply(sk);
+            sk.updateWorldTransform(node._physParam);
+            if (typeof sk.getBounds === 'function') {
+                sk.getBounds(animOff, animSize, []);
+            } else {
+                SMTool._computeBoundsManually(sk, animOff, animSize);
+            }
+            if (isFinite(animOff.x) && isFinite(animSize.x) && animSize.x > 0) {
+                foundBounds = true;
+                break;
+            }
+        }
+        // 重置到时间 0
+        state.update(-(entry ? entry.trackTime : 0));
+        state.apply(sk);
+        if (foundBounds) {
+            sk.x = cw / 2 - (animOff.x + animSize.x / 2);
+            sk.y = ch / 2 - (animOff.y + animSize.y / 2);
+            node.bounds = { offset: animOff, size: animSize };
+        } else {
+            sk.x = 0; sk.y = 0;
+        }
+    } catch (e) {
+        console.warn('[Center] Failed for #' + node.id + ': ' + e.message);
+        sk.x = 0; sk.y = 0;
+    }
+    sk.updateWorldTransform(node._physParam);
 };
 
 // ---- 从已存储的源数据恢复 WebGL 渲染 ----
@@ -1052,6 +1146,15 @@ SMTool._loadFromSourceData = function (node) {
                     var fillAnim = node.currentAnim || node.animations[0].name;
                     node.tracks[0].animName = fillAnim;
                     node.currentAnim = fillAnim;
+                } else if (node.currentAnim && node.tracks[0].animName !== node.currentAnim) {
+                    // ★ 克隆节点：轨道动画名与当前动画不一致时，纠正为当前动画
+                    var animExists2 = false;
+                    for (var ai2 = 0; ai2 < node.animations.length; ai2++) {
+                        if (node.animations[ai2].name === node.currentAnim) { animExists2 = true; break; }
+                    }
+                    if (animExists2) {
+                        node.tracks[0].animName = node.currentAnim;
+                    }
                 }
                 // 应用轨道配置到 AnimationState
                 SMTool._applyTracksToState(node);
@@ -1063,7 +1166,12 @@ SMTool._loadFromSourceData = function (node) {
                 if (node.state && node.skeleton) {
                     node.state.update(0);
                     node.state.apply(node.skeleton);
+                    // ★ 防御：修复 skeleton 根位置 NaN
+                    if (isNaN(node.skeleton.x)) node.skeleton.x = 0;
+                    if (isNaN(node.skeleton.y)) node.skeleton.y = 0;
                     node.skeleton.updateWorldTransform(node._physParam);
+                    // ★ 动画后再算一次边界，把骨架居中
+                    SMTool._centerSkeletonAfterAnim(node);
                 }
                 resolve();
             } catch (e) {

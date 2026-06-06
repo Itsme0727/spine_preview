@@ -467,6 +467,12 @@ SMTool._loop = function (now) {
         }
         node.skeleton.updateWorldTransform(node._physParam);
 
+        // ★ 防御：修复 skeleton 根位置 NaN（空默认皮肤的 spine 文件可能出现）
+        if (isNaN(node.skeleton.x)) node.skeleton.x = 0;
+        if (isNaN(node.skeleton.y)) node.skeleton.y = 0;
+        if (isNaN(node.skeleton.scaleX)) node.skeleton.scaleX = 1;
+        if (isNaN(node.skeleton.scaleY)) node.skeleton.scaleY = 1;
+
         var glY = chFull - sy - sh;
         gl.scissor(sx, glY, sw, sh);
         gl.viewport(sx, glY, sw, sh);
@@ -475,6 +481,7 @@ SMTool._loop = function (now) {
         // 同时清除颜色和模板缓冲区 — stencil 对裁剪/Mask 至关重要
         gl.clear(gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
         // 重置混合模式为默认值，防止上一节点的 slot 混合模式污染当前节点
+        gl.enable(gl.BLEND);
         gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
         // 【关键】同步 batcher 的内部混合状态缓存。
         // PolygonBatcher 内部缓存 srcBlend/dstBlend，若与目标值一致则跳过 gl.blendFunc()。
@@ -826,7 +833,53 @@ SMTool._initAnimPreview = function (node) {
 
             state.update(0);
             state.apply(sk);
+            // ★ 防御 NaN
+            if (isNaN(sk.x)) sk.x = 0;
+            if (isNaN(sk.y)) sk.y = 0;
             sk.updateWorldTransform(physParam);
+            // ★ 动画后重新计算边界居中（仅空默认皮肤文件，setup pose 无边）
+            var setupBoundsValid = pp._boundsOffset && pp._boundsSize &&
+                isFinite(pp._boundsOffset.x) && isFinite(pp._boundsSize.x) && pp._boundsSize.x > 0;
+            if (!setupBoundsValid) {
+                var animOff2 = new SP.Vector2();
+                var animSize2 = new SP.Vector2();
+                try {
+                    // ★ 尝试多个时间点（有些动画首帧不在 t=0）
+                    var tryTimes2 = [0];
+                    var entry2 = state.getCurrent(0);
+                    if (entry2) {
+                        var dur2 = (entry2.animation && entry2.animation.duration) || (entry2._animation && entry2._animation.duration) || 1;
+                        tryTimes2.push(dur2 * 0.5, dur2 * 0.25);
+                    }
+                    var foundBounds2 = false;
+                    for (var t2 = 0; t2 < tryTimes2.length; t2++) {
+                        state.update(tryTimes2[t2] - (entry2 ? entry2.trackTime : 0));
+                        state.apply(sk);
+                        sk.updateWorldTransform(physParam);
+                        if (typeof sk.getBounds === 'function') {
+                            sk.getBounds(animOff2, animSize2, []);
+                        } else {
+                            SMTool._computeBoundsManually(sk, animOff2, animSize2);
+                        }
+                        if (isFinite(animOff2.x) && isFinite(animSize2.x) && animSize2.x > 0) {
+                            foundBounds2 = true;
+                            break;
+                        }
+                    }
+                    // 重置回时间 0
+                    state.update(-(entry2 ? entry2.trackTime : 0));
+                    state.apply(sk);
+                    if (foundBounds2) {
+                        sk.x = cw / 2 - (animOff2.x + animSize2.x / 2);
+                        sk.y = ch / 2 - (animOff2.y + animSize2.y / 2);
+                        pp._boundsOffset = { x: animOff2.x, y: animOff2.y };
+                        pp._boundsSize = { x: animSize2.x, y: animSize2.y };
+                    } else {
+                        sk.x = 0; sk.y = 0;
+                    }
+                } catch (e2) {}
+                sk.updateWorldTransform(physParam);
+            }
 
             pp.nodeId = node.id;
             pp._lastTime = performance.now();
