@@ -9,16 +9,16 @@ var SMTool = window.SMTool || {};
 // ---- 鼠标按下 ----
 SMTool._onMD = function (e) {
     // ================================================================
-    // 🔒🔒🔒 [LOCK-4] 动画流退出机制 — 严禁随意改动！
-    // ⚠️ 解锁策略：除非用户明确说「解锁 LOCK-4」，否则绝不改动此块。
-    // 核心：左键点击画布 → 退出动画流 → 强制恢复所有节点播放
-    // 顺序：1)_flowExitLock  2)清流状态  3)_forceResetAllNodes
-    //   4)_updateFullFlowPanel(锁生效)  5)200ms解鎖
-    // 联动：_forceResetAllNodes / _updateFullFlowPanel / _expandFlowPanel
-    // ================================================================
+    // 🔒 [LOCK-4] 画布点击退出：仅当实际播放/导航过时退出（仅选中路径不算）
     if (e.button === 0) {
         var pb = SMData._fullPlayback;
-        if (pb.activePathIdx >= 0) {
+        var inFlow = pb.isPlaying || pb._stepped;
+        if (!inFlow) {
+            var nodesIter3 = SMData.nodes.values();
+            var nr3 = nodesIter3.next();
+            while (!nr3.done) { if (nr3.value._pausedByFlow) { inFlow = true; break; } nr3 = nodesIter3.next(); }
+        }
+        if (inFlow) {
             SMData._flowExitLock = true;
             pb.isPlaying = false;
             pb.activePathIdx = -1;
@@ -1751,11 +1751,13 @@ SMTool._expandFlowPanel = function () {
     SMData._flowPanel.expanded = true;
     var panel = document.getElementById('flowPanel');
     if (panel) panel.classList.add('expanded');
-    // 🔒 [LOCK-4] 展开面板时自动选第一个路径（退出锁期间跳过）
+    // ★ 无选中节点时：仅展开面板展示提示文字，不触碰任何流/动画状态
     SMTool._updateFlowPanel();
+    if (!SMData.selectedNode) return;
+    // 有选中节点：正常进入流预览模式
     var pb = SMData._fullPlayback;
     var paths = SMData._fullPaths;
-    if (SMData.selectedNode && pb.activePathIdx < 0 && paths && paths.length > 0 && !pb.isPlaying && !SMData._flowExitLock) {
+    if (pb.activePathIdx < 0 && paths && paths.length > 0 && !pb.isPlaying && !SMData._flowExitLock) {
         SMTool._selectFullPath(0);
     }
 };
@@ -1764,9 +1766,15 @@ SMTool._expandFlowPanel = function () {
 SMTool._collapseFlowPanel = function () {
     if (!SMData._flowPanel.expanded) return;
     SMData._flowPanel.expanded = false;
-    // ★ 收起前记录是否实际进入了流模式（有选中节点时才会暂停/重置动画）
-    var wasInFlow = !!SMData.selectedNode;
-    // 收起时也还原最大化状态、焦点高亮、播放状态和选中路径
+    var panel = document.getElementById('flowPanel');
+    // ★ 无选中节点时：仅收起面板视觉，不触碰任何动画/流状态
+    if (!SMData.selectedNode) {
+        if (panel) { panel.classList.remove('expanded'); panel.classList.remove('maximized'); }
+        return;
+    }
+    // 有选中节点：仅当真正播放/导航过才恢复动画（仅选中路径不触发）
+    var pb = SMData._fullPlayback;
+    var hadFlowActive = pb.isPlaying || pb._stepped;
     SMData._flowPanel.maximized = false;
     SMData._flowFocus = null;
     SMData._fullPlayback.isPlaying = false;
@@ -1774,13 +1782,12 @@ SMTool._collapseFlowPanel = function () {
     SMData._fullPlayback.currentStep = 0;
     if (SMData._fullPlayback._timer) { clearTimeout(SMData._fullPlayback._timer); SMData._fullPlayback._timer = null; }
     SMTool._clearAllProgressBars();
-    // ★ 仅当实际进入了流模式时才恢复节点（无选中节点时面板仅显示提示，未打断动画）
-    if (wasInFlow) {
+    // ★ 流播放退出必须用 _forceResetAllNodes（clearTracks 后的轨道无法仅靠解冻恢复）
+    if (hadFlowActive) {
         SMTool._forceResetAllNodes();
     }
     SMTool._updateSel();
     SMTool._updateStateRowColors();
-    var panel = document.getElementById('flowPanel');
     if (panel) {
         panel.classList.remove('expanded');
         panel.classList.remove('maximized');

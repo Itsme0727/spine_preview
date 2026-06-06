@@ -1382,6 +1382,37 @@ SMTool.init = function () {
     console.log('🎬 Spine Animation State Machine ready!');
     console.log('  拖拽 spine 文件三件套 (.json/.skel + .atlas + .png) 到画布上');
     console.log('  Alt+拖拽=平移 | 滚轮=缩放 | 右键=平移');
+
+    // ★ 第二道防线：定期巡检（200ms），检测异常 timeScale=0 冻结并修复
+    setInterval(function () {
+        if (SMData._flowPanel.expanded && SMData.selectedNode) return;
+        if (SMData._fullPlayback.isPlaying) return;
+        var panel = document.getElementById('flowPanel');
+        var inPanel = false;
+        if (panel && SMData._mx !== undefined && SMData._my !== undefined) {
+            var rect = panel.getBoundingClientRect();
+            inPanel = (SMData._mx >= rect.left && SMData._mx <= rect.right &&
+                       SMData._my >= rect.top && SMData._my <= rect.bottom);
+        }
+        if (!inPanel || !SMData._flowPanel.expanded) {
+            var nodesIter = SMData.nodes.values();
+            var nr = nodesIter.next();
+            while (!nr.done) {
+                var n = nr.value;
+                if (n.state && n.skeletonData) {
+                    try {
+                        for (var ti = 0; ti < 5; ti++) {
+                            var entry = n.state.getCurrent(ti);
+                            if (entry && entry.timeScale === 0) {
+                                entry.timeScale = 1.0;
+                            }
+                        }
+                    } catch (e) {}
+                }
+                nr = nodesIter.next();
+            }
+        }
+    }, 200);
 };
 
 // ================================================================

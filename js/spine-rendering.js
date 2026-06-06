@@ -418,6 +418,18 @@ SMTool._loop = function (now) {
 
         if (sw < 4 || sh < 4) { result = nodesIter.next(); continue; }
 
+        // ★ 看门狗：仅修复 timeScale=0 残留冻结，不重建轨道（避免误重置正常动画）
+        if (node.state && node.skeletonData && !SMData._flowPanel.expanded && !SMData._fullPlayback.isPlaying) {
+            try {
+                for (var wdi = 0; wdi < 5; wdi++) {
+                    var wdEntry = node.state.getCurrent(wdi);
+                    if (wdEntry && wdEntry.timeScale === 0) {
+                        wdEntry.timeScale = 1.0;
+                    }
+                }
+            } catch (e) {}
+        }
+
         // 动画更新：动态模式始终 60fps，性能模式 <20% 冻结（但播放中的动画组节点不受限）
         var isFlowPlaying = SMData._fullPlayback && SMData._fullPlayback.isPlaying;
         var isPlayingNode = isFlowPlaying && SMData._fullPlayback.activePathIdx >= 0 &&

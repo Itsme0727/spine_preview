@@ -2740,8 +2740,7 @@ SMTool._selectFullPath = function (pathIdx) {
     SMData._fullPlayback._stepped = false;
     if (SMData._fullPlayback._timer) { clearTimeout(SMData._fullPlayback._timer); SMData._fullPlayback._timer = null; }
     SMTool._clearAllProgressBars();
-    // ★ 选路径时重置所有节点到各自动画第一帧
-    SMTool._resetAllToAnimFrame1();
+    // ★ 仅高亮选中路径，不打断画布动画（播放/上一步/下一步才暂停）
     SMTool._setFullComponentFocus(SMData.selectedNode);
     SMTool._updateFullFlowPanel(document.getElementById('flpContent'), document.getElementById('flowPanel'));
     SMTool._updateSel();
@@ -2835,6 +2834,12 @@ SMTool._resetAllToAnimFrame1 = function () {
     while (!r.done) {
         var n = r.value;
         if (n.skeleton && n.state && n.skeletonData) {
+            // ★ 保存原始轨道配置，以便后续取消暂停时恢复
+            if (!n._pausedByFlow) {
+                n._savedTracks = n.tracks ? JSON.parse(JSON.stringify(n.tracks)) : null;
+                n._savedLoop = n.loop;
+                n._pausedByFlow = true;
+            }
             try { n.state.clearTracks(); } catch (e) {}
             try { n.skeleton.setToSetupPose(); } catch (e) {}
             // 应用节点自身的动画第一帧
@@ -2850,9 +2855,46 @@ SMTool._resetAllToAnimFrame1 = function () {
                     if (entry) entry.timeScale = 0;
                 } catch (e) {}
             }
-            n._pausedByFlow = false;
-            n._savedTracks = undefined;
         }
+        r = nodesIter.next();
+    }
+};
+
+// ================================================================
+// ★ 取消暂停所有节点（轻量，不重置帧位置，画面无卡顿）
+// ================================================================
+SMTool._unfreezeAllNodes = function () {
+    var nodesIter = SMData.nodes.values();
+    var r = nodesIter.next();
+    while (!r.done) {
+        var n = r.value;
+        if (!n.state) { r = nodesIter.next(); continue; }
+        // 恢复保存的轨道配置
+        if (n._pausedByFlow && n._savedTracks && n._savedTracks.length > 0) {
+            n.tracks = JSON.parse(JSON.stringify(n._savedTracks));
+            n.loop = n._savedLoop !== undefined ? n._savedLoop : (n.tracks[0] && n.tracks[0].loop !== false);
+            n.currentAnim = n.tracks[0].animName || '';
+        }
+        // ★ 扫描所有轨道，修复任何 timeScale===0 的残留冻结（不限 _pausedByFlow 标记）
+        try {
+            var anyFrozen = false;
+            for (var ti = 0; ti < 5; ti++) {
+                var entry = n.state.getCurrent(ti);
+                if (entry && entry.timeScale === 0) {
+                    entry.timeScale = 1.0;
+                    anyFrozen = true;
+                }
+            }
+            // 如果有冻结轨道但 _pausedByFlow 为 false（状态标记丢失），回退暴力恢复
+            if (anyFrozen && !n._pausedByFlow) {
+                try { n.state.clearTracks(); SMTool._applyTracksToState(n); } catch (e2) {}
+            }
+        } catch (e) {
+            try { n.state.clearTracks(); SMTool._applyTracksToState(n); } catch (e2) {}
+        }
+        n._pausedByFlow = false;
+        n._savedTracks = undefined;
+        n._savedLoop = undefined;
         r = nodesIter.next();
     }
 };
