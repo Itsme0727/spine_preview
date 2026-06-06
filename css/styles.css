@@ -374,7 +374,7 @@ body {
     border-radius: 16px;
     box-shadow: var(--shadow);
     transition: border-color 0.3s, box-shadow 0.3s;
-    width: fit-content;
+    flex-shrink: 0;
     overflow: visible;
 }
 
@@ -409,7 +409,6 @@ body {
 }
 .spine-node.selected {
     border-color: var(--accent);
-    border-width: 5px;
     box-shadow: 0 0 40px rgba(74, 158, 255, 0.6), 0 0 16px rgba(74, 158, 255, 0.35), 0 0 4px rgba(74, 158, 255, 0.5);
 }
 /* 连线关联但未选中的节点 — 仅外发光，无描边 */

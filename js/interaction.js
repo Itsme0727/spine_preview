@@ -2207,6 +2207,8 @@ SMTool._syncDebugToSameSource = function (node) {
     var offY = node._debugOffsetY || 0;
     var cw = node._debugCanvasW || 0;
     var ch = node._debugCanvasH || 0;
+    var baseCw = node._canvasWidth || 400;
+    var baseCh = node._canvasHeight || 400;
     var nodesIter = SMData.nodes.values();
     var r = nodesIter.next();
     while (!r.done) {
@@ -2217,6 +2219,38 @@ SMTool._syncDebugToSameSource = function (node) {
             n._debugOffsetY = offY;
             n._debugCanvasW = cw;
             n._debugCanvasH = ch;
+            // ★ 同步基础画布尺寸（确保同源节点大小一致）
+            var oldCw2 = n._canvasWidth || 400;
+            var oldCh2 = n._canvasHeight || 400;
+            n._canvasWidth = baseCw - 4;
+            n._canvasHeight = baseCh;
+            n.width = Math.max(baseCw, n.width, 260);
+            // ★ 修正已居中骨架的位置
+            if (n.skeleton && n._baseSkX !== undefined && (baseCw !== oldCw2 || baseCh !== oldCh2)) {
+                var avgCX2 = oldCw2 / 2 - n._baseSkX;
+                var avgCY2 = oldCh2 / 2 - n._baseSkY;
+                n.skeleton.x = baseCw / 2 - avgCX2;
+                n.skeleton.y = baseCh / 2 - avgCY2;
+                n._baseSkX = n.skeleton.x;
+                n._baseSkY = n.skeleton.y;
+                n.skeleton.updateWorldTransform(n._physParam);
+            }
+            // 更新 DOM
+            var nEl = SMTool._getEl(n.id);
+            if (nEl) {
+                // 节点有 border: 2px 左右各 2px，内容宽度 = 总宽 - 4px
+                nEl.style.width = (n.width - 4) + 'px';
+                var nWrap = nEl.querySelector('.spine-canvas-wrap');
+                if (nWrap) {
+                    nWrap.style.width = (baseCw - 8) + 'px';
+                    nWrap.style.height = baseCh + 'px';
+                    var nPh = nWrap.querySelector('div');
+                    if (nPh) {
+                        nPh.style.width = baseCw + 'px';
+                        nPh.style.height = baseCh + 'px';
+                    }
+                }
+            }
         }
         r = nodesIter.next();
     }

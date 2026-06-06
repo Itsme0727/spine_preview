@@ -181,15 +181,16 @@ SMTool._setupWebGLRenderer = function (node, SP, WGL, atlas, imgs, useVer) {
                 ph.style.display = 'block';
                 ph.textContent = '';  // 隐藏"拖入 Spine 文件"
             }
-            wrap.style.width = cw + 'px';
+            wrap.style.width = (cw - 8) + 'px';
             wrap.style.height = ch + 'px';
         }
     }
 
-    node._canvasWidth = cw;
+    node._canvasWidth = cw - 4;
     node._canvasHeight = ch;
-    node.width = Math.max(cw + 10, node.width, 260);
-    if (nodeEl) nodeEl.style.minWidth = node.width + 'px';
+    // 节点有 border: 2px 左右各 2px，内容宽度 = 总宽 - 4px
+    node.width = Math.max(cw, node.width, 260);
+    if (nodeEl) nodeEl.style.width = (node.width - 4) + 'px';
 
     // 居中 Skeleton
     sk.x = cw / 2 - (boundsOff.x + boundsSize.x / 2);

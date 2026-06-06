@@ -961,39 +961,119 @@ SMTool._computeBoundsManually = function (skeleton, offset, size) {
     size.set(maxX - minX, maxY - minY);
 };
 
-// ---- 动画后重新居中骨架（仅用于空默认皮肤文件，setup pose 无边）----
+// ---- 动画后重新居中骨架（治本方案 v6：同源节点统一中心，零骨架污染）----
+// 核心思路：
+//   同源节点（同一份 Spine 文件的不同动画状态）应共享相同的画布尺寸和相同的视觉中心。
+//   全局动画范围只计算一次（缓存），其几何中心即为所有同源节点的"参考中心"。
+//   sk.x = cw/2 - refCX, sk.y = ch/2 - refCY
+//   不再采样当前动画（避免骨架污染），各动画自然偏移由动画自身内容决定。
 SMTool._centerSkeletonAfterAnim = function (node) {
     var sk = node.skeleton;
     var SP = node._SP || window.spine38;
     if (!sk || !SP) return;
-    // ★ 仅当 setup pose 边界无效时才居中（空默认皮肤文件的特征）
-    var setupBounds = node.bounds;
-    var setupValid = setupBounds && setupBounds.size &&
-        isFinite(setupBounds.size.x) && setupBounds.size.x > 0 &&
-        isFinite(setupBounds.offset.x);
-    if (setupValid) return;
+
     var cw = node._canvasWidth || 400;
     var ch = node._canvasHeight || 400;
+
     try {
-        // ★ 用临时 AnimationState 在动画周期内均匀采样，
-        //    计算所有采样点内容中心的平均值，以此作为骨架的"视觉中心"
         var sd = node.skeletonData;
         if (!sd) return;
-        var tmpStateData = new SP.AnimationStateData(sd);
-        var tmpState = new SP.AnimationState(tmpStateData);
-        var trackAnim = (node.tracks && node.tracks[0] && node.tracks[0].animName) || node.currentAnim;
-        if (!trackAnim) return;
-        tmpState.setAnimation(0, trackAnim, true);
-        var tmpEntry = tmpState.getCurrent(0);
-        var dur = (tmpEntry && tmpEntry.animation && tmpEntry.animation.duration) ||
-                  (tmpEntry && tmpEntry._animation && tmpEntry._animation.duration) || 1;
-        var sampleCount = 8;
-        var sumCX = 0, sumCY = 0, validSamples = 0;
-        var tmpOff = new SP.Vector2();
-        var tmpSize = new SP.Vector2();
-        for (var s = 0; s < sampleCount; s++) {
-            var t = (s / sampleCount) * dur;
-            if (tmpEntry) { tmpEntry.trackTime = t; }
+
+        // ====== 获取全局动画范围和参考中心（同源共享、只算一次） ======
+        var global = SMTool._getSourceGlobalBounds(node, SP, sd);
+        if (!global) return;  // 无动画数据，保持 _setupWebGLRenderer 的居中
+
+        // 画布自适应扩展
+        var padX = Math.max(60, Math.ceil(global.w * 0.15));
+        var padY = Math.max(60, Math.ceil(global.h * 0.15));
+        var neededW = Math.max(400, Math.ceil(global.w) + padX * 2);
+        var neededH = Math.max(400, Math.ceil(global.h) + padY * 2);
+        neededW = Math.max(neededW, cw);
+        neededH = Math.max(neededH, ch);
+        if (neededW > cw || neededH > ch) {
+            console.log('[Center] Auto-expand for #' + node.id +
+                ': ' + cw + 'x' + ch + ' → ' + neededW + 'x' + neededH +
+                ' (global: ' + global.w.toFixed(0) + 'x' + global.h.toFixed(0) +
+                ', center: ' + global.cx.toFixed(1) + ',' + global.cy.toFixed(1) + ')');
+            SMTool._resolveSourceCanvasSize(node, neededW, neededH, cw, ch);
+            cw = node._canvasWidth;
+            ch = node._canvasHeight;
+        }
+
+        // ====== 居中：使用全局参考中心（所有同源节点相同） ======
+        var refCX = global.cx;  // 全部动画包围盒的几何中心 X
+        var refCY = global.cy;  // 全部动画包围盒的几何中心 Y
+        sk.x = cw / 2 - refCX;
+        sk.y = ch / 2 - refCY;
+        node._baseSkX = sk.x;
+        node._baseSkY = sk.y;
+
+    } catch (e) {
+        console.warn('[Center] Failed for #' + node.id + ': ' + e.message);
+    }
+    // 最终更新（不需要额外 apply，骨架一直在 node.state 管理下）
+    sk.updateWorldTransform(node._physParam);
+};
+
+// ★ 画布自适应扩展（独立于居中逻辑）
+SMTool._autoExpandCanvas = function (node, SP, sd, curCw, curCh) {
+    try {
+        var global = SMTool._getSourceGlobalBounds(node, SP, sd);
+        if (!global) return;
+        var padX = Math.max(60, Math.ceil(global.w * 0.15));
+        var padY = Math.max(60, Math.ceil(global.h * 0.15));
+        var neededW = Math.max(400, Math.ceil(global.w) + padX * 2);
+        var neededH = Math.max(400, Math.ceil(global.h) + padY * 2);
+        neededW = Math.max(neededW, curCw);
+        neededH = Math.max(neededH, curCh);
+        if (neededW > curCw || neededH > curCh) {
+            console.log('[Center] Auto-expand for #' + node.id +
+                ': ' + curCw + 'x' + curCh + ' → ' + neededW + 'x' + neededH +
+                ' (global: ' + global.w.toFixed(0) + 'x' + global.h.toFixed(0) + ')');
+            SMTool._resolveSourceCanvasSize(node, neededW, neededH, curCw, curCh);
+        }
+    } catch (e) {
+        console.warn('[Center] Auto-expand failed for #' + node.id + ': ' + e.message);
+    }
+};
+
+// ★ 全局动画范围缓存（key: sourceFile）→ { w, h, cx, cy }
+SMTool._sourceGlobalBoundsCache = {};
+
+// 获取某源文件全部动画的全局最大包围盒及几何中心（带缓存）
+// ★ 保存并恢复骨架状态，不干扰调用方
+SMTool._getSourceGlobalBounds = function (node, SP, sd) {
+    var key = node.sourceFile;
+    if (!key) return null;
+    if (SMTool._sourceGlobalBoundsCache[key]) return SMTool._sourceGlobalBoundsCache[key];
+
+    var allAnims = sd.animations || sd._animations || [];
+    if (allAnims.length === 0) return null;
+
+    var sk = node.skeleton;
+    var savedX = sk.x, savedY = sk.y;
+    sk.x = 0; sk.y = 0; sk.updateWorldTransform(node._physParam);
+
+    var gMinX = Infinity, gMinY = Infinity, gMaxX = -Infinity, gMaxY = -Infinity;
+    var tmpStateData = new SP.AnimationStateData(sd);
+    var tmpState = new SP.AnimationState(tmpStateData);
+    var tmpOff = new SP.Vector2();
+    var tmpSize = new SP.Vector2();
+
+    var maxAnims = Math.min(allAnims.length, 20);
+    for (var ai = 0; ai < maxAnims; ai++) {
+        var animName = allAnims[ai].name;
+        if (!animName) continue;
+        var tmpEntry = tmpState.setAnimation(0, animName, true);
+        if (!tmpEntry) continue;
+        var dur = (tmpEntry.animation && tmpEntry.animation.duration) ||
+                  (tmpEntry._animation && tmpEntry._animation.duration);
+        if (!dur || dur <= 0) dur = 1;
+        var samples = Math.min(8, Math.max(4, Math.ceil(dur * 6)));
+        for (var s = 0; s < samples; s++) {
+            var t = (s / samples) * dur;
+            tmpEntry.trackTime = t;
+            tmpState.update(0);
             tmpState.apply(sk);
             sk.updateWorldTransform(node._physParam);
             if (typeof sk.getBounds === 'function') {
@@ -1002,29 +1082,100 @@ SMTool._centerSkeletonAfterAnim = function (node) {
                 SMTool._computeBoundsManually(sk, tmpOff, tmpSize);
             }
             if (isFinite(tmpOff.x) && isFinite(tmpSize.x) && tmpSize.x > 0) {
-                sumCX += tmpOff.x + tmpSize.x / 2;
-                sumCY += tmpOff.y + tmpSize.y / 2;
-                validSamples++;
+                gMinX = Math.min(gMinX, tmpOff.x);
+                gMinY = Math.min(gMinY, tmpOff.y);
+                gMaxX = Math.max(gMaxX, tmpOff.x + tmpSize.x);
+                gMaxY = Math.max(gMaxY, tmpOff.y + tmpSize.y);
             }
         }
-        // ★ 恢复节点真实状态
-        node.state.apply(sk);
-        if (validSamples > 0) {
-            var avgCX = sumCX / validSamples;
-            var avgCY = sumCY / validSamples;
-            sk.x = cw / 2 - avgCX;
-            sk.y = ch / 2 - avgCY;
-            // ★ 保存自然位置（调试偏移会在此基础上叠加）
-            node._baseSkX = sk.x;
-            node._baseSkY = sk.y;
-        } else {
-            sk.x = 0; sk.y = 0;
-        }
-    } catch (e) {
-        console.warn('[Center] Failed for #' + node.id + ': ' + e.message);
-        sk.x = 0; sk.y = 0;
+        tmpState.clearTracks();
     }
+
+    // ★ 恢复骨架
+    sk.x = savedX; sk.y = savedY;
+    node.state.apply(sk);
     sk.updateWorldTransform(node._physParam);
+
+    if (!isFinite(gMinX)) return null;
+    var result = {
+        w: gMaxX - gMinX,
+        h: gMaxY - gMinY,
+        cx: (gMinX + gMaxX) / 2,  // ★ 全局包围盒几何中心
+        cy: (gMinY + gMaxY) / 2
+    };
+    SMTool._sourceGlobalBoundsCache[key] = result;
+    return result;
+};
+
+// ★ 解析同源节点的最终画布尺寸（取最大值并同步）
+SMTool._resolveSourceCanvasSize = function (node, neededW, neededH, curCw, curCh) {
+    // 收集所有同源节点已有的画布尺寸
+    var maxW = Math.max(neededW, curCw);
+    var maxH = Math.max(neededH, curCh);
+    if (node.sourceFile) {
+        var nodesIter = SMData.nodes.values();
+        var r = nodesIter.next();
+        while (!r.done) {
+            var n = r.value;
+            if (n.sourceFile === node.sourceFile && n.id !== node.id) {
+                var nw = n._debugCanvasW || n._canvasWidth || 400;
+                var nh = n._debugCanvasH || n._canvasHeight || 400;
+                if (nw > maxW) maxW = nw;
+                if (nh > maxH) maxH = nh;
+            }
+            r = nodesIter.next();
+        }
+    }
+    if (maxW > curCw || maxH > curCh) {
+        SMTool._syncCanvasSizeToSource(node.sourceFile, maxW, maxH);
+    }
+};
+
+// ★ v3：统一同源节点的画布尺寸（并修正已居中骨架的位置）
+SMTool._syncCanvasSizeToSource = function (sourceFile, cw, ch) {
+    if (!sourceFile) return;
+    var nodesIter = SMData.nodes.values();
+    var r = nodesIter.next();
+    while (!r.done) {
+        var n = r.value;
+        if (n.sourceFile === sourceFile) {
+            var oldCw = n._canvasWidth || 400;
+            var oldCh = n._canvasHeight || 400;
+            var changed = false;
+            if (n._canvasWidth !== cw) { n._canvasWidth = cw - 4; changed = true; }
+            if (n._canvasHeight !== ch) { n._canvasHeight = ch; changed = true; }
+            n.width = Math.max(cw, n.width, 260);
+            if (changed) {
+                // ★ 修正已居中骨架的位置：保持 avgCX/avgCY 不变，重新映射到新画布中心
+                if (n.skeleton && n._baseSkX !== undefined) {
+                    var avgCX = oldCw / 2 - n._baseSkX;
+                    var avgCY = oldCh / 2 - n._baseSkY;
+                    n.skeleton.x = cw / 2 - avgCX;
+                    n.skeleton.y = ch / 2 - avgCY;
+                    n._baseSkX = n.skeleton.x;
+                    n._baseSkY = n.skeleton.y;
+                    n.skeleton.updateWorldTransform(n._physParam);
+                }
+            }
+            // ★ 始终同步 DOM 尺寸（即使 _canvasWidth 未变，style.width 可能被 _setupWebGLRenderer 覆盖过）
+            var nEl = SMTool._getEl(n.id);
+            if (nEl) {
+                // 节点有 border: 2px 左右各 2px，内容宽度 = 总宽 - 4px
+                if (nEl.style.width !== (n.width - 4) + 'px') nEl.style.width = (n.width - 4) + 'px';
+                var nWrap = nEl.querySelector('.spine-canvas-wrap');
+                if (nWrap) {
+                    if (nWrap.style.width !== (cw - 8) + 'px') nWrap.style.width = (cw - 8) + 'px';
+                    if (nWrap.style.height !== ch + 'px') nWrap.style.height = ch + 'px';
+                    var nPh = nWrap.querySelector('div');
+                    if (nPh) {
+                        if (nPh.style.width !== cw + 'px') nPh.style.width = cw + 'px';
+                        if (nPh.style.height !== ch + 'px') nPh.style.height = ch + 'px';
+                    }
+                }
+            }
+        }
+        r = nodesIter.next();
+    }
 };
 
 // ---- 从已存储的源数据恢复 WebGL 渲染 ----
