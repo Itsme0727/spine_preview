@@ -260,6 +260,15 @@ SMTool._setSkin = function (nid, skinName) {
     // 同步刷新数据面板高亮
     SMData._lastPanelNodeId = -1;
     SMTool._updateFloatPanel();
+
+    // ★ 切换皮肤后立即刷新浮窗预览（如果当前预览节点属于同一源文件）
+    var pp = SMData._animPreview;
+    if (pp && pp.visible && pp.skeleton && pp.nodeId != null) {
+        var ppNode = SMData.nodes.get(pp.nodeId);
+        if (ppNode && ppNode.sourceFile === sourceFile) {
+            SMTool._syncPreviewPmaAndSkin(pp, ppNode);
+        }
+    }
 };
 SMTool.toggleConnectMode = function () {
     SMData.connectMode = !SMData.connectMode;
