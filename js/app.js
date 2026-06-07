@@ -120,6 +120,15 @@ SMTool.deleteNode = function (nid) {
 
     // ★ 立即刷新所有层级节点盒子文字
     if (typeof SMTool._refreshAllLayerBoxes === 'function') SMTool._refreshAllLayerBoxes();
+    // ★ 若被删节点属于某层级，刷新对应浮窗
+    if (typeof SMTool._refreshLayerPreviewIfOpen === 'function') {
+        var nodesIter3 = SMData.nodes.values();
+        var r3 = nodesIter3.next();
+        while (!r3.done) {
+            if (r3.value.nodeType === 'layer') SMTool._refreshLayerPreviewIfOpen(r3.value);
+            r3 = nodesIter3.next();
+        }
+    }
     SMTool._updateSel();
     SMTool._updateSB();
     SMTool._updateStateRowColors();

@@ -2,9 +2,12 @@
 <html lang="zh-cn">
 <head>
     <meta charset="utf-8" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <title>Spine Animation State Machine</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link rel="stylesheet" href="css/styles.css" />
+    <link rel="stylesheet" href="css/styles.css?v=101" />
 </head>
 <body>
     <!-- ===== 画布层 ===== -->
@@ -24,6 +27,8 @@
     <!-- ===== 工具栏 ===== -->
     <div id="toolbar">
         <button onclick="SMTool.addSpineNode()">➕ 添加节点</button>
+        <span class="sep"></span>
+        <button id="btnTestLayerSort" style="background:#ff6b6b;color:#fff;font-weight:700;" onclick="alert('SMTool._layerMoveBy='+typeof SMTool._layerMoveBy);var ln=null;var it=SMData.nodes.values();var r=it.next();while(!r.done){if(r.value.nodeType==='layer'){ln=r.value;break;}r=it.next();}if(ln){SMTool._layerMoveBy(ln.id,1,1);}else{alert('没有层级节点，请先右键添加');}">🔧 测试排序</button>
         <span class="sep"></span>
         <button id="btnConnect" onclick="SMTool.toggleConnectMode()">🔗 连线模式</button>
         <span class="sep"></span>
@@ -202,16 +207,16 @@
          9. export-import.js — 项目导出/导入
         10. app.js — 主入口（汇总 + 初始化）
          ================================================================ -->
-    <script src="js/lib/spine-loader.js?v=1"></script>
-    <script src="js/data-model.js?v=1"></script>
-    <script src="js/spine-loading.js?v=1"></script>
-    <script src="js/spine-rendering.js?v=3"></script>
-    <script src="js/grid-connections.js?v=1"></script>
-    <script src="js/minimap.js?v=1"></script>
-    <script src="js/ui-dom.js?v=4"></script>
-    <script src="js/interaction.js?v=3"></script>
-    <script src="js/export-import.js?v=1"></script>
-    <script src="js/layer-node.js?v=15"></script>
-    <script src="js/app.js?v=2"></script>
+    <script src="js/lib/spine-loader.js?v=99"></script>
+    <script src="js/data-model.js?v=99"></script>
+    <script src="js/spine-loading.js?v=99"></script>
+    <script src="js/spine-rendering.js?v=99"></script>
+    <script src="js/grid-connections.js?v=99"></script>
+    <script src="js/minimap.js?v=99"></script>
+    <script src="js/ui-dom.js?v=99"></script>
+    <script src="js/interaction.js?v=99"></script>
+    <script src="js/export-import.js?v=99"></script>
+    <script src="js/layer-node-v2.js?v=2"></script>
+    <script src="js/app.js?v=99"></script>
 </body>
 </html>

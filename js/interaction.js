@@ -8,6 +8,8 @@ var SMTool = window.SMTool || {};
 
 // ---- 鼠标按下 ----
 SMTool._onMD = function (e) {
+    // ★ 层拖拽排序激活时，禁止画布级操作
+    if (SMData._layerReorderActive) return;
     // ★ 调试模式：mousedown 开始拖拽位移 / 边缘调整画布大小
     if (SMData._debugMode) {
         if (e.button === 0) {
@@ -229,6 +231,12 @@ SMTool._onMD = function (e) {
                 SMTool._updateSel();
                 SMTool._updateSB();
                 SMTool._updateStateRowColors();
+                // ★ 即时刷新层级
+                if (typeof SMTool._refreshAllLayerBoxes === 'function') SMTool._refreshAllLayerBoxes();
+                if (typeof SMTool._refreshLayerPreviewIfOpen === 'function') {
+                    var ffn2 = SMData.nodes.get(ffn ? ffn.id : -1);
+                    if (ffn2 && ffn2.nodeType === 'layer') SMTool._refreshLayerPreviewIfOpen(ffn2);
+                }
                 return;
             }
 
@@ -336,6 +344,8 @@ SMTool._onMD = function (e) {
 
 // ---- 鼠标移动 ----
 SMTool._onMM = function (e) {
+    // ★ 层拖拽排序激活时，禁止画布级操作
+    if (SMData._layerReorderActive) return;
     SMData._mx = e.clientX;
     SMData._my = e.clientY;
 
@@ -698,6 +708,8 @@ SMTool._applySnapToDrag = function (draggedNodesM, isMulti) {
 
 // ---- 鼠标释放 ----
 SMTool._onMU = function (e) {
+    // ★ 层拖拽排序激活时：仅阻塞画布操作，由 _initLayerDrag 内的 onReorderUp 处理
+    if (SMData._layerReorderActive) return;
     // ★ 调试模式：停止拖拽/缩放
     if (SMData._debugMode) {
         SMData._debugMode.dragging = false;
@@ -833,6 +845,12 @@ SMTool._onMU = function (e) {
         SMData.connecting = null;
         SMTool._updateSel();
         SMTool._updateStateRowColors();
+        // ★ 即时刷新层级
+        if (typeof SMTool._refreshAllLayerBoxes === 'function') SMTool._refreshAllLayerBoxes();
+        if (typeof SMTool._refreshLayerPreviewIfOpen === 'function') {
+            var fnR = SMData.nodes.get(fn ? fn.id : -1);
+            if (fnR && fnR.nodeType === 'layer') SMTool._refreshLayerPreviewIfOpen(fnR);
+        }
     }
 
     // 右键空区域点击 → 取消选中
@@ -1091,6 +1109,8 @@ SMTool._onKD = function (e) {
             SMTool._updateStateRowColors();
             SMTool._updateDuplicateHighlights();
             SMTool._checkMissingStates();
+            // ★ 即时刷新层级
+            if (typeof SMTool._refreshAllLayerBoxes === 'function') SMTool._refreshAllLayerBoxes();
             SMTool._refreshAllTranslations();
 
             var msg2 = '已粘贴 ' + newSelIds.length + ' 个节点';
@@ -1107,12 +1127,24 @@ SMTool._onKD = function (e) {
         // 优先删除选中的连线
         if (SMData.selectedConnection) {
             SMTool.pushUndo();
+            // 找到被删连线涉及的层级节点（用于刷新浮窗）
+            var deletedConn = null;
+            for (var dci = 0; dci < SMData.connections.length; dci++) {
+                if (SMData.connections[dci].id === SMData.selectedConnection) { deletedConn = SMData.connections[dci]; break; }
+            }
             SMData.connections = SMData.connections.filter(function (x) {
                 return x.id !== SMData.selectedConnection;
             });
             SMData.selectedConnection = null;
             // ★ 立即刷新层级盒子文字
             if (typeof SMTool._refreshAllLayerBoxes === 'function') SMTool._refreshAllLayerBoxes();
+            // ★ 立即刷新对应层级浮窗
+            if (deletedConn && deletedConn.fromNode) {
+                var layerNode = SMData.nodes.get(deletedConn.fromNode);
+                if (layerNode && layerNode.nodeType === 'layer' && typeof SMTool._refreshLayerPreviewIfOpen === 'function') {
+                    SMTool._refreshLayerPreviewIfOpen(layerNode);
+                }
+            }
             SMTool._updateSB();
             SMTool._updateStateRowColors();
             SMTool._updateSel();
@@ -1187,6 +1219,8 @@ SMTool._onKD = function (e) {
 
 // ---- 节点头部拖拽 ----
 SMTool._onHD = function (e, nid) {
+    // ★ 层拖拽排序激活时，禁止面板位移
+    if (SMData._layerReorderActive) return;
     if (e.button === 1 || e.button === 2) {
         SMTool._onMD(e);
         return;
@@ -1365,6 +1399,10 @@ SMTool._onDot = function (nid, name, type) {
         for (var di3 = 0; di3 < allDims2.length; di3++) { allDims2[di3].remove(); }
         // ★ 立即刷新所有层级节点盒子文字
         if (typeof SMTool._refreshAllLayerBoxes === 'function') SMTool._refreshAllLayerBoxes();
+        // ★ 立即刷新对应层级的浮窗预览
+        if (fn2 && fn2.nodeType === 'layer' && typeof SMTool._refreshLayerPreviewIfOpen === 'function') {
+            SMTool._refreshLayerPreviewIfOpen(fn2);
+        }
         SMTool._updateSel();
         SMTool._updateSB();
         SMTool._updateStateRowColors();

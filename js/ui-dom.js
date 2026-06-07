@@ -2288,7 +2288,7 @@ SMTool._updateSel = function () {
                 var ldL = SMTool._layerData(selNode);
                 for (var liL = 0; liL < boxesL.length; liL++) {
                     var lnumL = liL + 1;
-                    var txt = '请连线获取动画骨架';
+                    var txt = '请连线动画节点';
                     var foundL = false;
                     // 兜底1：从连线表 _layerNum 匹配
                     for (var ciL = 0; ciL < SMData.connections.length; ciL++) {
@@ -2312,6 +2312,9 @@ SMTool._updateSel = function () {
                     // ★ 无连线则清除旧数据
                     if (!foundL && ldL.layers[lnumL]) delete ldL.layers[lnumL];
                     boxesL[liL].textContent = txt;
+                    // ★ 同步 connected class
+                    var boxElL = boxesL[liL].parentElement;
+                    if (boxElL) boxElL.classList.toggle('connected', foundL);
                 }
             }
             SMTool._showAnimPreview(selNode);
@@ -2557,6 +2560,10 @@ SMTool._initAnimPreviewPanel = function () {
         var sourceNode = SMData.nodes.get(pp.nodeId);
         if (sourceNode && sourceNode.sourceFile) {
             SMData._previewZooms[sourceNode.sourceFile] = pp._contentZoom;
+        }
+        // ★ 层级预览缩放也持久化（key = '_layer_' + nodeId）
+        if (pp._layerSkeletons && pp._layerSkeletons.length > 0 && pp.nodeId) {
+            SMData._previewZooms['_layer_' + pp.nodeId] = pp._contentZoom;
         }
         // ★ 层级预览：更新每层的 MVP
         if (pp._layerSkeletons && pp._layerSkeletons.length > 0) {

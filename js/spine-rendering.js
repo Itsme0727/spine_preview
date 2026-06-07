@@ -1147,6 +1147,12 @@ SMTool._resetAnimPreviewZoom = function () {
     if (sourceNode && sourceNode.sourceFile) {
         SMData._previewZooms[sourceNode.sourceFile] = 1.0;
     }
+    // ★ 层级预览重置
+    if (pp._layerSkeletons && pp._layerSkeletons.length > 0 && pp.nodeId) {
+        SMData._previewZooms['_layer_' + pp.nodeId] = 1.0;
+        SMTool._syncLayerPreviewViewport(pp);
+        return;
+    }
     var cw = pp._canvasWidth || pp.panelW || 320;
     var ch = pp._canvasHeight || pp.panelH || 500;
     SMTool._syncAnimPreviewViewport(pp, cw, ch);

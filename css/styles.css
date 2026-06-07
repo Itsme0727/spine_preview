@@ -807,7 +807,7 @@ body {
 .spine-node.layer-node {
     background: #1a1a24;
     border-color: #7c5ce7;
-    transform: scale(1.5);
+    transform: scale(4);
     transform-origin: top left;
 }
 .layer-header {
@@ -891,9 +891,8 @@ body {
 /* 每层右侧的独占端点 — 伸出面板右边缘 */
 .layer-box-row .layer-dot {
     position: absolute;
-    right: -14px;
-    top: 50%;
-    transform: translateY(-50%);
+    right: -44px;
+    top: calc(50% - 10px);
     width: 18px;
     height: 18px;
     border-radius: 50%;
@@ -902,6 +901,34 @@ body {
     cursor: pointer;
     transition: all 0.2s;
     z-index: 5;
+}
+/* ▲▼ 排序按钮 */
+.layer-arrows {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-right: 4px;
+    z-index: 6;
+}
+.layer-arrow-btn {
+    width: 18px; height: 16px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--panel-bg);
+    color: var(--text2);
+    font-size: 10px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0; line-height: 1;
+    transition: all 0.15s;
+    pointer-events: auto;
+    position: relative;
+    z-index: 999;
+}
+.layer-arrow-btn:hover {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
 }
 .layer-box-row .layer-dot:hover {
     background: #7c5ce7;
@@ -932,6 +959,35 @@ body {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+/* 已连线层：文件名高亮 */
+.layer-box.connected .layer-box-text {
+    color: #4fc3f7;
+    font-weight: 600;
+}
+/* 层拖拽排序 */
+.layer-box-row {
+    user-select: none;
+    transition: opacity 0.15s, border-color 0.2s;
+}
+.layer-box-row.selected .layer-box {
+    border-color: #4fc3f7;
+    box-shadow: 0 0 6px rgba(79,195,247,0.35);
+}
+.layer-box-row.dragging {
+    opacity: 0.4;
+    cursor: grabbing;
+    animation: layerPulse 0.6s ease-in-out infinite alternate;
+}
+@keyframes layerPulse {
+    from { box-shadow: 0 0 4px rgba(79,195,247,0.3); }
+    to { box-shadow: 0 0 12px rgba(79,195,247,0.7); }
+}
+.layer-box-row.drop-above {
+    border-top: 3px solid #4fc3f7;
+}
+.layer-box-row.drop-below {
+    border-bottom: 3px solid #4fc3f7;
 }
 .layer-anim-bar {
     display: flex;
