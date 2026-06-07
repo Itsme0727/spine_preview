@@ -62,6 +62,23 @@ SMTool.deleteNode = function (nid) {
         }
     }
 
+    // ★ 清理层级节点中对被删节点的引用
+    var nodesIter2 = SMData.nodes.values();
+    var r2 = nodesIter2.next();
+    while (!r2.done) {
+        var ln = r2.value;
+        if (ln.nodeType === 'layer' && ln._layerData && ln._layerData.layers) {
+            var ld2 = ln._layerData;
+            for (var lk2 = 1; lk2 <= ld2.layerCount; lk2++) {
+                if (ld2.layers[lk2] && ld2.layers[lk2].animNodeId === nid) {
+                    delete ld2.layers[lk2];
+                }
+            }
+            SMTool._updateLayerEl(ln);
+        }
+        r2 = nodesIter2.next();
+    }
+
     var el = SMTool._getEl(nid);
     if (el) el.remove();
 
@@ -101,6 +118,8 @@ SMTool.deleteNode = function (nid) {
         SMTool._hideAnimPreview();
     }
 
+    // ★ 立即刷新所有层级节点盒子文字
+    if (typeof SMTool._refreshAllLayerBoxes === 'function') SMTool._refreshAllLayerBoxes();
     SMTool._updateSel();
     SMTool._updateSB();
     SMTool._updateStateRowColors();
@@ -1021,7 +1040,9 @@ SMTool.init = function () {
                 _debugOffsetY: n._debugOffsetY || 0,
                 _debugCanvasW: n._debugCanvasW || 0,
                 _debugCanvasH: n._debugCanvasH || 0,
-                infoCollapsed: !!n.infoCollapsed
+                infoCollapsed: !!n.infoCollapsed,
+                // ★ 层级节点数据
+                _layerData: n._layerData ? JSON.parse(JSON.stringify(n._layerData)) : null
             });
             result = nodesIter.next();
         }
@@ -1183,6 +1204,9 @@ SMTool.init = function () {
                 existing._debugCanvasW = nd._debugCanvasW || 0;
                 existing._debugCanvasH = nd._debugCanvasH || 0;
                 existing.infoCollapsed = !!nd.infoCollapsed;
+                // ★ 恢复层级节点数据
+                if (nd._layerData) existing._layerData = JSON.parse(JSON.stringify(nd._layerData));
+                else if (nd.nodeType === 'layer') existing._layerData = { layerCount: 2, layers: {} };
 
                 // 更新动画（即时切换，无需重载）
                 if (existing.state && existing.currentAnim !== (nd.currentAnim || '')) {
@@ -1344,6 +1368,9 @@ SMTool.init = function () {
                 node._debugCanvasW = nd._debugCanvasW || 0;
                 node._debugCanvasH = nd._debugCanvasH || 0;
                 node.infoCollapsed = !!nd.infoCollapsed;
+                // ★ 恢复层级节点数据
+                if (nd._layerData) node._layerData = JSON.parse(JSON.stringify(nd._layerData));
+                else if (nd.nodeType === 'layer') node._layerData = { layerCount: 2, layers: {} };
 
                 SMData.nodes.set(nd.id, node);
                 SMTool._createEl(node);

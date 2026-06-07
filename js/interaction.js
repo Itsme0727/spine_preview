@@ -260,7 +260,7 @@ SMTool._onMD = function (e) {
                 SMTool._updateStateRowColors();
                 SMTool._updateSel();
                 // ★ 点击节点立即显示预览浮窗
-                if (found.nodeType === 'spine') SMTool._showAnimPreview(found);
+                if (found.nodeType === 'spine' || found.nodeType === 'layer') SMTool._showAnimPreview(found);
             } else if (SMData.selectedNodes.has(found.id) && SMData.selectedNodes.size > 1) {
                 // 点击已选中的多选节点之一 → 开始多拖拽
                 SMData._pendingDragSnap = SMTool._snapshotState();
@@ -309,7 +309,7 @@ SMTool._onMD = function (e) {
                 SMTool._updateStateRowColors();
                 SMTool._updateSel();
                 // ★ 点击节点立即显示预览浮窗
-                if (found.nodeType === 'spine') SMTool._showAnimPreview(found);
+                if (found.nodeType === 'spine' || found.nodeType === 'layer') SMTool._showAnimPreview(found);
             }
         } else {
             // 点击空白 → 退出组编辑模式 + 开始框选
@@ -1111,8 +1111,11 @@ SMTool._onKD = function (e) {
                 return x.id !== SMData.selectedConnection;
             });
             SMData.selectedConnection = null;
+            // ★ 立即刷新层级盒子文字
+            if (typeof SMTool._refreshAllLayerBoxes === 'function') SMTool._refreshAllLayerBoxes();
             SMTool._updateSB();
             SMTool._updateStateRowColors();
+            SMTool._updateSel();
             return;
         }
         if (SMData.selectedNodes.size > 1) {
@@ -1277,6 +1280,8 @@ SMTool._onAnimChange = function (nid, animName) {
     }
     // ★ 同步更新所有动画流路径中的状态名
     SMTool._syncFlowPathAnim(nid, animName);
+    // ★ 同步更新层级节点的动画名
+    if (typeof SMTool._syncLayerAnim === 'function') SMTool._syncLayerAnim(nid);
 };
 
 // ---- 旧的状态行点击（保留兼容，供手动创建的节点使用） ----
@@ -1300,6 +1305,18 @@ SMTool._onDot = function (nid, name, type) {
         SMData.connecting = { nodeId: nid, stateName: name, sx: pos.x, sy: pos.y, mx: sp.x, my: sp.y };
         SMTool._updateSel();
     } else if (type === 'input' && SMData.connecting && SMData.connecting.nodeId !== nid) {
+        // ★ 层级节点独占连线
+        var fromNode = SMData.nodes.get(SMData.connecting.nodeId);
+        if (fromNode && fromNode.nodeType === 'layer') {
+            if (SMTool._tryConnectLayerDot(SMData.connecting.nodeId, SMData.connecting.stateName, nid)) {
+                SMData.connectMode = false;
+                document.getElementById('btnConnect').classList.remove('active');
+                SMData.connecting = null;
+                SMTool._updateSel();
+                SMTool._updateStateRowColors();
+                return;
+            }
+        }
         // 快速连线（点击 input 圆点直接连）
         var alreadyExists = false;
         for (var i = 0; i < SMData.connections.length; i++) {
@@ -1318,7 +1335,7 @@ SMTool._onDot = function (nid, name, type) {
             var tp = SMTool._getStateConnectorPos(tn, name, 'input');
             var def = fp && tp ? SMTool._defaultCPOffsets(fp, tp) : { cp1x: 50, cp1y: 0, cp2x: -50, cp2y: 0 };
             var colorIdx = SMData.connections.length;
-            SMData.connections.push({
+            var newConn = {
                 id: SMData.nextConnId++,
                 fromNode: SMData.connecting.nodeId,
                 fromState: SMData.connecting.stateName,
@@ -1328,12 +1345,26 @@ SMTool._onDot = function (nid, name, type) {
                 cp1x: def.cp1x, cp1y: def.cp1y,
                 cp2x: def.cp2x, cp2y: def.cp2y,
                 color: _connColor(colorIdx)
-            });
+            };
+            // ★ 检测是否为层级节点连线，补上 _layerNum
+            var fn2 = SMData.nodes.get(newConn.fromNode);
+            if (fn2 && fn2.nodeType === 'layer' && typeof newConn.fromState === 'string' && newConn.fromState.indexOf('layer_') === 0) {
+                newConn._layerNum = parseInt(newConn.fromState.replace('layer_', '')) || 0;
+                // 同步更新 _layerData
+                var ld2 = SMTool._layerData(fn2);
+                if (!ld2.layers) ld2.layers = {};
+                ld2.layers[newConn._layerNum] = { animNodeId: newConn.toNode, animName: '' };
+                var tn2 = SMData.nodes.get(newConn.toNode);
+                if (tn2 && tn2.currentAnim) ld2.layers[newConn._layerNum].animName = tn2.currentAnim;
+            }
+            SMData.connections.push(newConn);
         }
         SMData.connecting = null;
         // 清除连线状态残留
         var allDims2 = document.querySelectorAll('.spine-node .dim-overlay');
         for (var di3 = 0; di3 < allDims2.length; di3++) { allDims2[di3].remove(); }
+        // ★ 立即刷新所有层级节点盒子文字
+        if (typeof SMTool._refreshAllLayerBoxes === 'function') SMTool._refreshAllLayerBoxes();
         SMTool._updateSel();
         SMTool._updateSB();
         SMTool._updateStateRowColors();
@@ -1521,6 +1552,11 @@ SMTool._showCtxMenu = function (e) {
         item0b.textContent = '🏁 添加出口节点';
         item0b.onclick = function () { SMTool.addExitNodeAt(wp.x, wp.y); menu3.style.display = 'none'; };
         menu3.appendChild(item0b);
+        var item0c = document.createElement('div');
+        item0c.className = 'ctx-item ctx-text-node';
+        item0c.textContent = '📚 添加层级节点';
+        item0c.onclick = function () { SMTool.addLayerNodeAt(wp.x, wp.y); menu3.style.display = 'none'; };
+        menu3.appendChild(item0c);
         var sep0 = document.createElement('div');
         sep0.className = 'ctx-sep';
         sep0.style.cssText = 'height:1px;background:var(--border);margin:4px 8px';

@@ -801,6 +801,148 @@ body {
     margin-top: 2px;
 }
 
+/* ================================================================
+   层级节点 (layer-node)
+   ================================================================ */
+.spine-node.layer-node {
+    background: #1a1a24;
+    border-color: #7c5ce7;
+    transform: scale(1.5);
+    transform-origin: top left;
+}
+.layer-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 10px;
+    background: rgba(124,92,231,0.15);
+    border-bottom: 1px solid rgba(124,92,231,0.3);
+    border-radius: 13px 13px 0 0;
+}
+.layer-title {
+    font-size: 28px;
+    font-weight: 700;
+    color: #b39df0;
+}
+.layer-header-btns button {
+    border: none;
+    background: none;
+    color: #999;
+    cursor: pointer;
+    font-size: 22px;
+    padding: 0 4px;
+}
+.layer-body {
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.layer-count-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.layer-count-label {
+    font-size: 24px;
+    color: var(--text2);
+    font-weight: 600;
+}
+.layer-count-btn {
+    border: 1.5px solid var(--border);
+    background: var(--panel-bg);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 20px;
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+}
+.layer-count-input {
+    width: 56px;
+    height: 32px;
+    text-align: center;
+    border: 1.5px solid var(--border);
+    border-radius: 6px;
+    background: var(--input-bg);
+    color: var(--text);
+    font-size: 20px;
+    font-family: inherit;
+}
+.layer-count-unit {
+    font-size: 22px;
+    color: var(--text2);
+}
+.layer-boxes {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.layer-box-row {
+    display: flex;
+    align-items: center;
+    position: relative;
+    overflow: visible;
+}
+/* 每层右侧的独占端点 — 伸出面板右边缘 */
+.layer-box-row .layer-dot {
+    position: absolute;
+    right: -14px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: 2px solid #7c5ce7;
+    background: rgba(124,92,231,0.2);
+    cursor: pointer;
+    transition: all 0.2s;
+    z-index: 5;
+}
+.layer-box-row .layer-dot:hover {
+    background: #7c5ce7;
+    box-shadow: 0 0 8px rgba(124,92,231,0.6);
+}
+.layer-box {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    min-height: 40px;
+    flex: 1;
+}
+.layer-box-num {
+    font-size: 20px;
+    font-weight: 700;
+    color: #b39df0;
+    min-width: 32px;
+    text-align: center;
+}
+.layer-box-text {
+    font-size: 18px;
+    color: var(--text2);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.layer-anim-bar {
+    display: flex;
+    align-items: center;
+    padding: 4px 6px;
+    border-top: 1px solid var(--border);
+    background: var(--node-bg);
+    position: relative;
+    overflow: visible;
+}
+
 /* ===== 动画下拉选择栏 ===== */
 .spine-node .anim-bar {
     display: flex;

@@ -343,6 +343,37 @@ SMTool._getStateConnectorPos = function (node, stateName, type) {
         return null;
     }
 
+    // ★ 层级节点：output 端点按层号定位
+    if (node.nodeType === 'layer') {
+        if (type === 'output') {
+            var layerNum = 0;
+            if (typeof stateName === 'string' && stateName.indexOf('layer_') === 0) {
+                layerNum = parseInt(stateName.replace('layer_', '')) || 0;
+            }
+            if (layerNum > 0) {
+                var dotL = el.querySelector('.layer-dot-' + layerNum);
+                if (dotL) {
+                    var rL = dotL.getBoundingClientRect();
+                    return SMTool.canvasToWorld(rL.left + rL.width / 2, rL.top + rL.height / 2);
+                }
+            }
+            // 回退：找第一个 layer-dot
+            var dotF = el.querySelector('.layer-dot');
+            if (dotF) {
+                var rF = dotF.getBoundingClientRect();
+                return SMTool.canvasToWorld(rF.left + rF.width / 2, rF.top + rF.height / 2);
+            }
+        }
+        if (type === 'input') {
+            var dotI = el.querySelector('.anim-bar .conn-dot.input');
+            if (dotI) {
+                var rI = dotI.getBoundingClientRect();
+                return SMTool.canvasToWorld(rI.left + rI.width / 2, rI.top + rI.height / 2);
+            }
+        }
+        return null;
+    }
+
     // 在新布局中，连接点在 anim-bar 上
     var bar = el.querySelector('.anim-bar');
     var dot = bar ? bar.querySelector('.conn-dot.' + (type === 'output' ? 'output' : 'input')) : null;

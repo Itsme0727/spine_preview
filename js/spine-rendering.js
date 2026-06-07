@@ -667,8 +667,16 @@ SMTool._initAnimPreview = function (node) {
     // 设置面板尺寸和画布（保留用户缩放后的尺寸，首次默认 280×420）
     var savedW = pp.panelW || 320;
     var savedH = pp.panelH || 500;
-    canvas.width = savedW;
-    canvas.height = savedH;
+    panel.style.width = savedW + 'px';
+    panel.style.height = savedH + 'px';
+    // ★ 等 DOM 布局完成后，取 canvas 实际容器尺寸（排除标题栏），避免拉伸
+    var wrap = canvas.parentElement;
+    var actualW = wrap ? wrap.clientWidth : savedW;
+    var actualH = wrap ? wrap.clientHeight : savedH;
+    if (actualW < 10) actualW = savedW;
+    if (actualH < 10) actualH = savedH;
+    canvas.width = actualW;
+    canvas.height = actualH;
     pp.canvas = canvas;
     pp.panelW = savedW;
     pp.panelH = savedH;
@@ -993,6 +1001,12 @@ SMTool._initAnimPreview = function (node) {
 // ---- 渲染预览帧 ----
 SMTool._renderAnimPreview = function (now) {
     var pp = SMData._animPreview;
+    // ★ 层级节点预览（含测试模式）：多层叠加渲染
+    if (pp && pp.visible && pp._layerSkeletons && pp._layerSkeletons.length > 0) {
+        if (!pp._readyToRender || !pp.gl) return;
+        SMTool._renderLayerPreview(null, pp, now);
+        return;
+    }
     // ================================================================
     // 🔒🔒🔒 [LOCK-E] _readyToRender 守卫检查
     // ⚠️ 不可轻易修改重要逻辑代码，很容易引起浮窗动画的播放抽帧卡顿的bug，
@@ -1062,14 +1076,19 @@ SMTool._syncAnimPreviewViewport = function (pp, newW, newH) {
     if (!pp || !pp.skeleton || !pp.gl) return;
 
     var canvas = pp.canvas;
+    // ★ 取 canvas 容器的实际像素尺寸（排除标题栏），避免拉伸
+    var wrap = canvas ? canvas.parentElement : null;
+    var actualW = (wrap && wrap.clientWidth > 10) ? wrap.clientWidth : (newW || pp._canvasWidth || 320);
+    var actualH = (wrap && wrap.clientHeight > 10) ? wrap.clientHeight : (newH || pp._canvasHeight || 500);
     if (canvas) {
-        canvas.width = newW;
-        canvas.height = newH;
+        canvas.width = actualW;
+        canvas.height = actualH;
     }
-    pp._canvasWidth = newW;
-    pp._canvasHeight = newH;
+    pp._canvasWidth = actualW;
+    pp._canvasHeight = actualH;
 
-    var cw = newW, ch = newH;
+    // ★ 用实际 canvas 尺寸（非面板尺寸）做 ortho 和居中
+    var cw = actualW, ch = actualH;
     var sk = pp.skeleton;
     var useVer = pp._spineVer;
     var bo = pp._boundsOffset;
@@ -1152,6 +1171,23 @@ SMTool._destroyAnimPreview = function () {
     if (pp._sceneRenderer) { try { pp._sceneRenderer.dispose(); } catch (e) {} }
     if (pp._batcher) { try { pp._batcher.dispose(); } catch (e) {} }
     if (pp._shader) { try { pp._shader.dispose(); } catch (e) {} }
+
+    // ★ 销毁层级节点预览的多层骨架资源
+    if (pp._layerSkeletons) {
+        for (var ls = 0; ls < pp._layerSkeletons.length; ls++) {
+            var lsk = pp._layerSkeletons[ls];
+            if (lsk.batcher) { try { lsk.batcher.dispose(); } catch (e) {} }
+            if (lsk.shader) { try { lsk.shader.dispose(); } catch (e) {} }
+            if (lsk.skeletonRenderer) { try { lsk.skeletonRenderer.dispose(); } catch (e) {} }
+            if (lsk.glTextures) {
+                for (var gt = 0; gt < lsk.glTextures.length; gt++) {
+                    try { lsk.glTextures[gt].dispose(); } catch (e) {}
+                }
+            }
+        }
+        pp._layerSkeletons = null;
+    }
+    pp._layerPreview = false;
 
     // ★ 直接销毁预览专属纹理（独立 GL 上下文，不在共享缓存中）
     if (pp._glTextures) {

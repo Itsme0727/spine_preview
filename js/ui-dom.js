@@ -74,6 +74,9 @@ SMTool._createEl = function (node) {
                 '</div>' +
                 '<span class="scale-handle" onmousedown="event.stopPropagation();SMTool._onScaleStart(event,' + node.id + ')" title="拖拽缩放"><i class="scale-handle-icon"></i></span>';
         }
+    } else if (node.nodeType === 'layer') {
+        SMTool._createLayerEl(node);
+        return;
     } else if (node.nodeType === 'entry') {
         el.classList.add('entry-node');
         var entryText = SMTool._esc(node._exitText || '');
@@ -2273,6 +2276,47 @@ SMTool._updateSel = function () {
     if (alignBar) {
         alignBar.style.display = (SMData.selectedNodes.size >= 2) ? 'flex' : 'none';
     }
+
+    // ★ 层级节点：选中时自动弹出浮窗预览 + 刷新框内文字
+    if (SMData.selectedNodes.size === 1 && SMData.selectedNode) {
+        var selNode = SMData.nodes.get(SMData.selectedNode);
+        if (selNode && selNode.nodeType === 'layer') {
+            // 强制刷新层级框文字（直接从连线表读取，三重兜底）
+            var elL = SMTool._getEl(selNode.id);
+            if (elL) {
+                var boxesL = elL.querySelectorAll('.layer-box-text');
+                var ldL = SMTool._layerData(selNode);
+                for (var liL = 0; liL < boxesL.length; liL++) {
+                    var lnumL = liL + 1;
+                    var txt = '请连线获取动画骨架';
+                    var foundL = false;
+                    // 兜底1：从连线表 _layerNum 匹配
+                    for (var ciL = 0; ciL < SMData.connections.length; ciL++) {
+                        var cL = SMData.connections[ciL];
+                        if (cL.fromNode === selNode.id && cL._layerNum === lnumL) {
+                            var tnL = SMData.nodes.get(cL.toNode);
+                            if (tnL) { txt = (tnL.sourceFile || tnL.name || '动画节点') + (tnL.currentAnim ? ' — ' + tnL.currentAnim : ''); foundL = true; }
+                            break;
+                        }
+                    }
+                    // 兜底2：从连线表 fromState 解析层号
+                    if (!foundL) {
+                        for (var ciL2 = 0; ciL2 < SMData.connections.length; ciL2++) {
+                            var cL2 = SMData.connections[ciL2];
+                            if (cL2.fromNode === selNode.id && typeof cL2.fromState === 'string' && cL2.fromState === 'layer_' + lnumL) {
+                                var tnL2a = SMData.nodes.get(cL2.toNode);
+                                if (tnL2a) { txt = (tnL2a.sourceFile || tnL2a.name || '动画节点') + (tnL2a.currentAnim ? ' — ' + tnL2a.currentAnim : ''); foundL = true; break; }
+                            }
+                        }
+                    }
+                    // ★ 无连线则清除旧数据
+                    if (!foundL && ldL.layers[lnumL]) delete ldL.layers[lnumL];
+                    boxesL[liL].textContent = txt;
+                }
+            }
+            SMTool._showAnimPreview(selNode);
+        }
+    }
 };
 
 // ---- 清除节点面板缓存（截图/备注变更时调用）----
@@ -2293,6 +2337,11 @@ SMTool._invalidatePanelCache = function (nid) {
 
 // ---- 显示预览面板 ----
 SMTool._showAnimPreview = function (node) {
+    // ★ 层级节点：多层叠加预览
+    if (node && node.nodeType === 'layer') {
+        SMTool._showLayerPreview(node);
+        return;
+    }
     // 跳过非 Spine 节点
     if (!node || node.nodeType !== 'spine') return;
     // ★ 播放启动期间抑制中间态重建
@@ -2476,7 +2525,12 @@ SMTool._initAnimPreviewPanel = function () {
                 // 同步 canvas 尺寸并更新视口（相机/投影/骨架位置重新计算）
                 var canvas = document.getElementById('appCanvas');
                 if (canvas) {
-                    SMTool._syncAnimPreviewViewport(pp, newW, newH);
+                    // ★ 层级预览使用专用路径（等比例），普通预览使用通用路径
+                    if (pp._layerSkeletons && pp._layerSkeletons.length > 0) {
+                        SMTool._syncLayerPreviewViewport(pp, newW, newH);
+                    } else {
+                        SMTool._syncAnimPreviewViewport(pp, newW, newH);
+                    }
                 }
             }
 
@@ -2492,7 +2546,8 @@ SMTool._initAnimPreviewPanel = function () {
 
     // 面板内鼠标滚轮 → 缩放 Spine 动画内容
     panel.addEventListener('wheel', function (e) {
-        if (!pp.visible || !pp.skeleton || !pp.gl) return;
+        if (!pp.visible || !pp.gl) return;
+        if (!pp.skeleton && !(pp._layerSkeletons && pp._layerSkeletons.length > 0)) return;
         e.preventDefault();
         e.stopPropagation();
         pp._contentZoom = pp._contentZoom || 1.0;
@@ -2503,7 +2558,12 @@ SMTool._initAnimPreviewPanel = function () {
         if (sourceNode && sourceNode.sourceFile) {
             SMData._previewZooms[sourceNode.sourceFile] = pp._contentZoom;
         }
-        SMTool._syncAnimPreviewViewport(pp, pp._canvasWidth || pp.panelW, pp._canvasHeight || pp.panelH);
+        // ★ 层级预览：更新每层的 MVP
+        if (pp._layerSkeletons && pp._layerSkeletons.length > 0) {
+            SMTool._syncLayerPreviewViewport(pp);
+        } else {
+            SMTool._syncAnimPreviewViewport(pp, pp._canvasWidth || pp.panelW, pp._canvasHeight || pp.panelH);
+        }
     }, { passive: false });
 };
 
