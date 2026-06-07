@@ -149,11 +149,11 @@ SMTool._createEl = function (node) {
             SMTool._buildTrackPanelHtml(node) +
         '</div>' +
         '<div class="footer">' +
-            '<div class="footer-skins"><span class="skin-label">皮肤</span>' + skinsHtml + '</div>' +
             '<div class="footer-controls">' +
                 '<button class="loop-toggle' + (node.loop !== false ? ' active' : '') + '" onclick="event.stopPropagation();SMTool._toggleLoop(' + node.id + ')">' + (node.loop !== false ? '🔄 循环播放' : '▶ 单次播放') + '</button>' +
                 '<label class="pma-toggle" title="预乘 Alpha"><input type="checkbox" onchange="SMTool._togglePMA(' + node.id + ',this.checked)"' + (node.premultipliedAlpha ? ' checked' : '') + '>预乘Alpha</label>' +
             '</div>' +
+            '<div class="footer-skins"><span class="skin-label">皮肤</span>' + skinsHtml + '</div>' +
         '</div>' +
         '<div class="node-extras">' +
             '<div class="bone-tags" id="boneTags-' + node.id + '"></div>' +
@@ -173,13 +173,19 @@ SMTool._createEl = function (node) {
 // ★ 构建节点顶部指示图标 HTML
 SMTool._buildNodeIndicatorsHtml = function (node) {
     var html = '<div class="node-indicators">';
-    // 皮肤（排除 default）
-    var skinCount = 0;
+    // 皮肤（有标记/备注/截图内容时显示，角标为已标记数量）
+    var skinMarked = 0;
     for (var si = 0; si < (node.skins || []).length; si++) {
-        if (node.skins[si] !== 'default') skinCount++;
+        var skn = node.skins[si];
+        if ((node._skinTags && node._skinTags[skn]) ||
+            (node._skinNotes && node._skinNotes[skn] && node._skinNotes[skn].trim().length > 0) ||
+            (node._skinScreenshots && node._skinScreenshots[skn] && (Array.isArray(node._skinScreenshots[skn]) ? node._skinScreenshots[skn].length > 0 : true))) {
+            skinMarked++;
+        }
     }
-    if (skinCount > 0) {
-        html += '<button class="ndi-btn" title="皮肤: ' + skinCount + ' 个" onclick="event.stopPropagation();SMTool._onIndicatorClick(' + node.id + ',\'skin\')" style="position:relative">🎨<span class="ndi-count">' + skinCount + '</span></button>';
+    // ★ 仅在有标记内容时才显示皮肤图标（无标记则不出现）
+    if (skinMarked > 0) {
+        html += '<button class="ndi-btn" title="皮肤: ' + skinMarked + ' 个" onclick="event.stopPropagation();SMTool._onIndicatorClick(' + node.id + ',\'skin\')" style="position:relative">🎨<span class="ndi-count">' + skinMarked + '</span></button>';
     }
     // 骨骼（仅当有标记内容时显示，角标为已标记数量）
     var boneMarked = 0;
@@ -200,10 +206,13 @@ SMTool._buildNodeIndicatorsHtml = function (node) {
     if (eventCount > 0) {
         html += '<button class="ndi-btn" title="事件帧: ' + eventCount + ' 个" onclick="event.stopPropagation();SMTool._onIndicatorClick(' + node.id + ',\'event\')" style="position:relative">⚡<span class="ndi-count">' + eventCount + '</span></button>';
     }
-    // 插槽（仅当有标记时显示，角标为已标记数量）
+    // 插槽（仅当有标记内容时显示，角标为已标记数量）
     var slotMarked = 0;
     for (var sli = 0; sli < (node.slots || []).length; sli++) {
-        if (node._slotTags && node._slotTags[node.slots[sli]]) {
+        var sln = node.slots[sli];
+        if ((node._slotTags && node._slotTags[sln]) ||
+            (node._slotNotes && node._slotNotes[sln] && node._slotNotes[sln].trim().length > 0) ||
+            (node._slotScreenshots && node._slotScreenshots[sln] && (Array.isArray(node._slotScreenshots[sln]) ? node._slotScreenshots[sln].length > 0 : true))) {
             slotMarked++;
         }
     }
@@ -528,6 +537,8 @@ SMTool._toggleLoop = function (nid) {
         btn.textContent = node.loop ? '🔄 循环播放' : '▶ 单次播放';
         btn.classList.toggle('active', node.loop);
     }
+    // ★ 同步底部栏状态
+    SMTool._updateBottomBar();
 };
 
 // ---- 状态描述更新 ----
@@ -639,6 +650,158 @@ SMTool._buildBoneRowHtml = function (node, boneName) {
     return html;
 };
 
+// ================================================================
+// 🔒🔒🔒 [LOCK-I] 皮肤行 HTML 构建（备注/截图/淡入淡出）
+// ⚠️ 不可轻易修改重要逻辑代码，很容易引起浮窗动画的播放抽帧卡顿的bug，
+//    如需修改，一定要寻求同意"解锁"才可以。
+// 与骨骼行结构一致，但截图无挂载/取消挂载按钮。
+// ================================================================
+SMTool._buildSkinRowHtml = function (node, skinName) {
+    var isMarked = !!(node._skinTags && node._skinTags[skinName]);
+    var isCurrentSkin = (node.currentSkin === skinName) ||
+        (!node.currentSkin && node.skeletonData && node.skeletonData.defaultSkin && node.skeletonData.defaultSkin.name === skinName);
+    var shots = (node._skinScreenshots && node._skinScreenshots[skinName]) ? node._skinScreenshots[skinName] : [];
+    if (!Array.isArray(shots)) shots = shots ? [shots] : [];
+    var noteText = (node._skinNotes && node._skinNotes[skinName]) ? (node._skinNotes[skinName]) : '';
+
+    // ★ 皮肤无淡入淡出
+    var previewBadges = '';
+    if (shots.length > 0) {
+        previewBadges += '<span class="dfp-bone-badge" title="' + shots.length + ' 张截图">📷' + shots.length + '</span>';
+    }
+    if (noteText.trim().length > 0) {
+        previewBadges += '<span class="dfp-bone-badge" title="有备注">📝</span>';
+    }
+    if (isCurrentSkin) {
+        previewBadges += '<span class="dfp-bone-badge" style="background:#ff6699;color:#fff" title="当前皮肤">✓</span>';
+    }
+
+    var hasContent = (shots.length > 0 || noteText.trim().length > 0);
+    var markClass = 'dfp-bone-mark';
+    if (isMarked) {
+        markClass += ' active';
+    } else if (hasContent) {
+        markClass += ' has-content';
+    }
+
+    var html = '<div class="dfp-row dfp-bone-row' + (isMarked ? ' expanded' : '') + (isCurrentSkin ? ' skin-current' : '') + '" data-bone="' + SMTool._esc(skinName) + '" onclick="SMTool._setSkin(' + node.id + ',\'' + SMTool._escAttr(skinName) + '\')" style="cursor:pointer" title="点击切换到此皮肤">' +
+        '<span class="dfp-bone-name">' + SMTool._esc(skinName) + previewBadges + '</span>' +
+        '<span class="dfp-bone-right"></span>' +
+        '<span class="' + markClass + '" data-bone="' + SMTool._esc(skinName) + '" onclick="event.stopPropagation();SMTool._toggleSkinTag(\'' + SMTool._esc(skinName) + '\')" title="' + (isMarked ? '取消标记' : '标记皮肤（展开备注和截图）') + '">+</span>' +
+        '</div>';
+
+    if (isMarked) {
+        var noteTextEsc = SMTool._esc(noteText);
+        if (!Array.isArray(shots)) shots = shots ? [shots] : [];
+
+        // ★ 皮肤无淡入淡出（仅骨骼有）
+
+        var shotsHtml = '';
+        for (var si = 0; si < shots.length; si++) {
+            var shotVal = shots[si];
+            var isNewFormat = (typeof shotVal === 'number');
+            if (isNewFormat) {
+                var shotSrc = SMData._shotGetThumb(shotVal);
+                if (!shotSrc) {
+                    shotSrc = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="128" height="96" viewBox="0 0 128 96"><rect fill="%232a2a35" width="128" height="96"/><text fill="%23666" x="64" y="52" text-anchor="middle" font-size="12">📷 ' + (si + 1) + '</text></svg>');
+                }
+                // ★ 皮肤截图无挂载按钮
+                shotsHtml += '<div class="dfp-shot-item">' +
+                    '<img src="' + shotSrc + '" alt="截图' + (si + 1) + '" onclick="event.stopPropagation();SMTool._openSkinScreenshot(\'' + SMTool._esc(skinName) + '\',' + si + ')">' +
+                    '<span class="dfp-shot-del" onclick="event.stopPropagation();SMTool._removeSkinScreenshot(\'' + SMTool._esc(skinName) + '\',' + si + ')" title="删除此截图">×</span>' +
+                '</div>';
+            } else {
+                shotsHtml += '<div class="dfp-shot-item" onclick="event.stopPropagation();SMTool._openSkinScreenshot(\'' + SMTool._esc(skinName) + '\',' + si + ')">' +
+                    '<img src="' + shotVal + '" alt="截图' + (si + 1) + '" loading="lazy">' +
+                    '<span class="dfp-shot-del" onclick="event.stopPropagation();SMTool._removeSkinScreenshot(\'' + SMTool._esc(skinName) + '\',' + si + ')" title="删除此截图">×</span>' +
+                '</div>';
+            }
+        }
+        html += '<div class="dfp-bone-note-area show" data-bone-note="' + SMTool._esc(skinName) + '">' +
+            '<textarea placeholder="皮肤备注..." oninput="SMTool._updateSkinNote(\'' + SMTool._esc(skinName) + '\', this.value)" onclick="event.stopPropagation()">' + noteTextEsc + '</textarea>' +
+            '<div class="dfp-bone-shot-area show">' +
+                '<div class="dfp-shot-list">' + shotsHtml + '</div>' +
+                '<button class="dfp-shot-add" onclick="event.stopPropagation();SMTool._pickSkinScreenshot(\'' + SMTool._esc(skinName) + '\')" ondragover="event.preventDefault();event.stopPropagation()" ondrop="event.preventDefault();event.stopPropagation();SMTool._dropSkinScreenshot(event,\'' + SMTool._esc(skinName) + '\')" title="选取图片 / 拖入图片">📁 选取图片</button>' +
+            '</div>' +
+        '</div>';
+    }
+    return html;
+};
+// 🔒 [LOCK-I] END
+
+// ================================================================
+// 🔒🔒🔒 [LOCK-J] 插槽行 HTML 构建（备注/截图/淡入淡出）
+// ⚠️ 不可轻易修改重要逻辑代码，很容易引起浮窗动画的播放抽帧卡顿的bug，
+//    如需修改，一定要寻求同意"解锁"才可以。
+// ================================================================
+SMTool._buildSlotRowHtml = function (node, slotName) {
+    var isMarked = !!(node._slotTags && node._slotTags[slotName]);
+    var shots = (node._slotScreenshots && node._slotScreenshots[slotName]) ? node._slotScreenshots[slotName] : [];
+    if (!Array.isArray(shots)) shots = shots ? [shots] : [];
+    var noteText = (node._slotNotes && node._slotNotes[slotName]) ? (node._slotNotes[slotName]) : '';
+
+    // ★ 插槽无淡入淡出
+    var previewBadges = '';
+    if (shots.length > 0) {
+        previewBadges += '<span class="dfp-bone-badge" title="' + shots.length + ' 张截图">📷' + shots.length + '</span>';
+    }
+    if (noteText.trim().length > 0) {
+        previewBadges += '<span class="dfp-bone-badge" title="有备注">📝</span>';
+    }
+
+    var hasContent = (shots.length > 0 || noteText.trim().length > 0);
+    var markClass = 'dfp-bone-mark';
+    if (isMarked) {
+        markClass += ' active';
+    } else if (hasContent) {
+        markClass += ' has-content';
+    }
+
+    var html = '<div class="dfp-row dfp-bone-row' + (isMarked ? ' expanded' : '') + '" data-bone="' + SMTool._esc(slotName) + '" onclick="SMTool._toggleSlotTag(\'' + SMTool._esc(slotName) + '\')" style="cursor:pointer">' +
+        '<span class="dfp-bone-name">' + SMTool._esc(slotName) + previewBadges + '</span>' +
+        '<span class="dfp-bone-right"></span>' +
+        '<span class="' + markClass + '" data-bone="' + SMTool._esc(slotName) + '" onclick="event.stopPropagation();SMTool._toggleSlotTag(\'' + SMTool._esc(slotName) + '\')" title="' + (isMarked ? '取消标记' : '标记插槽（展开备注和截图）') + '">+</span>' +
+        '</div>';
+
+    if (isMarked) {
+        var noteTextEsc = SMTool._esc(noteText);
+        if (!Array.isArray(shots)) shots = shots ? [shots] : [];
+
+        // ★ 插槽无淡入淡出（仅骨骼有）
+
+        var shotsHtml = '';
+        for (var si = 0; si < shots.length; si++) {
+            var shotVal = shots[si];
+            var isNewFormat = (typeof shotVal === 'number');
+            if (isNewFormat) {
+                var shotSrc = SMData._shotGetThumb(shotVal);
+                if (!shotSrc) {
+                    shotSrc = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="128" height="96" viewBox="0 0 128 96"><rect fill="%232a2a35" width="128" height="96"/><text fill="%23666" x="64" y="52" text-anchor="middle" font-size="12">📷 ' + (si + 1) + '</text></svg>');
+                }
+                // ★ 插槽截图无挂载按钮
+                shotsHtml += '<div class="dfp-shot-item">' +
+                    '<img src="' + shotSrc + '" alt="截图' + (si + 1) + '" onclick="event.stopPropagation();SMTool._openSlotScreenshot(\'' + SMTool._esc(slotName) + '\',' + si + ')">' +
+                    '<span class="dfp-shot-del" onclick="event.stopPropagation();SMTool._removeSlotScreenshot(\'' + SMTool._esc(slotName) + '\',' + si + ')" title="删除此截图">×</span>' +
+                '</div>';
+            } else {
+                shotsHtml += '<div class="dfp-shot-item" onclick="event.stopPropagation();SMTool._openSlotScreenshot(\'' + SMTool._esc(slotName) + '\',' + si + ')">' +
+                    '<img src="' + shotVal + '" alt="截图' + (si + 1) + '" loading="lazy">' +
+                    '<span class="dfp-shot-del" onclick="event.stopPropagation();SMTool._removeSlotScreenshot(\'' + SMTool._esc(slotName) + '\',' + si + ')" title="删除此截图">×</span>' +
+                '</div>';
+            }
+        }
+        html += '<div class="dfp-bone-note-area show" data-bone-note="' + SMTool._esc(slotName) + '">' +
+            '<textarea placeholder="插槽备注..." oninput="SMTool._updateSlotNote(\'' + SMTool._esc(slotName) + '\', this.value)" onclick="event.stopPropagation()">' + noteTextEsc + '</textarea>' +
+            '<div class="dfp-bone-shot-area show">' +
+                '<div class="dfp-shot-list">' + shotsHtml + '</div>' +
+                '<button class="dfp-shot-add" onclick="event.stopPropagation();SMTool._pickSlotScreenshot(\'' + SMTool._esc(slotName) + '\')" ondragover="event.preventDefault();event.stopPropagation()" ondrop="event.preventDefault();event.stopPropagation();SMTool._dropSlotScreenshot(event,\'' + SMTool._esc(slotName) + '\')" title="选取图片 / 拖入图片">📁 选取图片</button>' +
+            '</div>' +
+        '</div>';
+    }
+    return html;
+};
+// 🔒 [LOCK-J] END
+
 // ★ 判断节点骨骼页签是否有任何内容（标记/备注/截图/淡入淡出）
 SMTool._hasBoneContent = function (node) {
     if (!node || !node.bones) return false;
@@ -656,11 +819,34 @@ SMTool._hasBoneContent = function (node) {
     return false;
 };
 
-// ★ 判断节点插槽页签是否有任何内容（仅标记）
+// ★ 判断节点皮肤页签是否有任何内容（标记/备注/截图，不含淡入淡出）
+SMTool._hasSkinContent = function (node) {
+    if (!node || !node.skins) return false;
+    for (var i = 0; i < node.skins.length; i++) {
+        var sn = node.skins[i];
+        if (node._skinTags && node._skinTags[sn]) return true;
+        if (node._skinNotes && node._skinNotes[sn] && node._skinNotes[sn].trim().length > 0) return true;
+        if (node._skinScreenshots && node._skinScreenshots[sn]) {
+            var ss = node._skinScreenshots[sn];
+            if (Array.isArray(ss) && ss.length > 0) return true;
+            if (ss && !Array.isArray(ss)) return true;
+        }
+    }
+    return false;
+};
+
+// ★ 判断节点插槽页签是否有任何内容（标记/备注/截图，不含淡入淡出）
 SMTool._hasSlotContent = function (node) {
     if (!node || !node.slots) return false;
     for (var i = 0; i < node.slots.length; i++) {
-        if (node._slotTags && node._slotTags[node.slots[i]]) return true;
+        var sn = node.slots[i];
+        if (node._slotTags && node._slotTags[sn]) return true;
+        if (node._slotNotes && node._slotNotes[sn] && node._slotNotes[sn].trim().length > 0) return true;
+        if (node._slotScreenshots && node._slotScreenshots[sn]) {
+            var ss = node._slotScreenshots[sn];
+            if (Array.isArray(ss) && ss.length > 0) return true;
+            if (ss && !Array.isArray(ss)) return true;
+        }
     }
     return false;
 };
@@ -873,14 +1059,13 @@ SMTool._refreshBoneTagsUI = function (node) {
     for (var b = 0; b < bones.length; b++) {
         var bn = bones[b];
         var states = node._boneTags[bn] || [];
-        html += '<div class="bone-tag-capsule" onclick="event.stopPropagation();SMTool._showBoneStateMenu(event,' + node.id + ',\'' + SMTool._esc(bn) + '\')">' +
+        html += '<div class="bone-tag-capsule">' +
             '<span class="bone-tag-name">' + SMTool._esc(bn) + '</span>';
         for (var s = 0; s < states.length; s++) {
             html += '<div class="bone-tag-state-capsule">' + SMTool._esc(states[s]) + '</div>';
         }
         html += '</div>';
     }
-    html += '<button class="bone-tag-add-btn" onclick="event.stopPropagation();SMTool._showBoneAddMenu(event,' + node.id + ')" title="添加挂点">+</button>';
     el.innerHTML = html;
 };
 
@@ -969,6 +1154,363 @@ SMTool._fadeStepInput = function (btn, dir) {
     inp.value = v.toFixed(1);
     if (typeof inp.onchange === 'function') inp.onchange();
 };
+
+// ================================================================
+// 🔒🔒🔒 [LOCK-K] 皮肤标记/备注/截图/淡入淡出逻辑
+// ⚠️ 不可轻易修改重要逻辑代码，很容易引起浮窗动画的播放抽帧卡顿的bug，
+//    如需修改，一定要寻求同意"解锁"才可以。
+// ================================================================
+
+SMTool._toggleSkinTag = function (skinName) {
+    var node = SMData.nodes.get(SMData.selectedNode);
+    if (!node || node.nodeType !== 'spine') return;
+    var sameSourceNodes = SMTool._getSameSourceNodes(node);
+    for (var si = 0; si < sameSourceNodes.length; si++) {
+        var n = sameSourceNodes[si];
+        if (!n._skinTags) n._skinTags = {};
+        if (n._skinTags[skinName]) {
+            delete n._skinTags[skinName];
+        } else {
+            n._skinTags[skinName] = true;
+        }
+    }
+    SMData._lastPanelNodeId = -1;
+    SMTool._updateFloatPanel();
+    // ★ 刷新指示图标
+    for (var sj = 0; sj < sameSourceNodes.length; sj++) {
+        var n2 = sameSourceNodes[sj];
+        var nEl = SMTool._getEl(n2.id);
+        if (nEl) {
+            var indEl = nEl.querySelector('.node-indicators');
+            if (indEl) indEl.outerHTML = SMTool._buildNodeIndicatorsHtml(n2);
+        }
+    }
+};
+
+SMTool._toggleSlotTag = function (slotName) {
+    var node = SMData.nodes.get(SMData.selectedNode);
+    if (!node || node.nodeType !== 'spine') return;
+    var sameSourceNodes = SMTool._getSameSourceNodes(node);
+    for (var si = 0; si < sameSourceNodes.length; si++) {
+        var n = sameSourceNodes[si];
+        if (!n._slotTags) n._slotTags = {};
+        if (n._slotTags[slotName]) {
+            delete n._slotTags[slotName];
+        } else {
+            n._slotTags[slotName] = true;
+        }
+    }
+    SMData._lastPanelNodeId = -1;
+    SMTool._updateFloatPanel();
+    // ★ 刷新指示图标
+    for (var sj = 0; sj < sameSourceNodes.length; sj++) {
+        var n2 = sameSourceNodes[sj];
+        var nEl = SMTool._getEl(n2.id);
+        if (nEl) {
+            var indEl = nEl.querySelector('.node-indicators');
+            if (indEl) indEl.outerHTML = SMTool._buildNodeIndicatorsHtml(n2);
+        }
+    }
+};
+
+// ---- 皮肤备注 ----
+SMTool._updateSkinNote = function (skinName, value) {
+    var node = SMData.nodes.get(SMData.selectedNode);
+    if (!node) return;
+    var sameSourceNodes = SMTool._getSameSourceNodes(node);
+    for (var si = 0; si < sameSourceNodes.length; si++) {
+        var n = sameSourceNodes[si];
+        if (!n._skinNotes) n._skinNotes = {};
+        n._skinNotes[skinName] = value;
+    }
+};
+
+// ---- 插槽备注 ----
+SMTool._updateSlotNote = function (slotName, value) {
+    var node = SMData.nodes.get(SMData.selectedNode);
+    if (!node) return;
+    var sameSourceNodes = SMTool._getSameSourceNodes(node);
+    for (var si = 0; si < sameSourceNodes.length; si++) {
+        var n = sameSourceNodes[si];
+        if (!n._slotNotes) n._slotNotes = {};
+        n._slotNotes[slotName] = value;
+    }
+};
+
+// ---- 皮肤淡入淡出 ----
+SMTool._toggleSkinFade = function (skinName, enabled) {
+    var node = SMData.nodes.get(SMData.selectedNode);
+    if (!node) return;
+    var sameSourceNodes = SMTool._getSameSourceNodes(node);
+    for (var si = 0; si < sameSourceNodes.length; si++) {
+        var n = sameSourceNodes[si];
+        if (!n._skinFade) n._skinFade = {};
+        if (!n._skinFade[skinName]) n._skinFade[skinName] = { enabled: false, duration: 1.0 };
+        n._skinFade[skinName].enabled = enabled;
+    }
+    var wrap = document.querySelector('.dfp-bone-note-area[data-bone-note="' + skinName + '"]');
+    if (wrap) {
+        var inputWrap = wrap.parentElement.querySelector('.dfp-fade-input-wrap');
+        if (inputWrap) inputWrap.classList.toggle('hidden', !enabled);
+    }
+};
+
+SMTool._setSkinFadeDur = function (skinName, value) {
+    var node = SMData.nodes.get(SMData.selectedNode);
+    if (!node) return;
+    var sameSourceNodes = SMTool._getSameSourceNodes(node);
+    for (var si = 0; si < sameSourceNodes.length; si++) {
+        var n = sameSourceNodes[si];
+        if (!n._skinFade) n._skinFade = {};
+        if (!n._skinFade[skinName]) n._skinFade[skinName] = { enabled: true, duration: 1.0 };
+        n._skinFade[skinName].duration = Math.max(0.1, Math.min(60, value || 1.0));
+    }
+};
+
+// ---- 插槽淡入淡出 ----
+SMTool._toggleSlotFade = function (slotName, enabled) {
+    var node = SMData.nodes.get(SMData.selectedNode);
+    if (!node) return;
+    var sameSourceNodes = SMTool._getSameSourceNodes(node);
+    for (var si = 0; si < sameSourceNodes.length; si++) {
+        var n = sameSourceNodes[si];
+        if (!n._slotFade) n._slotFade = {};
+        if (!n._slotFade[slotName]) n._slotFade[slotName] = { enabled: false, duration: 1.0 };
+        n._slotFade[slotName].enabled = enabled;
+    }
+    var wrap = document.querySelector('.dfp-bone-note-area[data-bone-note="' + slotName + '"]');
+    if (wrap) {
+        var inputWrap = wrap.parentElement.querySelector('.dfp-fade-input-wrap');
+        if (inputWrap) inputWrap.classList.toggle('hidden', !enabled);
+    }
+};
+
+SMTool._setSlotFadeDur = function (slotName, value) {
+    var node = SMData.nodes.get(SMData.selectedNode);
+    if (!node) return;
+    var sameSourceNodes = SMTool._getSameSourceNodes(node);
+    for (var si = 0; si < sameSourceNodes.length; si++) {
+        var n = sameSourceNodes[si];
+        if (!n._slotFade) n._slotFade = {};
+        if (!n._slotFade[slotName]) n._slotFade[slotName] = { enabled: true, duration: 1.0 };
+        n._slotFade[slotName].duration = Math.max(0.1, Math.min(60, value || 1.0));
+    }
+};
+
+// ---- 皮肤截图（文件选取 + 拖拽 + 添加 + 删除 + 查看） ----
+SMTool._pickSkinScreenshot = function (skinName) {
+    var input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.multiple = true;
+    input.onchange = function () {
+        var files = input.files;
+        if (!files || files.length === 0) return;
+        var loaded = 0;
+        var dataUrls = [];
+        var fileNames = [];
+        for (var i = 0; i < files.length; i++) {
+            fileNames.push(files[i].name);
+            (function (file, idx) {
+                var reader = new FileReader();
+                reader.onload = function () {
+                    dataUrls[idx] = reader.result;
+                    loaded++;
+                    if (loaded === files.length) SMTool._addSkinScreenshots(skinName, dataUrls, fileNames);
+                };
+                reader.readAsDataURL(file);
+            })(files[i], i);
+        }
+    };
+    input.click();
+};
+
+SMTool._dropSkinScreenshot = function (e, skinName) {
+    var files = e.dataTransfer.files;
+    if (!files || files.length === 0) return;
+    var loaded = 0;
+    var dataUrls = [];
+    var fileNames = [];
+    for (var i = 0; i < files.length; i++) {
+        var file = files[i];
+        if (!file.type.startsWith('image/')) continue;
+        fileNames.push(file.name);
+        (function (f, idx) {
+            var reader = new FileReader();
+            reader.onload = function () {
+                dataUrls[idx] = reader.result;
+                loaded++;
+                if (loaded === files.length) SMTool._addSkinScreenshots(skinName, dataUrls, fileNames);
+            };
+            reader.readAsDataURL(f);
+        })(file, i);
+    }
+};
+
+SMTool._addSkinScreenshots = function (skinName, dataUrls, fileNames) {
+    var node = SMData.nodes.get(SMData.selectedNode);
+    if (!node || node.nodeType !== 'spine') return;
+    var sameSourceNodes = SMTool._getSameSourceNodes(node);
+
+    for (var i = 0; i < dataUrls.length; i++) {
+        var shotId = SMData._shotRegister(dataUrls[i]);
+        var entry = SMData._shotStore[shotId];
+        if (entry && fileNames && fileNames[i] && !entry._fileName) {
+            entry._fileName = fileNames[i];
+        }
+        for (var ni = 0; ni < sameSourceNodes.length; ni++) {
+            var sn = sameSourceNodes[ni];
+            if (!sn._skinScreenshots) sn._skinScreenshots = {};
+            if (!sn._skinScreenshots[skinName]) sn._skinScreenshots[skinName] = [];
+            if (!Array.isArray(sn._skinScreenshots[skinName])) sn._skinScreenshots[skinName] = [sn._skinScreenshots[skinName]];
+            sn._skinScreenshots[skinName].push(shotId);
+        }
+    }
+
+    SMData._lastPanelNodeId = -1;
+    SMTool._updateFloatPanel();
+};
+
+SMTool._removeSkinScreenshot = function (skinName, index) {
+    var node = SMData.nodes.get(SMData.selectedNode);
+    if (!node || !node._skinScreenshots || !node._skinScreenshots[skinName]) return;
+    if (!Array.isArray(node._skinScreenshots[skinName])) return;
+    var shotId = node._skinScreenshots[skinName][index];
+    node._skinScreenshots[skinName].splice(index, 1);
+    if (node._skinScreenshots[skinName].length === 0) delete node._skinScreenshots[skinName];
+    if (!SMData._hasEverSaved && typeof shotId === 'number') {
+        var stillUsed = false;
+        var nodesIter = SMData.nodes.values();
+        var nr = nodesIter.next();
+        while (!nr.done) {
+            var n = nr.value;
+            if (n._skinScreenshots) {
+                var keys = Object.keys(n._skinScreenshots);
+                for (var bk = 0; bk < keys.length; bk++) {
+                    var shots = n._skinScreenshots[keys[bk]];
+                    if (Array.isArray(shots) && shots.indexOf(shotId) >= 0) { stillUsed = true; break; }
+                }
+            }
+            if (stillUsed) break;
+            nr = nodesIter.next();
+        }
+        if (!stillUsed) SMData._shotRelease(shotId);
+    }
+    SMData._lastPanelNodeId = -1;
+    SMTool._updateFloatPanel();
+};
+
+SMTool._openSkinScreenshot = function (skinName, index) {
+    SMTool._openScreenshot(skinName, index, '_skinScreenshots');
+};
+
+// ---- 插槽截图（文件选取 + 拖拽 + 添加 + 删除 + 查看） ----
+SMTool._pickSlotScreenshot = function (slotName) {
+    var input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.multiple = true;
+    input.onchange = function () {
+        var files = input.files;
+        if (!files || files.length === 0) return;
+        var loaded = 0;
+        var dataUrls = [];
+        var fileNames = [];
+        for (var i = 0; i < files.length; i++) {
+            fileNames.push(files[i].name);
+            (function (file, idx) {
+                var reader = new FileReader();
+                reader.onload = function () {
+                    dataUrls[idx] = reader.result;
+                    loaded++;
+                    if (loaded === files.length) SMTool._addSlotScreenshots(slotName, dataUrls, fileNames);
+                };
+                reader.readAsDataURL(file);
+            })(files[i], i);
+        }
+    };
+    input.click();
+};
+
+SMTool._dropSlotScreenshot = function (e, slotName) {
+    var files = e.dataTransfer.files;
+    if (!files || files.length === 0) return;
+    var loaded = 0;
+    var dataUrls = [];
+    var fileNames = [];
+    for (var i = 0; i < files.length; i++) {
+        var file = files[i];
+        if (!file.type.startsWith('image/')) continue;
+        fileNames.push(file.name);
+        (function (f, idx) {
+            var reader = new FileReader();
+            reader.onload = function () {
+                dataUrls[idx] = reader.result;
+                loaded++;
+                if (loaded === files.length) SMTool._addSlotScreenshots(slotName, dataUrls, fileNames);
+            };
+            reader.readAsDataURL(f);
+        })(file, i);
+    }
+};
+
+SMTool._addSlotScreenshots = function (slotName, dataUrls, fileNames) {
+    var node = SMData.nodes.get(SMData.selectedNode);
+    if (!node || node.nodeType !== 'spine') return;
+    var sameSourceNodes = SMTool._getSameSourceNodes(node);
+
+    for (var i = 0; i < dataUrls.length; i++) {
+        var shotId = SMData._shotRegister(dataUrls[i]);
+        var entry = SMData._shotStore[shotId];
+        if (entry && fileNames && fileNames[i] && !entry._fileName) {
+            entry._fileName = fileNames[i];
+        }
+        for (var ni = 0; ni < sameSourceNodes.length; ni++) {
+            var sn = sameSourceNodes[ni];
+            if (!sn._slotScreenshots) sn._slotScreenshots = {};
+            if (!sn._slotScreenshots[slotName]) sn._slotScreenshots[slotName] = [];
+            if (!Array.isArray(sn._slotScreenshots[slotName])) sn._slotScreenshots[slotName] = [sn._slotScreenshots[slotName]];
+            sn._slotScreenshots[slotName].push(shotId);
+        }
+    }
+
+    SMData._lastPanelNodeId = -1;
+    SMTool._updateFloatPanel();
+};
+
+SMTool._removeSlotScreenshot = function (slotName, index) {
+    var node = SMData.nodes.get(SMData.selectedNode);
+    if (!node || !node._slotScreenshots || !node._slotScreenshots[slotName]) return;
+    if (!Array.isArray(node._slotScreenshots[slotName])) return;
+    var shotId = node._slotScreenshots[slotName][index];
+    node._slotScreenshots[slotName].splice(index, 1);
+    if (node._slotScreenshots[slotName].length === 0) delete node._slotScreenshots[slotName];
+    if (!SMData._hasEverSaved && typeof shotId === 'number') {
+        var stillUsed = false;
+        var nodesIter = SMData.nodes.values();
+        var nr = nodesIter.next();
+        while (!nr.done) {
+            var n = nr.value;
+            if (n._slotScreenshots) {
+                var keys = Object.keys(n._slotScreenshots);
+                for (var bk = 0; bk < keys.length; bk++) {
+                    var shots = n._slotScreenshots[keys[bk]];
+                    if (Array.isArray(shots) && shots.indexOf(shotId) >= 0) { stillUsed = true; break; }
+                }
+            }
+            if (stillUsed) break;
+            nr = nodesIter.next();
+        }
+        if (!stillUsed) SMData._shotRelease(shotId);
+    }
+    SMData._lastPanelNodeId = -1;
+    SMTool._updateFloatPanel();
+};
+
+SMTool._openSlotScreenshot = function (slotName, index) {
+    SMTool._openScreenshot(slotName, index, '_slotScreenshots');
+};
+// 🔒 [LOCK-K] END
 
 // ---- 生成缩略图（max 128px，大幅减小面板渲染开销）----
 SMTool._generateThumbnail = function (dataUrl) {
@@ -1188,10 +1730,11 @@ SMTool._unloadPanelImages = function () {
     // ★ 不再需要：128px JPEG 缩略图仅 ~5-15KB，无需卸载
 };
 
-SMTool._openScreenshot = function (boneName, index) {
+SMTool._openScreenshot = function (boneName, index, storageKey) {
+    storageKey = storageKey || '_boneScreenshots';
     var node = SMData.nodes.get(SMData.selectedNode);
     if (!node) return;
-    var shots = node._boneScreenshots && node._boneScreenshots[boneName];
+    var shots = node[storageKey] && node[storageKey][boneName];
     if (!shots) return;
     if (!Array.isArray(shots)) shots = [shots];
     if (index === undefined) index = 0;
@@ -1318,7 +1861,7 @@ SMTool._showBoneAddMenu = function (e, nid) {
     if (!node || node.bones.length === 0) return;
     var menu = document.createElement('div');
     menu.className = 'bone-state-menu';
-    menu.style.cssText = 'position:fixed;z-index:200;background:var(--panel-bg);border:1px solid var(--border);border-radius:8px;padding:4px;max-height:200px;overflow-y:auto;box-shadow:0 4px 16px rgba(0,0,0,0.5)';
+    menu.style.cssText = 'position:fixed;z-index:200;background:var(--panel-bg);border:1px solid var(--border);border-radius:8px;padding:4px;max-height:300px;overflow-y:auto;box-shadow:0 4px 16px rgba(0,0,0,0.5);min-width:180px';
     menu.style.left = e.clientX + 'px';
     menu.style.top = e.clientY + 'px';
     for (var i = 0; i < node.bones.length; i++) {
@@ -1326,12 +1869,23 @@ SMTool._showBoneAddMenu = function (e, nid) {
         var item = document.createElement('div');
         item.className = 'bone-state-item';
         item.textContent = bn;
-        item.onclick = (function (bn2) {
-            return function () {
+        // ★ 添加内联样式确保菜单项可见可点击
+        item.style.cssText = 'padding:8px 14px;cursor:pointer;font-size:20px;color:var(--text);border-radius:4px;white-space:nowrap';
+        item.onmouseover = function () { this.style.background = 'var(--node-bg)'; };
+        item.onmouseout = function () { this.style.background = 'transparent'; };
+        (function (bn2, targetNid) {
+            item.onclick = function (ev2) {
+                ev2.stopPropagation();
                 if (menu.parentNode) document.body.removeChild(menu);
+                // ★ 确保目标节点被选中后再添加标记
+                var prevSel = SMData.selectedNode;
+                SMData.selectedNode = targetNid;
+                SMData.selectedNodes.clear();
+                SMData.selectedNodes.add(targetNid);
+                SMTool._updateSel();
                 SMTool._toggleBoneTag(bn2);
             };
-        })(bn);
+        })(bn, nid);
         menu.appendChild(item);
     }
     document.body.appendChild(menu);
@@ -1424,11 +1978,11 @@ SMTool._updateEl = function (node) {
             skinsHtml += '<span class="badge skin-badge' + isActive + '" onclick="event.stopPropagation();SMTool._setSkin(' + node.id + ',\'' + SMTool._escAttr(skinName) + '\')" title="切换皮肤: ' + SMTool._esc(skinName) + '">' + SMTool._esc(skinName) + '</span>';
         }
         ft.innerHTML =
-            '<div class="footer-skins"><span class="skin-label">皮肤</span>' + (skinsHtml || '<span class="badge">无皮肤</span>') + '</div>' +
             '<div class="footer-controls">' +
                 '<button class="loop-toggle' + (node.loop !== false ? ' active' : '') + '" onclick="event.stopPropagation();SMTool._toggleLoop(' + node.id + ')">' + (node.loop !== false ? '🔄 循环播放' : '▶ 单次播放') + '</button>' +
                 '<label class="pma-toggle" title="预乘 Alpha"><input type="checkbox" onchange="SMTool._togglePMA(' + node.id + ',this.checked)"' + (node.premultipliedAlpha ? ' checked' : '') + '>预乘Alpha</label>' +
-            '</div>';
+            '</div>' +
+            '<div class="footer-skins"><span class="skin-label">皮肤</span>' + (skinsHtml || '<span class="badge">无皮肤</span>') + '</div>';
         // 版本号
         var vb = el.querySelector('.version-badge');
         if (vb) vb.textContent = 'v' + (node.version || '?');
@@ -1993,10 +2547,8 @@ SMTool._updateFloatPanel = function () {
             return;
         }
 
-        // ★ 性能优化：同一节点数据未变 → 跳过重建（仅更新 footer PMA 状态）
+        // ★ 性能优化：同一节点数据未变 → 跳过重建
         if (SMData._lastPanelNodeId === node.id) {
-            // 仍需更新 footer（PMA 可能在其他地方被切换）
-            footer.innerHTML = _pmaBtnHtml(node, false, null);
             return;
         }
         SMData._lastPanelNodeId = node.id;
@@ -2023,14 +2575,11 @@ SMTool._updateFloatPanel = function () {
         // ===== 构建各页签内容 =====
 
         // --- 皮肤 ---
-        var currentSkin = node.currentSkin || (node.skeletonData && node.skeletonData.defaultSkin && node.skeletonData.defaultSkin.name) || (node.skins[0] || '');
         var skinRows = '';
         for (var si = 0; si < node.skins.length; si++) {
-            var skName = node.skins[si];
-            var isActiveSkin = skName === currentSkin ? ' active' : '';
-            skinRows += '<span class="dfp-skin-badge' + isActiveSkin + '" onclick="event.stopPropagation();SMTool._setSkin(' + node.id + ',\'' + SMTool._escAttr(skName) + '\')" title="切换皮肤: ' + SMTool._esc(skName) + '">' + SMTool._esc(skName) + '</span>';
+            skinRows += SMTool._buildSkinRowHtml(node, node.skins[si]);
         }
-        if (!skinRows) skinRows = '<span class="dfp-skin-badge">default</span>';
+        if (!skinRows) skinRows = '<div class="dfp-row">无</div>';
 
         // --- 骨骼 ---
         var boneRows = '';
@@ -2042,13 +2591,7 @@ SMTool._updateFloatPanel = function () {
         // --- 插槽 ---
         var slotRows = '';
         for (var sli = 0; sli < node.slots.length; sli++) {
-            var slotName = node.slots[sli];
-            var isSlotMarked = !!(node._slotTags && node._slotTags[slotName]);
-            slotRows += '<div class="dfp-row dfp-bone-row" data-bone="' + SMTool._esc(slotName) + '">' +
-                '<span>' + SMTool._esc(slotName) + '</span>' +
-                '<span class="dfp-bone-right"></span>' +
-                '<span class="dfp-bone-mark' + (isSlotMarked ? ' active' : '') + '" onclick="event.stopPropagation();SMTool._toggleBoneTag(\'' + SMTool._esc(slotName) + '\',\'slot\')" title="' + (isSlotMarked ? '取消标记' : '标记插槽') + '">+</span>' +
-                '</div>';
+            slotRows += SMTool._buildSlotRowHtml(node, node.slots[sli]);
         }
         if (!slotRows) slotRows = '<div class="dfp-row">无</div>';
 
@@ -2073,7 +2616,8 @@ SMTool._updateFloatPanel = function () {
         if (!animsHtml) animsHtml = '<div class="dfp-row">无</div>';
         infoHtml += '<div class="dfp-section"><div class="dfp-section-title">🎬 动画 (' + node.animations.length + ')</div>' + animsHtml + '</div>';
 
-        // ★ 骨骼/插槽/事件帧页签红点：有内容时显示
+        // ★ 骨骼/皮肤/插槽/事件帧页签红点：有内容时显示
+        var skinDotHtml = SMTool._hasSkinContent(node) ? '<span class="dfp-tab-dot"></span>' : '';
         var boneDotHtml = SMTool._hasBoneContent(node) ? '<span class="dfp-tab-dot"></span>' : '';
         var slotDotHtml = SMTool._hasSlotContent(node) ? '<span class="dfp-tab-dot"></span>' : '';
         var eventDotHtml = SMTool._hasEventContent(node) ? '<span class="dfp-tab-dot"></span>' : '';
@@ -2081,7 +2625,7 @@ SMTool._updateFloatPanel = function () {
         // ===== 渲染页签栏 =====
         tabsEl.innerHTML =
             '<button class="dfp-tab-btn" data-tab="skin" onclick="SMTool._switchPanelTab(\'skin\')">' +
-                '🎨 皮肤 <span class="dfp-tab-count">' + node.skins.length + '</span>' +
+                '🎨 皮肤 <span class="dfp-tab-count">' + node.skins.length + '</span>' + skinDotHtml +
             '</button>' +
             '<button class="dfp-tab-btn" data-tab="bone" onclick="SMTool._switchPanelTab(\'bone\')">' +
                 '🦴 骨骼 <span class="dfp-tab-count">' + node.bones.length + '</span>' + boneDotHtml +
@@ -2105,8 +2649,8 @@ SMTool._updateFloatPanel = function () {
             '<div class="dfp-tab-panel" data-panel="slot">' + slotRows + '</div>' +
             '<div class="dfp-tab-panel" data-panel="info">' + infoHtml + '</div>';
 
-        // ===== 渲染底部 PMA 按钮 =====
-        footer.innerHTML = _pmaBtnHtml(node, false, null);
+        // ===== 渲染底部循环播放 + 预乘Alpha 按钮（固定不随页签切换） =====
+        SMTool._updateBottomBar();
 
         // ===== 激活当前页签 =====
         SMTool._switchPanelTab(SMData._activePanelTab || 'skin');
@@ -2140,14 +2684,11 @@ SMTool._updateFloatPanel = function () {
             var node2 = sampleNode;
 
             // --- 皮肤 ---
-            var currentSkin2 = node2.currentSkin || (node2.skeletonData && node2.skeletonData.defaultSkin && node2.skeletonData.defaultSkin.name) || (node2.skins[0] || '');
             var skinRows2 = '';
             for (var si2 = 0; si2 < node2.skins.length; si2++) {
-                var skName2 = node2.skins[si2];
-                var isActiveSkin2 = skName2 === currentSkin2 ? ' active' : '';
-                skinRows2 += '<span class="dfp-skin-badge' + isActiveSkin2 + '" onclick="event.stopPropagation();SMTool._setSkin(' + node2.id + ',\'' + SMTool._escAttr(skName2) + '\')" title="切换皮肤: ' + SMTool._esc(skName2) + '">' + SMTool._esc(skName2) + '</span>';
+                skinRows2 += SMTool._buildSkinRowHtml(node2, node2.skins[si2]);
             }
-            if (!skinRows2) skinRows2 = '<span class="dfp-skin-badge">default</span>';
+            if (!skinRows2) skinRows2 = '<div class="dfp-row">无</div>';
 
             // --- 骨骼 ---
             var boneRows2 = '';
@@ -2159,13 +2700,7 @@ SMTool._updateFloatPanel = function () {
             // --- 插槽 ---
             var slotRows2 = '';
             for (var sli2 = 0; sli2 < node2.slots.length; sli2++) {
-                var slotName2 = node2.slots[sli2];
-                var isSlotMarked2 = !!(node2._slotTags && node2._slotTags[slotName2]);
-                slotRows2 += '<div class="dfp-row dfp-bone-row" data-bone="' + SMTool._esc(slotName2) + '">' +
-                    '<span>' + SMTool._esc(slotName2) + '</span>' +
-                    '<span class="dfp-bone-right"></span>' +
-                    '<span class="dfp-bone-mark' + (isSlotMarked2 ? ' active' : '') + '" onclick="event.stopPropagation();SMTool._toggleBoneTag(\'' + SMTool._esc(slotName2) + '\',\'slot\')" title="' + (isSlotMarked2 ? '取消标记' : '标记插槽') + '">+</span>' +
-                    '</div>';
+                slotRows2 += SMTool._buildSlotRowHtml(node2, node2.slots[sli2]);
             }
             if (!slotRows2) slotRows2 = '<div class="dfp-row">无</div>';
 
@@ -2181,7 +2716,8 @@ SMTool._updateFloatPanel = function () {
             if (!animsHtml2) animsHtml2 = '<div class="dfp-row">无</div>';
             infoHtml2 += '<div class="dfp-section"><div class="dfp-section-title">🎬 动画 (' + node2.animations.length + ')</div>' + animsHtml2 + '</div>';
 
-            // ★ 骨骼/插槽/事件帧页签红点
+            // ★ 骨骼/皮肤/插槽/事件帧页签红点
+            var skinDotHtml2 = SMTool._hasSkinContent(node2) ? '<span class="dfp-tab-dot"></span>' : '';
             var boneDotHtml2 = SMTool._hasBoneContent(node2) ? '<span class="dfp-tab-dot"></span>' : '';
             var slotDotHtml2 = SMTool._hasSlotContent(node2) ? '<span class="dfp-tab-dot"></span>' : '';
             var eventDotHtml2 = SMTool._hasEventContent(node2) ? '<span class="dfp-tab-dot"></span>' : '';
@@ -2189,7 +2725,7 @@ SMTool._updateFloatPanel = function () {
             // 渲染
             tabsEl.innerHTML =
                 '<button class="dfp-tab-btn" data-tab="skin" onclick="SMTool._switchPanelTab(\'skin\')">' +
-                    '🎨 皮肤 <span class="dfp-tab-count">' + node2.skins.length + '</span>' +
+                    '🎨 皮肤 <span class="dfp-tab-count">' + node2.skins.length + '</span>' + skinDotHtml2 +
                 '</button>' +
                 '<button class="dfp-tab-btn" data-tab="bone" onclick="SMTool._switchPanelTab(\'bone\')">' +
                     '🦴 骨骼 <span class="dfp-tab-count">' + node2.bones.length + '</span>' + boneDotHtml2 +
@@ -2210,7 +2746,7 @@ SMTool._updateFloatPanel = function () {
                 '<div class="dfp-tab-panel" data-panel="event">' + eventHtml2 + '</div>' +
                 '<div class="dfp-tab-panel" data-panel="slot">' + slotRows2 + '</div>' +
                 '<div class="dfp-tab-panel" data-panel="info">' + infoHtml2 + '</div>';
-            footer.innerHTML = _pmaBtnHtml(null, true, allPma);
+            SMTool._updateBottomBar();
 
             SMTool._switchPanelTab(SMData._activePanelTab || 'skin');
         } else {
@@ -2348,11 +2884,15 @@ SMTool._buildEventFramesHtml = function (node) {
 };
 
 // ---- 更新底部 PMA 按钮（不重建整个面板，保持当前页签） ----
-SMTool._updatePMAFooter = function () {
+SMTool._updateBottomBar = function () {
     var footer = document.getElementById('dfpFooter');
     if (!footer) return;
     var node = SMData.nodes.get(SMData.selectedNode);
     if (!node) { footer.innerHTML = ''; return; }
+
+    // 构建循环播放按钮
+    var loopBtnHtml = '<button class="dfp-bottom-loop-btn' + (node.loop !== false ? ' active' : '') + '" onclick="event.stopPropagation();SMTool._toggleLoop(' + node.id + ')" title="切换循环/单次播放">' +
+        (node.loop !== false ? '🔄 循环' : '▶ 单次') + '</button>';
 
     // 多选时
     if (SMData.selectedNodes.size > 1) {
@@ -2364,23 +2904,16 @@ SMTool._updatePMAFooter = function () {
             else if (allPma !== n.premultipliedAlpha) allPma = 'mixed';
         });
         var checkedStr = (allPma === true) ? ' active' : '';
-        var pmaIcon2 = (allPma === true) ? '🔴' : (allPma === 'mixed' ? '🟡' : '⚪');
-        var pmaStatus2 = (allPma === true) ? '已开启' : (allPma === 'mixed' ? '混合状态' : '已关闭');
-        var pmaToggleVal = (allPma === true) ? false : true;
-        footer.innerHTML = '<button class="dfp-pma-toggle-btn' + checkedStr + '" onclick="SMTool._toggleMultiPMA(' + pmaToggleVal + ')">' +
-            '<span class="pma-icon">' + pmaIcon2 + '</span>' +
-            '<span>预乘 Alpha</span>' +
-            '<span class="pma-status">' + pmaStatus2 + '</span>' +
-        '</button>';
+        var pmaBtnHtml = '<button class="dfp-bottom-pma-btn' + checkedStr + '" onclick="SMTool._toggleMultiPMA(' + (allPma === true ? false : true) + ')" title="预乘 Alpha">' +
+            (allPma === true ? '🔴 Alpha' : (allPma === 'mixed' ? '🟡 Alpha' : '⚪ Alpha')) + '</button>';
+        footer.innerHTML = loopBtnHtml + pmaBtnHtml;
         return;
     }
 
     // 单选
-    footer.innerHTML = '<button class="dfp-pma-toggle-btn' + (node.premultipliedAlpha ? ' active' : '') + '" onclick="SMTool._togglePMA(' + node.id + ',' + !node.premultipliedAlpha + ')">' +
-        '<span class="pma-icon">' + (node.premultipliedAlpha ? '🔴' : '⚪') + '</span>' +
-        '<span>预乘 Alpha</span>' +
-        '<span class="pma-status">' + (node.premultipliedAlpha ? '已开启' : '已关闭') + '</span>' +
-    '</button>';
+    var pmaBtnHtml = '<button class="dfp-bottom-pma-btn' + (node.premultipliedAlpha ? ' active' : '') + '" onclick="SMTool._togglePMA(' + node.id + ',' + !node.premultipliedAlpha + ')" title="预乘 Alpha">' +
+        (node.premultipliedAlpha ? '🔴 Alpha' : '⚪ Alpha') + '</button>';
+    footer.innerHTML = loopBtnHtml + pmaBtnHtml;
 };
 
 // ---- 更新状态栏 ----
@@ -2451,7 +2984,7 @@ SMTool._togglePMA = function (nid, v) {
     if (!node) return;
     node.premultipliedAlpha = v;
     SMTool._updateEl(node);
-    SMTool._updatePMAFooter();
+    SMTool._updateBottomBar();
     // ★ 立即同步到浮窗预览
     var pp = SMData._animPreview;
     if (pp && pp.visible && pp.skeleton && pp.nodeId === nid) {
@@ -2465,7 +2998,7 @@ SMTool._toggleMultiPMA = function (v) {
         var n = SMData.nodes.get(nid);
         if (n) { n.premultipliedAlpha = v; SMTool._updateEl(n); }
     });
-    SMTool._updatePMAFooter();
+    SMTool._updateBottomBar();
 };
 
 // ---- 重复节点红色高亮检测 ----

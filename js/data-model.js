@@ -362,8 +362,21 @@ var SpineNodeData = (function () {
         this._boneScreenshots = {}; // { boneName: ["dataUrl1", "dataUrl2", ...] }
         this._boneThumbnails = {};  // { boneName: ["thumbDataUrl1", ...] } 缩略图，面板展示用
         this._boneShotRefs = {};    // { boneName: ["_assets/shot_xxx.jpg", ...] } 伴随 JPG 引用
+        this._boneFade = {};        // { boneName: { enabled: bool, duration: number } }
         this._stateDesc = '';       // 状态描述文本
         this._exitText = '';        // 出口节点文本内容
+
+        // ★ 皮肤备注/截图/淡入淡出
+        this._skinNotes = {};       // { skinName: "备注文本" }
+        this._skinScreenshots = {}; // { skinName: [shotId, ...] }
+        this._skinFade = {};        // { skinName: { enabled: bool, duration: number } }
+
+        // ★ 插槽标记/备注/截图/淡入淡出
+        this._slotTags = {};        // { slotName: [animState1, ...] }
+        this._slotNotes = {};       // { slotName: "备注文本" }
+        this._slotScreenshots = {}; // { slotName: [shotId, ...] }
+        this._slotFade = {};        // { slotName: { enabled: bool, duration: number } }
+
         this._customScale = 1.0;    // 用户自定义缩放比例（拖拽缩放图标调整）
         this._debugOffsetX = 0;     // 调试模式：动画层水平偏移（世界单位）
         this._debugOffsetY = 0;     // 调试模式：动画层垂直偏移（世界单位）

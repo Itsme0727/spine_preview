@@ -141,7 +141,7 @@ SMTool.copyNode = function (nid, offsetX, offsetY) {
     node._debugOffsetY = orig._debugOffsetY || 0;
     node._debugCanvasW = orig._debugCanvasW || 0;
     node._debugCanvasH = orig._debugCanvasH || 0;
-    node._boneTags = orig._boneTags ? JSON.parse(JSON.stringify(orig._boneTags)) : {};
+    node._boneTag = orig._boneTags ? JSON.parse(JSON.stringify(orig._boneTags)) : {};
     node._boneNotes = orig._boneNotes ? JSON.parse(JSON.stringify(orig._boneNotes)) : {};
     // ★ 性能优化：共享截图引用而非深拷贝 dataUrl。
     // 同一来源的节点复制时，_boneScreenshots 只存 shotId（数字），
@@ -164,6 +164,58 @@ SMTool.copyNode = function (nid, offsetX, offsetY) {
                     // 旧格式兼容：注册到全局表后存 shotId
                     var newShotId = SMData._shotRegister(sVal);
                     node._boneScreenshots[bName].push(newShotId);
+                }
+            }
+        }
+    }
+    node._boneFade = orig._boneFade ? JSON.parse(JSON.stringify(orig._boneFade)) : {};
+    node._boneShotRefs = orig._boneShotRefs ? JSON.parse(JSON.stringify(orig._boneShotRefs)) : {};
+
+    // ★ 皮肤备注/截图/淡入淡出
+    node._skinTags = orig._skinTags ? JSON.parse(JSON.stringify(orig._skinTags)) : {};
+    node._skinNotes = orig._skinNotes ? JSON.parse(JSON.stringify(orig._skinNotes)) : {};
+    node._skinFade = orig._skinFade ? JSON.parse(JSON.stringify(orig._skinFade)) : {};
+    node._skinScreenshots = {};
+    if (orig._skinScreenshots) {
+        var origSkins = Object.keys(orig._skinScreenshots);
+        for (var oski = 0; oski < origSkins.length; oski++) {
+            var skName2 = origSkins[oski];
+            var origSkinShots = orig._skinScreenshots[skName2];
+            if (!Array.isArray(origSkinShots)) origSkinShots = origSkinShots ? [origSkinShots] : [];
+            node._skinScreenshots[skName2] = [];
+            for (var ossi = 0; ossi < origSkinShots.length; ossi++) {
+                var sv = origSkinShots[ossi];
+                if (typeof sv === 'number') {
+                    SMData._shotAddRef(sv);
+                    node._skinScreenshots[skName2].push(sv);
+                } else if (typeof sv === 'string') {
+                    var newSid = SMData._shotRegister(sv);
+                    node._skinScreenshots[skName2].push(newSid);
+                }
+            }
+        }
+    }
+
+    // ★ 插槽标记/备注/截图/淡入淡出
+    node._slotTags = orig._slotTags ? JSON.parse(JSON.stringify(orig._slotTags)) : {};
+    node._slotNotes = orig._slotNotes ? JSON.parse(JSON.stringify(orig._slotNotes)) : {};
+    node._slotFade = orig._slotFade ? JSON.parse(JSON.stringify(orig._slotFade)) : {};
+    node._slotScreenshots = {};
+    if (orig._slotScreenshots) {
+        var origSlots = Object.keys(orig._slotScreenshots);
+        for (var osli = 0; osli < origSlots.length; osli++) {
+            var slName2 = origSlots[osli];
+            var origSlotShots = orig._slotScreenshots[slName2];
+            if (!Array.isArray(origSlotShots)) origSlotShots = origSlotShots ? [origSlotShots] : [];
+            node._slotScreenshots[slName2] = [];
+            for (var ossj = 0; ossj < origSlotShots.length; ossj++) {
+                var sv2 = origSlotShots[ossj];
+                if (typeof sv2 === 'number') {
+                    SMData._shotAddRef(sv2);
+                    node._slotScreenshots[slName2].push(sv2);
+                } else if (typeof sv2 === 'string') {
+                    var newSid2 = SMData._shotRegister(sv2);
+                    node._slotScreenshots[slName2].push(newSid2);
                 }
             }
         }
@@ -214,62 +266,83 @@ SMTool.ctxDuplicateNode = function () {
 };
 
 // 切换皮肤（同步同归属文件的所有节点）
+// ================================================================
+// 🔒🔒🔒 [LOCK-H] 皮肤切换仅应用于选中的动画节点
+// ⚠️ 不可轻易修改重要逻辑代码，很容易引起浮窗动画的播放抽帧卡顿的bug，
+//    如需修改，一定要寻求同意"解锁"才可以。
+//
+// 旧逻辑：同源文件所有节点一起切换 → 新逻辑：仅选中节点切换。
+// 遍历 selectedNodes 集合，逐个应用皮肤并刷新 UI。
+// 浮窗预览若显示任一选中节点，同步更新皮肤。
+// ================================================================
 SMTool._setSkin = function (nid, skinName) {
     var clickedNode = SMData.nodes.get(nid);
     if (!clickedNode || !clickedNode.skeleton || !clickedNode.skeletonData) return;
 
-    var sourceFile = clickedNode.sourceFile;
+    // 收集需要切换皮肤的节点：选中节点中属于同一源文件的 Spine 节点
+    var targetNodes = [];
+    var selIter = SMData.selectedNodes.values();
+    var sr = selIter.next();
+    while (!sr.done) {
+        var node = SMData.nodes.get(sr.value);
+        if (node && node.skeleton && node.skeletonData && node.sourceFile === clickedNode.sourceFile) {
+            targetNodes.push(node);
+        }
+        sr = selIter.next();
+    }
 
-    // 遍历所有节点，找到同归属文件的节点一起切换皮肤
-    var nodesIter = SMData.nodes.values();
-    var result = nodesIter.next();
-    while (!result.done) {
-        var node = result.value;
-        if (node.sourceFile === sourceFile && node.skeleton && node.skeletonData) {
-            // 从 skeletonData 中找到对应皮肤对象
-            var skin = null;
-            var sd = node.skeletonData;
-            for (var i = 0; i < sd.skins.length; i++) {
-                if (sd.skins[i].name === skinName) {
-                    skin = sd.skins[i];
-                    break;
-                }
-            }
-            if (skin) {
-                node.skeleton.setSkin(skin);
-                node.skeleton.setSlotsToSetupPose();
-                node.currentSkin = skinName;
-            }
+    // 如果选中节点中没有可切换的，至少保证点击的节点被处理
+    if (targetNodes.length === 0) {
+        targetNodes.push(clickedNode);
+    }
 
-            // 刷新该节点 UI 高亮
-            var el = SMTool._getEl(node.id);
-            if (el) {
-                var badges = el.querySelectorAll('.skin-badge');
-                for (var b = 0; b < badges.length; b++) {
-                    if (badges[b].textContent === skinName) {
-                        badges[b].classList.add('active');
-                    } else {
-                        badges[b].classList.remove('active');
-                    }
+    // 逐个应用皮肤
+    for (var ni = 0; ni < targetNodes.length; ni++) {
+        var node = targetNodes[ni];
+        var skin = null;
+        var sd = node.skeletonData;
+        for (var i = 0; i < sd.skins.length; i++) {
+            if (sd.skins[i].name === skinName) {
+                skin = sd.skins[i];
+                break;
+            }
+        }
+        if (skin) {
+            node.skeleton.setSkin(skin);
+            node.skeleton.setSlotsToSetupPose();
+            node.currentSkin = skinName;
+        }
+
+        // 刷新该节点 UI 高亮
+        var el = SMTool._getEl(node.id);
+        if (el) {
+            var badges = el.querySelectorAll('.skin-badge');
+            for (var b = 0; b < badges.length; b++) {
+                if (badges[b].textContent === skinName) {
+                    badges[b].classList.add('active');
+                } else {
+                    badges[b].classList.remove('active');
                 }
             }
         }
-        result = nodesIter.next();
     }
 
     // 同步刷新数据面板高亮
     SMData._lastPanelNodeId = -1;
     SMTool._updateFloatPanel();
 
-    // ★ 切换皮肤后立即刷新浮窗预览（如果当前预览节点属于同一源文件）
+    // ★ 切换皮肤后立即刷新浮窗预览（如果当前预览节点在被切换的节点中）
     var pp = SMData._animPreview;
     if (pp && pp.visible && pp.skeleton && pp.nodeId != null) {
-        var ppNode = SMData.nodes.get(pp.nodeId);
-        if (ppNode && ppNode.sourceFile === sourceFile) {
-            SMTool._syncPreviewPmaAndSkin(pp, ppNode);
+        for (var nj = 0; nj < targetNodes.length; nj++) {
+            if (targetNodes[nj].id === pp.nodeId) {
+                SMTool._syncPreviewPmaAndSkin(pp, targetNodes[nj]);
+                break;
+            }
         }
     }
 };
+// 🔒 [LOCK-H] END
 SMTool.toggleConnectMode = function () {
     SMData.connectMode = !SMData.connectMode;
     document.getElementById('btnConnect').classList.toggle('active', SMData.connectMode);
@@ -1054,6 +1127,53 @@ SMTool.init = function () {
                     }
                 }
                 existing._boneShotRefs = nd._boneShotRefs || {};
+                existing._boneFade = nd._boneFade || {};
+                // ★ 皮肤标记/备注/截图/淡入淡出
+                existing._skinTags = nd._skinTags || {};
+                existing._skinNotes = nd._skinNotes || {};
+                existing._skinFade = nd._skinFade || {};
+                existing._skinScreenshots = nd._skinScreenshots || {};
+                if (existing._skinScreenshots) {
+                    var skinNames2 = Object.keys(existing._skinScreenshots);
+                    for (var bj = 0; bj < skinNames2.length; bj++) {
+                        var snk = skinNames2[bj];
+                        if (existing._skinScreenshots[snk] && !Array.isArray(existing._skinScreenshots[snk])) {
+                            existing._skinScreenshots[snk] = [existing._skinScreenshots[snk]];
+                        }
+                        var shotArr2 = existing._skinScreenshots[snk];
+                        if (Array.isArray(shotArr2)) {
+                            for (var sai2 = 0; sai2 < shotArr2.length; sai2++) {
+                                if (typeof shotArr2[sai2] === 'string' && shotArr2[sai2].indexOf('data:image/') === 0) {
+                                    shotArr2[sai2] = SMData._shotRegister(shotArr2[sai2]);
+                                }
+                            }
+                        }
+                    }
+                }
+                existing._skinShotRefs = nd._skinShotRefs || {};
+                // ★ 插槽标记/备注/截图/淡入淡出
+                existing._slotTags = nd._slotTags || {};
+                existing._slotNotes = nd._slotNotes || {};
+                existing._slotFade = nd._slotFade || {};
+                existing._slotScreenshots = nd._slotScreenshots || {};
+                if (existing._slotScreenshots) {
+                    var slotNames2 = Object.keys(existing._slotScreenshots);
+                    for (var bk = 0; bk < slotNames2.length; bk++) {
+                        var slk = slotNames2[bk];
+                        if (existing._slotScreenshots[slk] && !Array.isArray(existing._slotScreenshots[slk])) {
+                            existing._slotScreenshots[slk] = [existing._slotScreenshots[slk]];
+                        }
+                        var shotArr3 = existing._slotScreenshots[slk];
+                        if (Array.isArray(shotArr3)) {
+                            for (var sai3 = 0; sai3 < shotArr3.length; sai3++) {
+                                if (typeof shotArr3[sai3] === 'string' && shotArr3[sai3].indexOf('data:image/') === 0) {
+                                    shotArr3[sai3] = SMData._shotRegister(shotArr3[sai3]);
+                                }
+                            }
+                        }
+                    }
+                }
+                existing._slotShotRefs = nd._slotShotRefs || {};
                 existing._stateDesc = nd._stateDesc || '';
                 existing._exitText = nd._exitText || '';
                 existing._textContent = nd._textContent || '';
@@ -1168,6 +1288,53 @@ SMTool.init = function () {
                     }
                 }
                 node._boneShotRefs = nd._boneShotRefs || {};
+                node._boneFade = nd._boneFade || {};
+                // ★ 皮肤标记/备注/截图/淡入淡出
+                node._skinTags = nd._skinTags || {};
+                node._skinNotes = nd._skinNotes || {};
+                node._skinFade = nd._skinFade || {};
+                node._skinScreenshots = nd._skinScreenshots || {};
+                if (node._skinScreenshots) {
+                    var sknKeys = Object.keys(node._skinScreenshots);
+                    for (var bj2 = 0; bj2 < sknKeys.length; bj2++) {
+                        var sknk = sknKeys[bj2];
+                        if (node._skinScreenshots[sknk] && !Array.isArray(node._skinScreenshots[sknk])) {
+                            node._skinScreenshots[sknk] = [node._skinScreenshots[sknk]];
+                        }
+                        var shotArr3 = node._skinScreenshots[sknk];
+                        if (Array.isArray(shotArr3)) {
+                            for (var saj2 = 0; saj2 < shotArr3.length; saj2++) {
+                                if (typeof shotArr3[saj2] === 'string' && shotArr3[saj2].indexOf('data:image/') === 0) {
+                                    shotArr3[saj2] = SMData._shotRegister(shotArr3[saj2]);
+                                }
+                            }
+                        }
+                    }
+                }
+                node._skinShotRefs = nd._skinShotRefs || {};
+                // ★ 插槽标记/备注/截图/淡入淡出
+                node._slotTags = nd._slotTags || {};
+                node._slotNotes = nd._slotNotes || {};
+                node._slotFade = nd._slotFade || {};
+                node._slotScreenshots = nd._slotScreenshots || {};
+                if (node._slotScreenshots) {
+                    var slnKeys = Object.keys(node._slotScreenshots);
+                    for (var bj3 = 0; bj3 < slnKeys.length; bj3++) {
+                        var slnk = slnKeys[bj3];
+                        if (node._slotScreenshots[slnk] && !Array.isArray(node._slotScreenshots[slnk])) {
+                            node._slotScreenshots[slnk] = [node._slotScreenshots[slnk]];
+                        }
+                        var shotArr4 = node._slotScreenshots[slnk];
+                        if (Array.isArray(shotArr4)) {
+                            for (var saj3 = 0; saj3 < shotArr4.length; saj3++) {
+                                if (typeof shotArr4[saj3] === 'string' && shotArr4[saj3].indexOf('data:image/') === 0) {
+                                    shotArr4[saj3] = SMData._shotRegister(shotArr4[saj3]);
+                                }
+                            }
+                        }
+                    }
+                }
+                node._slotShotRefs = nd._slotShotRefs || {};
                 node._stateDesc = nd._stateDesc || '';
                 node._exitText = nd._exitText || '';
                 node._textContent = nd._textContent || '';
@@ -1451,6 +1618,20 @@ SMTool.init = function () {
         } else {
             btn.classList.add('active');
             btn.textContent = '🖼️ 挂点';
+        }
+    };
+    SMTool._toggleHideIndicators = function () {
+        SMData._hideIndicators = !SMData._hideIndicators;
+        var app = document.getElementById('app');
+        var btn = document.getElementById('btnToggleIndicators');
+        if (SMData._hideIndicators) {
+            app.classList.add('hide-indicators');
+            btn.classList.remove('active');
+            btn.textContent = '🏷️ 标记';
+        } else {
+            app.classList.remove('hide-indicators');
+            btn.classList.add('active');
+            btn.textContent = '🏷️ 标记';
         }
     };
 

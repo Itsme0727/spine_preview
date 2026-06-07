@@ -483,10 +483,17 @@ SMTool._serializeData = function () {
             _boneTags: n._boneTags,
             _boneNotes: n._boneNotes,
             _boneFade: n._boneFade,
-            // ★ 图片数据不嵌入 JSON！只存文件路径引用。
-            // 实际图片保存在 _assets/ 目录中作为独立 JPG 文件。
-            // 若伴随图片文件被删除，则图片真正丢失（符合预期）。
-            _boneShotRefs: n._boneShotRefs
+            _boneShotRefs: n._boneShotRefs,
+            // ★ 皮肤标记/备注/淡入淡出/截图引用
+            _skinTags: n._skinTags,
+            _skinNotes: n._skinNotes,
+            _skinFade: n._skinFade,
+            _skinShotRefs: n._skinShotRefs,
+            // ★ 插槽标记/备注/淡入淡出/截图引用
+            _slotTags: n._slotTags,
+            _slotNotes: n._slotNotes,
+            _slotFade: n._slotFade,
+            _slotShotRefs: n._slotShotRefs
         });
         result = nodesIter.next();
     }
@@ -1095,6 +1102,54 @@ SMTool._processImportJson = function (jsonText, fileHandle) {
                     }
                 }
             }
+
+            // ★ 皮肤标记/备注/淡入淡出/截图
+            node._skinTags = nd._skinTags || {};
+            node._skinNotes = nd._skinNotes || {};
+            node._skinFade = nd._skinFade || {};
+            node._skinScreenshots = {};
+            if (nd._skinScreenshots) {
+                var ssKeys2 = Object.keys(nd._skinScreenshots);
+                for (var sk2 = 0; sk2 < ssKeys2.length; sk2++) {
+                    var ssk2 = ssKeys2[sk2];
+                    var rawVal2 = nd._skinScreenshots[ssk2];
+                    var shotArr2 = Array.isArray(rawVal2) ? rawVal2 : (rawVal2 ? [rawVal2] : []);
+                    node._skinScreenshots[ssk2] = [];
+                    for (var sai2 = 0; sai2 < shotArr2.length; sai2++) {
+                        var sv2 = shotArr2[sai2];
+                        if (typeof sv2 === 'string' && sv2.indexOf('data:image/') === 0) {
+                            node._skinScreenshots[ssk2].push(SMData._shotRegister(sv2));
+                        } else if (typeof sv2 === 'number') {
+                            node._skinScreenshots[ssk2].push(SMData._shotRegister(SMData._shotGetDataUrl(sv2) || ''));
+                        }
+                    }
+                }
+            }
+            node._skinShotRefs = nd._skinShotRefs || {};
+
+            // ★ 插槽标记/备注/淡入淡出/截图
+            node._slotTags = nd._slotTags || {};
+            node._slotNotes = nd._slotNotes || {};
+            node._slotFade = nd._slotFade || {};
+            node._slotScreenshots = {};
+            if (nd._slotScreenshots) {
+                var ssKeys3 = Object.keys(nd._slotScreenshots);
+                for (var sk3 = 0; sk3 < ssKeys3.length; sk3++) {
+                    var ssk3 = ssKeys3[sk3];
+                    var rawVal3 = nd._slotScreenshots[ssk3];
+                    var shotArr3 = Array.isArray(rawVal3) ? rawVal3 : (rawVal3 ? [rawVal3] : []);
+                    node._slotScreenshots[ssk3] = [];
+                    for (var sai3 = 0; sai3 < shotArr3.length; sai3++) {
+                        var sv3 = shotArr3[sai3];
+                        if (typeof sv3 === 'string' && sv3.indexOf('data:image/') === 0) {
+                            node._slotScreenshots[ssk3].push(SMData._shotRegister(sv3));
+                        } else if (typeof sv3 === 'number') {
+                            node._slotScreenshots[ssk3].push(SMData._shotRegister(SMData._shotGetDataUrl(sv3) || ''));
+                        }
+                    }
+                }
+            }
+            node._slotShotRefs = nd._slotShotRefs || {};
 
             SMData.nodes.set(nd.id, node);
             SMData.nextId = Math.max(SMData.nextId, nd.id + 1);

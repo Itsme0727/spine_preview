@@ -543,11 +543,11 @@ body {
 /* ===== 节点左侧指示图标（皮肤/骨骼/事件帧/插槽） ===== */
 .spine-node .node-indicators {
     position: absolute;
-    left: -84px;
+    left: -135px;
     top: 8px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 20px;
     z-index: 10;
     pointer-events: auto;
 }
@@ -555,13 +555,13 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 58px;
-    height: 58px;
+    width: 116px;
+    height: 116px;
     border-radius: 50%;
     background: #1c1c20;
-    border: 2px solid var(--border);
+    border: 4px solid var(--border);
     cursor: pointer;
-    font-size: 32px;
+    font-size: 64px;
     transition: all 0.2s;
     box-shadow: 0 2px 8px rgba(0,0,0,0.4);
     padding: 0;
@@ -575,19 +575,19 @@ body {
 }
 .spine-node .node-indicators .ndi-count {
     position: absolute;
-    top: -8px;
-    right: -8px;
+    top: -12px;
+    right: -12px;
     background: var(--accent);
     color: #fff;
-    font-size: 14px;
+    font-size: 28px;
     font-weight: 700;
-    min-width: 22px;
-    height: 22px;
-    border-radius: 11px;
+    min-width: 44px;
+    height: 44px;
+    border-radius: 22px;
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 0 5px;
+    padding: 0 10px;
 }
 
 /* 节点头部 */
@@ -650,7 +650,7 @@ body {
 /* 缩放拖拽手柄 — 绝对定位在节点右下角 */
 .spine-node .scale-handle {
     position: absolute;
-    bottom: 6px;
+    bottom: 2px;
     right: 6px;
     display: inline-flex;
     align-items: center;
@@ -659,8 +659,8 @@ body {
     border: 1px solid var(--border);
     color: var(--text2);
     cursor: nwse-resize;
-    font-size: 52px;
-    padding: 4px 8px;
+    font-size: 34px;
+    padding: 2px 5px;
     border-radius: 8px;
     transition: all 0.2s;
     line-height: 1;
@@ -696,10 +696,10 @@ body {
     display: block;
     width: 0;
     height: 0;
-    border-top: 16px solid transparent;
-    border-right: 16px solid currentColor;
-    border-bottom: 16px solid currentColor;
-    border-left: 16px solid transparent;
+    border-top: 10px solid transparent;
+    border-right: 10px solid currentColor;
+    border-bottom: 10px solid currentColor;
+    border-left: 10px solid transparent;
     transition: all 0.2s;
 }
 
@@ -754,22 +754,24 @@ body {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 112px;
-    height: 56px;
-    padding: 0 20px;
-    border: 1px solid var(--border);
+    min-width: 107px;
+    height: 54px;
+    padding: 0 19px;
+    border: 2px solid var(--border);
     border-radius: 12px;
-    font-size: 24px;
+    font-size: 23px;
+    background: transparent;
+    color: var(--text2);
     transition: color 0.15s, border-color 0.15s;
 }
 .spine-node .footer-skins .skin-badge:hover {
-    color: #4a9eff;
-    border-color: #4a9eff;
+    color: #ff6699;
+    border-color: #ff6699;
 }
 .spine-node .footer-skins .skin-badge.active {
     background: transparent;
-    color: #4a9eff;
-    border-color: #4a9eff;
+    color: #ff6699;
+    border-color: #ff6699;
 }
 .spine-node .footer-controls {
     display: flex;
@@ -794,8 +796,8 @@ body {
 .spine-node .version-badge {
     font-size: 22px;
     color: #666;
-    text-align: right;
-    align-self: flex-end;
+    text-align: left;
+    align-self: flex-start;
     margin-top: 2px;
 }
 
@@ -1406,52 +1408,52 @@ body {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 4px;
+    gap: 6px;
 }
 .bone-tag-title {
-    font-size: 16px;
+    font-size: 26px;
     color: var(--text2);
-    margin-right: 2px;
+    margin-right: 3px;
     font-weight: 600;
 }
 .bone-tag-capsule {
     display: inline-flex;
     flex-direction: column;
-    border: 1px solid #57ab5a;
-    border-radius: 12px;
-    padding: 3px 8px;
-    font-size: 16px;
+    border: 2px solid #57ab5a;
+    border-radius: 14px;
+    padding: 5px 13px;
+    font-size: 26px;
     color: #57ab5a;
-    gap: 3px;
+    gap: 5px;
 }
 .bone-tag-name {
     font-weight: 600;
-    font-size: 16px;
+    font-size: 26px;
 }
 .bone-tag-state-capsule {
     display: inline-flex;
-    border: 1px solid #57ab5a;
-    border-radius: 10px;
-    padding: 1px 7px;
-    font-size: 16px;
+    border: 2px solid #57ab5a;
+    border-radius: 11px;
+    padding: 2px 11px;
+    font-size: 26px;
     color: #57ab5a;
     background: rgba(87,171,90,0.1);
 }
 .bone-tag-add-btn {
-    border: 1px solid #57ab5a;
+    border: 2px solid #57ab5a;
     background: none;
     color: #57ab5a;
-    border-radius: 6px;
+    border-radius: 8px;
     cursor: pointer;
-    font-size: 18px;
-    padding: 0 8px;
+    font-size: 29px;
+    padding: 0 13px;
     line-height: 1.4;
     margin-left: auto;
 }
 .bone-tag-add {
     color: #57ab5a;
     cursor: pointer;
-    font-size: 16px;
+    font-size: 26px;
     font-weight: 700;
     line-height: 1;
     margin-left: auto;
@@ -1465,10 +1467,12 @@ body {
     font-size: 26px;
     font-family: inherit;
     border-radius: 6px;
-    resize: none;
-    min-height: 48px;
+    resize: vertical;
+    min-height: 96px;
+    max-height: 400px;
     height: auto;
     box-sizing: border-box;
+    overflow-y: auto;
 }
 .state-desc:focus {
     color: var(--text);
@@ -1793,12 +1797,18 @@ body {
     transition: color 0.15s, border-color 0.15s;
 }
 #dataFloatPanel .dfp-skin-badge:hover {
-    color: #4a9eff;
-    border-color: #4a9eff;
+    color: #ff6699;
+    border-color: #ff6699;
 }
 #dataFloatPanel .dfp-skin-badge.active {
-    color: #4a9eff;
-    border-color: #4a9eff;
+    color: #ff6699;
+    border-color: #ff6699;
+}
+
+/* 数据面板皮肤行高亮 — 当前选中皮肤 */
+#dataFloatPanel .dfp-row.dfp-bone-row.skin-current {
+    color: #ff6699;
+    font-weight: 600;
 }
 
 /* PMA 大按钮切换 */
@@ -1970,13 +1980,45 @@ body {
     font-size: 12px;
     font-family: inherit;
     resize: vertical;
-    min-height: 60px;
+    min-height: 120px;
     outline: none;
     line-height: 1.5;
     padding: 4px;
+    overflow-y: auto;
 }
 #dataFloatPanel .dfp-bone-note-area textarea::placeholder {
     color: var(--text2);
+}
+
+/* 底部固定栏：循环播放 + 预乘Alpha */
+#dfpFooter {
+    display: flex;
+    gap: 8px;
+    padding: 8px 10px;
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+}
+#dfpFooter .dfp-bottom-loop-btn,
+#dfpFooter .dfp-bottom-pma-btn {
+    flex: 1;
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text2);
+    font-size: 13px;
+    font-family: inherit;
+    padding: 8px 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+}
+#dfpFooter .dfp-bottom-loop-btn.active {
+    color: #4a9eff;
+    border-color: #4a9eff;
+}
+#dfpFooter .dfp-bottom-pma-btn.active {
+    color: #ec4899;
+    border-color: #ec4899;
 }
 
 /* 淡入淡出控件 */
@@ -3288,10 +3330,12 @@ body {
 .vt-green  { color: #4ec96e; border-color: #4ec96e; }
 .vt-purple { color: #a855f7; border-color: #a855f7; }
 .vt-pink   { color: #ec4899; border-color: #ec4899; }
+.vt-yellow { color: #f5c542; border-color: #f5c542; }
 
 /* 隐藏标题：仅隐藏节点外部浮动标签，不动节点内下拉框 */
 #app.hide-labels .float-label { display: none !important; }
 #app.hide-bubbles .event-bubble { display: none !important; }
+#app.hide-indicators .node-indicators { display: none !important; }
 
 /* ===== 事件帧气泡提示（节点右侧浮窗，跟随节点移动） ===== */
 @keyframes eventBubbleFloat {
