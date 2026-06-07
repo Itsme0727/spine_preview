@@ -1270,10 +1270,13 @@ SMTool._onAnimChange = function (nid, animName) {
     SMTool._updateDuplicateHighlights();
     SMTool._checkMissingStates();
 
-    // ★ 同步更新预览面板动画
+    // ★ 同步更新预览面板（完整同步动画+PMA+皮肤）
     if (SMData._animPreview.visible && SMData._animPreview.nodeId === nid) {
         SMTool._updateAnimPreviewAnim(animName);
+        SMTool._syncPreviewPmaAndSkin(SMData._animPreview, node);
     }
+    // ★ 同步更新所有动画流路径中的状态名
+    SMTool._syncFlowPathAnim(nid, animName);
 };
 
 // ---- 旧的状态行点击（保留兼容，供手动创建的节点使用） ----
@@ -1571,6 +1574,13 @@ SMTool._initFloatPanel = function () {
     // 用 mouseenter/mouseleave 分别监听 trigger 和 body（因为它们都有 pointer-events:all，面板容器是 none）
     function onPanelAreaEnter() {
         SMData._floatPanel.hovered = true;
+        // ★ 面板刚由指示器展开时的首次 enter 不清除指示器模式，但清除标志允许后续 enter 生效
+        if (SMData._floatPanel._indicatorJustOpened) {
+            SMData._floatPanel._indicatorJustOpened = false;
+        } else {
+            SMData._floatPanel._indicatorMode = false;
+            if (SMTool._indicatorAutoCloseTimer) { clearTimeout(SMTool._indicatorAutoCloseTimer); SMTool._indicatorAutoCloseTimer = null; }
+        }
         if (SMData._floatPanel._collapseTimer) {
             clearTimeout(SMData._floatPanel._collapseTimer);
             SMData._floatPanel._collapseTimer = null;
@@ -1635,6 +1645,8 @@ SMTool._initFloatPanel = function () {
     document.addEventListener('mousemove', function (e) {
         if (SMData._floatPanel.pinned) return;
         if (!SMData._floatPanel.expanded) return;
+        // ★ 指示器模式中不收起
+        if (SMData._floatPanel._indicatorMode || SMData._floatPanel._indicatorJustOpened) return;
 
         var rect = panel.getBoundingClientRect();
         var panelRight = rect.right;
@@ -1668,6 +1680,8 @@ SMTool._scheduleFloatPanelCollapse = function (e) {
         clearTimeout(SMData._floatPanel._collapseTimer);
     }
     SMData._floatPanel._collapseTimer = setTimeout(function () {
+        // ★ 指示器模式中不收起（等5s超时或鼠标主动进入后面板）
+        if (SMData._floatPanel._indicatorMode || SMData._floatPanel._indicatorJustOpened) return;
         // 再次检查鼠标是否确实离开了面板区域
         if (!SMData._floatPanel.hovered && !SMData._floatPanel.pinned) {
             var panel = document.getElementById('dataFloatPanel');

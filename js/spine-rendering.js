@@ -617,6 +617,16 @@ SMTool._initAnimPreview = function (node) {
     // 先销毁旧预览
     SMTool._destroyAnimPreview();
 
+    // ================================================================
+    // 🔒🔒🔒 [LOCK-B] 阻止渲染循环在 setup 完成前绘制
+    // ⚠️ 不可轻易修改重要逻辑代码，很容易引起浮窗动画的播放抽帧卡顿的bug，
+    //    如需修改，一定要寻求同意"解锁"才可以。
+    //
+    // 若此旗标不设，render 可能抓到 setup 中间态（skeleton 已赋值但 state 未配置），
+    // 导致短暂显示 T-pose / setup pose 等错误画面。
+    // ================================================================
+    pp._readyToRender = false;
+
     var panel = document.getElementById('animPreviewPanel');
     var canvas = document.getElementById('appCanvas');
     if (!panel || !canvas) return;
@@ -864,10 +874,10 @@ SMTool._initAnimPreview = function (node) {
             // ★ 创建 AnimationState 并复制源节点的完整轨道混合配置
             var stateData = new SP.AnimationStateData(sd);
             var state = new SP.AnimationState(stateData);
-            pp.state = state;
-
             // 复制源节点的全部轨道配置（不只是 track 0）
             SMTool._applyPreviewTracks(pp, state, stateData, sd, node);
+            // ★ 先配置好动画再设置 pp.state，避免空状态帧闪烁
+            pp.state = state;
 
             state.update(0);
             state.apply(sk);
@@ -922,6 +932,16 @@ SMTool._initAnimPreview = function (node) {
             pp.nodeId = node.id;
             pp._lastTime = performance.now();
 
+            // ★ 同步源节点的 PMA 和皮肤设置
+            SMTool._syncPreviewPmaAndSkin(pp, node);
+
+            // ★ 全部就绪后开启渲染（DOM 可见性由调用方控制）
+            pp.visible = true;
+            pp._readyToRender = true;
+
+            // ★ 立即同步渲染首帧，确保画布内容就绪后再由调用方显示面板
+            SMTool._renderAnimPreview(performance.now());
+
             // 更新面板标题
             var title = document.getElementById('appTitle');
             if (title) title.textContent = '🎬 ' + targetAnim;
@@ -958,7 +978,7 @@ SMTool._initAnimPreview = function (node) {
 // ---- 渲染预览帧 ----
 SMTool._renderAnimPreview = function (now) {
     var pp = SMData._animPreview;
-    if (!pp || !pp.visible || !pp.state || !pp.skeleton || !pp.gl) return;
+    if (!pp || !pp.visible || !pp._readyToRender || !pp.state || !pp.skeleton || !pp.gl) return;
 
     var canvas = pp.canvas;
     var gl = pp.gl;
@@ -1094,6 +1114,16 @@ SMTool._destroyAnimPreview = function () {
     var pp = SMData._animPreview;
     if (!pp) return;
 
+    // ================================================================
+    // 🔒🔒🔒 [LOCK-A] 销毁预览时禁止 gl.clear()
+    // ⚠️ 不可轻易修改重要逻辑代码，很容易引起浮窗动画的播放抽帧卡顿的bug，
+    //    如需修改，一定要寻求同意"解锁"才可以。
+    //
+    // 销毁时清空画布会导致浏览器在同一帧合成空白画面，
+    // 下一帧才渲染新内容 → 用户看到闪烁/切屏。
+    // 旧画面必须保留在画布上，由新内容首帧渲染自然覆盖。
+    // ================================================================
+
     if (pp.state) { try { pp.state.clearTracks(); } catch (e) {} }
     if (pp._sceneRenderer) { try { pp._sceneRenderer.dispose(); } catch (e) {} }
     if (pp._batcher) { try { pp._batcher.dispose(); } catch (e) {} }
@@ -1120,6 +1150,7 @@ SMTool._destroyAnimPreview = function () {
     }
 
     // 重置状态
+    pp._readyToRender = false;
     pp.canvas = null;
     pp.gl = null;
     pp.skeleton = null;
