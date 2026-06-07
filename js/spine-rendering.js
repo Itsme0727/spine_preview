@@ -871,13 +871,21 @@ SMTool._initAnimPreview = function (node) {
                 if (region.page && region.page.texture) region.texture = region.page.texture;
             }
 
-            // ★ 创建 AnimationState 并复制源节点的完整轨道混合配置
+            // ================================================================
+            // 🔒🔒🔒 [LOCK-C] pp.state 必须在 _applyPreviewTracks 之后赋值
+            // ⚠️ 不可轻易修改重要逻辑代码，很容易引起浮窗动画的播放抽帧卡顿的bug，
+            //    如需修改，一定要寻求同意"解锁"才可以。
+            //
+            // 若先赋值 pp.state 再调 _applyPreviewTracks，渲染循环可能在中间帧
+            // 抓到空的 AnimationState（0 条轨道），apply 后骨架跳回 setup pose。
+            // ================================================================
             var stateData = new SP.AnimationStateData(sd);
             var state = new SP.AnimationState(stateData);
             // 复制源节点的全部轨道配置（不只是 track 0）
             SMTool._applyPreviewTracks(pp, state, stateData, sd, node);
             // ★ 先配置好动画再设置 pp.state，避免空状态帧闪烁
             pp.state = state;
+            // 🔒 [LOCK-C] END
 
             state.update(0);
             state.apply(sk);
@@ -935,12 +943,19 @@ SMTool._initAnimPreview = function (node) {
             // ★ 同步源节点的 PMA 和皮肤设置
             SMTool._syncPreviewPmaAndSkin(pp, node);
 
-            // ★ 全部就绪后开启渲染（DOM 可见性由调用方控制）
+            // ================================================================
+            // 🔒🔒🔒 [LOCK-D] 就绪旗标 + 同步渲染首帧
+            // ⚠️ 不可轻易修改重要逻辑代码，很容易引起浮窗动画的播放抽帧卡顿的bug，
+            //    如需修改，一定要寻求同意"解锁"才可以。
+            //
+            // visible=true 和 _readyToRender=true 必须一同设置，
+            // 紧跟同步渲染确保画布在调用方显示面板前已绘制完成。
+            // 若去掉同步渲染或拆分旗标设置，旧画面可能残留或被空白帧替代。
+            // ================================================================
             pp.visible = true;
             pp._readyToRender = true;
-
-            // ★ 立即同步渲染首帧，确保画布内容就绪后再由调用方显示面板
             SMTool._renderAnimPreview(performance.now());
+            // 🔒 [LOCK-D] END
 
             // 更新面板标题
             var title = document.getElementById('appTitle');
@@ -978,7 +993,16 @@ SMTool._initAnimPreview = function (node) {
 // ---- 渲染预览帧 ----
 SMTool._renderAnimPreview = function (now) {
     var pp = SMData._animPreview;
+    // ================================================================
+    // 🔒🔒🔒 [LOCK-E] _readyToRender 守卫检查
+    // ⚠️ 不可轻易修改重要逻辑代码，很容易引起浮窗动画的播放抽帧卡顿的bug，
+    //    如需修改，一定要寻求同意"解锁"才可以。
+    //
+    // _readyToRender 为 false 时禁止渲染，防止抓到 setup 中间态。
+    // 必须与 [LOCK-B][LOCK-D] 配合，三者构成完整的安全屏障。
+    // ================================================================
     if (!pp || !pp.visible || !pp._readyToRender || !pp.state || !pp.skeleton || !pp.gl) return;
+    // 🔒 [LOCK-E] END
 
     var canvas = pp.canvas;
     var gl = pp.gl;

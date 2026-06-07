@@ -3068,7 +3068,16 @@ SMTool._updateFullFlowPanel = function (content, panel) {
                 SMData._animPreview._suppressShow = false;
                 playBtn.innerHTML = '⏸';
                 playBtn.title = '暂停';
-                // ★ 用当前步骤节点的动画直接更新预览浮窗
+                // ================================================================
+                // 🔒🔒🔒 [LOCK-F] 播放按钮启动预览的方式
+                // ⚠️ 不可轻易修改重要逻辑代码，很容易引起浮窗动画的播放抽帧卡顿的bug，
+                //    如需修改，一定要寻求同意"解锁"才可以。
+                //
+                // 必须通过 _showAnimPreview 更新预览（内部处理同源/异源切换），
+                // 禁止在此处手动 _destroyAnimPreview + _initAnimPreview 组合。
+                // 禁止在此处做 visibility/display 隐藏再显示的 hack。
+                // _suppressShow 旗标已在上方封锁 _startFullPlayback 期间的中间态调用。
+                // ================================================================
                 var pb2 = SMData._fullPlayback;
                 var path2 = SMData._fullPaths[pb2.activePathIdx];
                 if (path2 && pb2.currentStep < path2.nodes.length) {
@@ -3078,6 +3087,7 @@ SMTool._updateFullFlowPanel = function (content, panel) {
                         if (stepSpineNode) SMTool._showAnimPreview(stepSpineNode);
                     }
                 }
+                // 🔒 [LOCK-F] END
             }
         });
     }
@@ -3416,13 +3426,22 @@ SMTool._pauseAllNodesExcept = function (exceptId) {
                 n._savedLoop = n.loop;
                 n._pausedByFlow = true;
             }
-            // ★ 用 timeScale=0 冻结而非 clearTracks，避免节点跳回 setup pose 闪烁
+            // ================================================================
+            // 🔒🔒🔒 [LOCK-G] 用 timeScale=0 冻结节点，严禁 clearTracks
+            // ⚠️ 不可轻易修改重要逻辑代码，很容易引起浮窗动画的播放抽帧卡顿的bug，
+            //    如需修改，一定要寻求同意"解锁"才可以。
+            //
+            // clearTracks 后渲染循环调用 state.apply 会重置骨架到 setup pose，
+            // 导致主画布上非当前步骤的节点全部跳回 T-pose，产生严重闪烁。
+            // timeScale=0 只冻结动画进度，保留当前帧画面不变。
+            // ================================================================
             try {
                 for (var ti = 0; ti < 5; ti++) {
                     var entry = n.state.getCurrent(ti);
                     if (entry) entry.timeScale = 0;
                 }
             } catch (e) {}
+            // 🔒 [LOCK-G] END
         }
         r = nodesIter.next();
     }
