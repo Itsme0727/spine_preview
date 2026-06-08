@@ -557,8 +557,25 @@ SMTool.init = function () {
         document.getElementById('ctxMenu').style.display = 'none';
     });
 
-    // 双击重置控制点
+    // 双击重置控制点 / 编辑组标题 / 进入组编辑模式
     window.addEventListener('dblclick', function (e) {
+        // ★ 优先检测：双击组标题 → 编辑组名
+        if (SMData._groupTitleRects) {
+            for (var gi = 0; gi < SMData._groupTitleRects.length; gi++) {
+                var gr = SMData._groupTitleRects[gi];
+                if (e.clientX >= gr.x && e.clientX <= gr.x + gr.w &&
+                    e.clientY >= gr.y && e.clientY <= gr.y + gr.h) {
+                    // 找到对应组对象
+                    for (var gj = 0; gj < SMData.groups.length; gj++) {
+                        if (SMData.groups[gj].id === gr.groupId) {
+                            SMTool._showGroupTitleEditor(gr.groupId, gr.x, gr.y, gr.w, gr.h, SMData.groups[gj].title || '');
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
         var cp = SMTool._findCP(e.clientX, e.clientY, 18);
         if (cp) {
             for (var i = 0; i < SMData.connections.length; i++) {
@@ -731,10 +748,12 @@ SMTool.init = function () {
         SMTool.pushUndo();
         var ids = [];
         SMData.selectedNodes.forEach(function (id) { ids.push(id); });
+        var gid = SMData.nextGroupId++;
         var g = {
-            id: SMData.nextGroupId++,
+            id: gid,
             nodeIds: new Set(ids),
-            color: SMTool._groupColors[(SMData.nextGroupId - 1) % SMTool._groupColors.length]
+            color: SMTool._groupColors[(gid - 1) % SMTool._groupColors.length],
+            title: '组 ' + gid
         };
         SMData.groups.push(g);
         document.getElementById('sbStatus').textContent = '已打组 (' + ids.length + ' 节点)';
@@ -809,19 +828,179 @@ SMTool.init = function () {
     };
 
     SMTool._renderGroupBoxes = function (ctx) {
+        SMData._groupTitleRects = [];
+
+        // ================================================================
+        //  第一遍：计算所有组的排序索引（按 Y 高度排序，同行按 X 排序）
+        // ================================================================
+        var groupBounds = [];    // [{ g, bb }]
         for (var i = 0; i < SMData.groups.length; i++) {
             var g = SMData.groups[i];
+            var bb = SMTool._getGroupBounds(g);
+            if (bb) groupBounds.push({ g: g, bb: bb });
+        }
+        // 按 top 排序，top 相同按 left
+        groupBounds.sort(function (a, b) {
+            var dY = a.bb.top - b.bb.top;
+            if (Math.abs(dY) < 0.5) return a.bb.left - b.bb.left;
+            return dY;
+        });
+
+        // 分配排序索引：同行（top 差 < 50 世界单位）共享基数，按 left 递增后缀
+        var sortIndexMap = {};   // groupId → "1" | "1_2" | ...
+        var currentBase = 0;
+        var currentBaseTop = -Infinity;
+        var sameRowCount = 0;
+        var SAME_ROW_THRESHOLD = 50; // 世界单位，Y 差在此范围内视为同行
+
+        for (var si = 0; si < groupBounds.length; si++) {
+            var item = groupBounds[si];
+            var top = item.bb.top;
+            if (si === 0 || Math.abs(top - currentBaseTop) > SAME_ROW_THRESHOLD) {
+                // 新的一行
+                currentBase++;
+                currentBaseTop = top;
+                sameRowCount = 1;
+                sortIndexMap[item.g.id] = '' + currentBase;
+            } else {
+                // 同行
+                sameRowCount++;
+                sortIndexMap[item.g.id] = currentBase + '_' + sameRowCount;
+            }
+        }
+
+        // ================================================================
+        //  第二遍：渲染组边框 + 标题 + 排序索引
+        // ================================================================
+        for (var i2 = 0; i2 < SMData.groups.length; i2++) {
+            var g = SMData.groups[i2];
             var bb = SMTool._getGroupBounds(g);
             if (!bb) continue;
             var tl = SMTool.worldToCanvas(bb.left, bb.top);
             var br = SMTool.worldToCanvas(bb.right, bb.bottom);
+
+            // 组虚线边框
             ctx.save();
             ctx.strokeStyle = g.color;
             ctx.lineWidth = 1;
             ctx.setLineDash([4, 3]);
             ctx.strokeRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
             ctx.restore();
+
+            // ★ 组大标题 + 排序索引 badge
+            var title = g.title || '';
+            var sortIdx = sortIndexMap[g.id] || '';
+            if (title || sortIdx) {
+                var z = SMData.view.zoom;
+                // 主标题字号（随缩放，最小 28px 确保一直响应缩放）
+                var titleFontSize = Math.max(28, Math.round(120 * z));
+                if (titleFontSize > 240) titleFontSize = 240;
+                // 排序索引字号（随缩放，最小 12px）
+                var idxFontSize = Math.max(12, Math.round(40 * z));
+
+                ctx.save();
+                ctx.font = 'bold ' + titleFontSize + 'px "Segoe UI",system-ui,sans-serif';
+                var textW = title ? ctx.measureText(title).width : 0;
+                var idxTextW = 0;
+                if (sortIdx) {
+                    ctx.font = 'bold ' + idxFontSize + 'px "Segoe UI",system-ui,sans-serif';
+                    idxTextW = ctx.measureText(sortIdx).width;
+                }
+                ctx.font = 'bold ' + titleFontSize + 'px "Segoe UI",system-ui,sans-serif';
+
+                var padX = Math.round(16 * z);
+                var padY = Math.round(8 * z);
+                var titleLineH = Math.round(titleFontSize * 1.3);
+                var idxLineH = sortIdx ? Math.round(idxFontSize * 1.5) : 0;
+                var totalTitleH = idxLineH + titleLineH + padY;
+
+                // 标题整体背景位置
+                var titleX = tl.x - padX;
+                var titleY = tl.y - totalTitleH - padY - 20;
+
+                var contentW = Math.max(textW, idxTextW);
+                var titleW = contentW + padX * 2;
+
+                // 半透明背景（无左侧色条）
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                SMTool._roundRect(ctx, titleX, titleY, titleW, totalTitleH, Math.round(10 * z));
+                ctx.fill();
+
+                // ---- 排序索引（小字，置顶，随缩放） ----
+                if (sortIdx) {
+                    ctx.font = 'bold ' + idxFontSize + 'px "Segoe UI",system-ui,sans-serif';
+                    ctx.fillStyle = g.color;
+                    ctx.textBaseline = 'top';
+                    ctx.textAlign = 'left';
+                    var idxX = titleX + padX + Math.round(8 * z);
+                    var idxY = titleY + Math.round(4 * z);
+                    ctx.fillText(sortIdx, idxX, idxY);
+                }
+
+                // ---- 主标题文字 ----
+                if (title) {
+                    ctx.font = 'bold ' + titleFontSize + 'px "Segoe UI",system-ui,sans-serif';
+                    ctx.fillStyle = '#ffffff';
+                    ctx.textBaseline = 'middle';
+                    ctx.textAlign = 'left';
+                    var textX = titleX + padX + Math.round(8 * z);
+                    var textY = titleY + idxLineH + titleLineH / 2;
+                    ctx.fillText(title, textX, textY);
+                }
+
+                ctx.restore();
+
+                // 存储标题区域用于双击编辑
+                SMData._groupTitleRects.push({
+                    groupId: g.id,
+                    x: titleX, y: titleY, w: titleW, h: totalTitleH
+                });
+            }
         }
+    };
+
+    // ★ 更新组标题文本
+    SMTool._updateGroupTitle = function (groupId, text) {
+        for (var i = 0; i < SMData.groups.length; i++) {
+            if (SMData.groups[i].id === groupId) {
+                SMData.groups[i].title = text;
+                return;
+            }
+        }
+    };
+
+    // ★ 显示组标题浮层编辑器（双击组标题时调用）
+    SMTool._showGroupTitleEditor = function (groupId, cx, cy, cw, ch, currentText) {
+        // 移除已有的编辑器
+        var oldEd = document.getElementById('groupTitleEditor');
+        if (oldEd) oldEd.remove();
+
+        var ed = document.createElement('input');
+        ed.id = 'groupTitleEditor';
+        ed.type = 'text';
+        ed.value = currentText;
+        ed.style.cssText =
+            'position:fixed;z-index:300;background:#1c1c20;color:#fff;border:2px solid #4a9eff;' +
+            'border-radius:8px;padding:4px 12px;font-size:' + Math.round(ch * 0.7) + 'px;' +
+            'font-weight:bold;font-family:"Segoe UI",system-ui,sans-serif;' +
+            'left:' + cx + 'px;top:' + cy + 'px;' +
+            'width:' + Math.max(cw, 100) + 'px;height:' + ch + 'px;' +
+            'outline:none;text-align:left;min-width:100px';
+        document.body.appendChild(ed);
+        ed.focus();
+        ed.select();
+
+        var save = function () {
+            var val = ed.value.trim();
+            if (val) SMTool._updateGroupTitle(groupId, val);
+            ed.remove();
+        };
+
+        ed.addEventListener('blur', save);
+        ed.addEventListener('keydown', function (ev) {
+            if (ev.key === 'Enter') { ev.preventDefault(); save(); }
+            if (ev.key === 'Escape') { ed.value = currentText; ed.blur(); }
+        });
     };
 
     // ---- 渲染模式切换 ----
@@ -1066,7 +1245,8 @@ SMTool.init = function () {
             snap.groups.push({
                 id: grp.id,
                 nodeIds: nodeIdArr,
-                color: grp.color
+                color: grp.color,
+                title: grp.title || ''
             });
         }
 
@@ -1428,7 +1608,8 @@ SMTool.init = function () {
             return {
                 id: g.id,
                 nodeIds: new Set(g.nodeIds || []),
-                color: g.color
+                color: g.color,
+                title: g.title || ''
             };
         });
 

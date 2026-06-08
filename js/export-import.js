@@ -508,7 +508,8 @@ SMTool._serializeData = function () {
         data.groups.push({
             id: grp.id,
             nodeIds: nodeIdArr,
-            color: grp.color
+            color: grp.color,
+            title: grp.title || ''
         });
     }
     // 保存 nextGroupId，避免导入时 ID 冲突
@@ -1180,7 +1181,8 @@ SMTool._processImportJson = function (jsonText, fileHandle) {
             return {
                 id: g.id,
                 nodeIds: new Set(g.nodeIds || []),
-                color: g.color
+                color: g.color,
+                title: g.title || ''
             };
         });
         SMData.nextGroupId = d.nextGroupId || SMData.nextGroupId;
