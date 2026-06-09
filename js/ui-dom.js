@@ -80,19 +80,27 @@ SMTool._createEl = function (node) {
     } else if (node.nodeType === 'entry') {
         el.classList.add('entry-node');
         var entryText = SMTool._esc(node._exitText || '');
+        var entryName = SMTool._esc(node.name || '阶段号');
         el.innerHTML =
             '<div class="header entry-header" onmousedown="event.stopPropagation();SMTool._onHD(event,' + node.id + ')">' +
-                '<span class="entry-title">🚪 入口</span>' +
+                '<input class="entry-title-input" value="' + entryName + '" ' +
+                    'oninput="SMTool._updateEntryName(' + node.id + ',this.value)" ' +
+                    'onclick="event.stopPropagation()" ' +
+                    'onkeydown="event.stopPropagation()" ' +
+                    'style="background:transparent;border:none;color:#fff;font-size:39px;font-weight:600;outline:none;width:0;flex:1;min-width:0">' +
                 '<div class="entry-header-btns">' +
                     '<button onclick="event.stopPropagation();SMTool.deleteNode(' + node.id + ')" title="删除节点">✕</button>' +
                 '</div>' +
             '</div>' +
             '<div class="entry-body">' +
-                '<div class="entry-icon">🚪</div>' +
                 '<textarea class="entry-text-input" oninput="SMTool._updateExitText(' + node.id + ',this.value);this.style.height=\'auto\';this.style.height=this.scrollHeight+\'px\'" onclick="event.stopPropagation()" placeholder="输入入口条件...">' + entryText + '</textarea>' +
             '</div>' +
-            '<div class="anim-bar" style="display:flex;justify-content:flex-end">' +
+            '<div class="anim-bar" style="display:flex;justify-content:space-between">' +
+                '<div class="conn-dot input" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'entry\',\'input\')" title="连线输入"></div>' +
                 '<div class="conn-dot output" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'entry\',\'output\')" title="连线输出"></div>' +
+            '</div>' +
+            '<div class="entry-img-bar">' +
+                '<button class="node-img-add-btn" onclick="event.stopPropagation();SMTool._pickNodeImage(' + node.id + ')" ondragover="event.preventDefault();event.stopPropagation()" ondrop="event.preventDefault();event.stopPropagation();SMTool._dropNodeImage(event,' + node.id + ')" title="添加图片附件">📷 添加图片</button>' +
             '</div>' +
             '<span class="scale-handle" onmousedown="event.stopPropagation();SMTool._onScaleStart(event,' + node.id + ')" title="拖拽缩放"><i class="scale-handle-icon"></i></span>';
     } else if (node.nodeType === 'exit') {
@@ -106,7 +114,6 @@ SMTool._createEl = function (node) {
                 '</div>' +
             '</div>' +
             '<div class="exit-body">' +
-                '<div class="exit-icon">🏁</div>' +
                 '<textarea class="exit-text-input" oninput="SMTool._updateExitText(' + node.id + ',this.value);this.style.height=\'auto\';this.style.height=this.scrollHeight+\'px\'" onclick="event.stopPropagation()" placeholder="输入出口条件...">' + exitText + '</textarea>' +
             '</div>' +
             '<div class="anim-bar" style="display:flex;justify-content:flex-start">' +
@@ -124,6 +131,20 @@ SMTool._createEl = function (node) {
                 'onmousedown="if(this.contentEditable===\'false\'){event.stopPropagation();SMTool._onHD(event,' + node.id + ')}" ' +
                 '>' + titleText + '</div>' +
             '<span class="title-scale-handle" onmousedown="event.stopPropagation();SMTool._onScaleStart(event,' + node.id + ')" title="拖拽缩放"><i class="scale-handle-icon"></i></span>';
+    } else if (node.nodeType === 'image') {
+        el.classList.add('image-node');
+        var imgSrc = node._imageDataUrl || '';
+        el.innerHTML =
+            '<div class="header image-header" onmousedown="event.stopPropagation();SMTool._onHD(event,' + node.id + ')">' +
+                '<span class="image-title">🖼️ 图片</span>' +
+                '<div class="image-header-btns">' +
+                    '<button onclick="event.stopPropagation();SMTool.deleteNode(' + node.id + ')" title="删除节点">✕</button>' +
+                '</div>' +
+            '</div>' +
+            '<div class="image-body" style="padding:6px;overflow:hidden">' +
+                '<img src="' + imgSrc + '" style="width:100%;display:block;border-radius:6px" draggable="false">' +
+            '</div>' +
+            '<span class="scale-handle" onmousedown="event.stopPropagation();SMTool._onScaleStart(event,' + node.id + ')" title="拖拽缩放"><i class="scale-handle-icon"></i></span>';
     } else {
     el.innerHTML =
         SMTool._buildNodeIndicatorsHtml(node) +
@@ -160,13 +181,26 @@ SMTool._createEl = function (node) {
         '</div>' +
         '<div class="node-extras">' +
             '<div class="bone-tags" id="boneTags-' + node.id + '"></div>' +
-            '<textarea class="state-desc" placeholder="点击输入此状态的描述" oninput="SMTool._updateStateDesc(' + node.id + ',this.value)" onclick="event.stopPropagation()">' + SMTool._esc(node._stateDesc || '') + '</textarea>' +
+            '<div class="state-desc-row">' +
+                '<textarea class="state-desc" placeholder="点击输入此状态的描述" oninput="SMTool._updateStateDesc(' + node.id + ',this.value)" onclick="event.stopPropagation()">' + SMTool._esc(node._stateDesc || '') + '</textarea>' +
+                '<button class="node-img-add-btn" onclick="event.stopPropagation();SMTool._pickNodeImage(' + node.id + ')" ondragover="event.preventDefault();event.stopPropagation()" ondrop="event.preventDefault();event.stopPropagation();SMTool._dropNodeImage(event,' + node.id + ')" title="添加图片附件">📷</button>' +
+            '</div>' +
             '<span class="version-badge">v' + SMTool._esc(node.version || '?') + '</span>' +
         '</div>' +
         '<span class="scale-handle" onmousedown="event.stopPropagation();SMTool._onScaleStart(event,' + node.id + ')" title="拖拽缩放"><i class="scale-handle-icon"></i></span>';
     }
 
     SMTool.nodesLayer.appendChild(el);
+
+    // ★ 初始化：已有状态描述内容时标黄
+    if (node._stateDesc && node._stateDesc.trim().length > 0) {
+        var taInit = el.querySelector('.state-desc');
+        if (taInit) taInit.classList.add('has-content');
+    }
+    // ★ 初始化：已有节点附件图片时渲染缩略图
+    if (node._nodeImages && node._nodeImages.length > 0) {
+        SMTool._refreshNodeImages(node.id);
+    }
 };
 
 // ================================================================
@@ -188,7 +222,7 @@ SMTool._buildNodeIndicatorsHtml = function (node) {
     }
     // ★ 仅在有标记内容时才显示皮肤图标（无标记则不出现）
     if (skinMarked > 0) {
-        html += '<button class="ndi-btn" title="皮肤: ' + skinMarked + ' 个" onclick="event.stopPropagation();SMTool._onIndicatorClick(' + node.id + ',\'skin\')" style="position:relative">🎨<span class="ndi-count">' + skinMarked + '</span></button>';
+        html += '<button class="ndi-btn ndi-skin" title="皮肤: ' + skinMarked + ' 个" onclick="event.stopPropagation();SMTool._onIndicatorClick(' + node.id + ',\'skin\')" style="position:relative">🎨<span class="ndi-count">' + skinMarked + '</span></button>';
     }
     // 骨骼（仅当有标记内容时显示，角标为已标记数量）
     var boneMarked = 0;
@@ -202,12 +236,12 @@ SMTool._buildNodeIndicatorsHtml = function (node) {
         }
     }
     if (boneMarked > 0) {
-        html += '<button class="ndi-btn" title="骨骼: ' + boneMarked + ' 个已标记" onclick="event.stopPropagation();SMTool._onIndicatorClick(' + node.id + ',\'bone\')" style="position:relative">🦴<span class="ndi-count">' + boneMarked + '</span></button>';
+        html += '<button class="ndi-btn ndi-bone" title="骨骼: ' + boneMarked + ' 个已标记" onclick="event.stopPropagation();SMTool._onIndicatorClick(' + node.id + ',\'bone\')" style="position:relative">🦴<span class="ndi-count">' + boneMarked + '</span></button>';
     }
     // 事件帧
     var eventCount = (node._eventFrames || []).length;
     if (eventCount > 0) {
-        html += '<button class="ndi-btn" title="事件帧: ' + eventCount + ' 个" onclick="event.stopPropagation();SMTool._onIndicatorClick(' + node.id + ',\'event\')" style="position:relative">⚡<span class="ndi-count">' + eventCount + '</span></button>';
+        html += '<button class="ndi-btn ndi-event" title="事件帧: ' + eventCount + ' 个" onclick="event.stopPropagation();SMTool._onIndicatorClick(' + node.id + ',\'event\')" style="position:relative">⚡<span class="ndi-count">' + eventCount + '</span></button>';
     }
     // 插槽（仅当有标记内容时显示，角标为已标记数量）
     var slotMarked = 0;
@@ -220,7 +254,7 @@ SMTool._buildNodeIndicatorsHtml = function (node) {
         }
     }
     if (slotMarked > 0) {
-        html += '<button class="ndi-btn" title="插槽: ' + slotMarked + ' 个已标记" onclick="event.stopPropagation();SMTool._onIndicatorClick(' + node.id + ',\'slot\')" style="position:relative">🔧<span class="ndi-count">' + slotMarked + '</span></button>';
+        html += '<button class="ndi-btn ndi-slot" title="插槽: ' + slotMarked + ' 个已标记" onclick="event.stopPropagation();SMTool._onIndicatorClick(' + node.id + ',\'slot\')" style="position:relative">�<span class="ndi-count">' + slotMarked + '</span></button>';
     }
     html += '</div>';
     return html;
@@ -549,7 +583,12 @@ SMTool._updateStateDesc = function (nid, value) {
     var node = SMData.nodes.get(nid);
     if (node) node._stateDesc = value;
     var ta = document.querySelector('#sn-' + nid + ' .state-desc');
-    if (ta) { ta.style.height = 'auto'; ta.style.height = Math.max(32, ta.scrollHeight) + 'px'; }
+    if (ta) {
+        ta.style.height = 'auto'; ta.style.height = Math.max(32, ta.scrollHeight) + 'px';
+        // ★ 有内容时文字变黄色
+        if (value && value.trim().length > 0) ta.classList.add('has-content');
+        else ta.classList.remove('has-content');
+    }
 };
 
 // ---- 构建骨骼行 HTML（含备注区和截图区）----
@@ -586,7 +625,9 @@ SMTool._buildBoneRowHtml = function (node, boneName) {
 
     var html = '<div class="dfp-row dfp-bone-row' + (isMarked ? ' expanded' : '') + '" data-bone="' + SMTool._esc(boneName) + '" onclick="SMTool._toggleBoneTag(\'' + SMTool._esc(boneName) + '\')" style="cursor:pointer">' +
         '<span class="dfp-bone-name">' + SMTool._esc(boneName) + previewBadges + '</span>' +
-        '<span class="dfp-bone-right">' + taggedHtml + '</span>' +
+        '<span class="dfp-bone-right">' + taggedHtml;
+        if (isMarked) html += '<button class="dfp-clear-mark-btn" onclick="event.stopPropagation();SMTool._clearMarkedItem(\'' + SMTool._esc(boneName) + '\',\'bone\')" title="清除此骨骼的全部标记数据（截图/备注/淡入淡出）">取消标记</button>';
+        html += '</span>' +
         '<span class="' + markClass + '" data-bone="' + SMTool._esc(boneName) + '" onclick="event.stopPropagation();SMTool._toggleBoneTag(\'' + SMTool._esc(boneName) + '\')" title="' + (isMarked ? '取消标记' : '标记骨骼（展开备注和截图）') + '">+</span>' +
         '</div>';
 
@@ -689,7 +730,7 @@ SMTool._buildSkinRowHtml = function (node, skinName) {
 
     var html = '<div class="dfp-row dfp-bone-row' + (isMarked ? ' expanded' : '') + (isCurrentSkin ? ' skin-current' : '') + '" data-bone="' + SMTool._esc(skinName) + '" onclick="SMTool._setSkin(' + node.id + ',\'' + SMTool._escAttr(skinName) + '\')" style="cursor:pointer" title="点击切换到此皮肤">' +
         '<span class="dfp-bone-name">' + SMTool._esc(skinName) + previewBadges + '</span>' +
-        '<span class="dfp-bone-right"></span>' +
+        '<span class="dfp-bone-right">' + (isMarked ? '<button class="dfp-clear-mark-btn" onclick="event.stopPropagation();SMTool._clearMarkedItem(\'' + SMTool._esc(skinName) + '\',\'skin\')" title="清除此皮肤的全部标记数据">取消标记</button>' : '') + '</span>' +
         '<span class="' + markClass + '" data-bone="' + SMTool._esc(skinName) + '" onclick="event.stopPropagation();SMTool._toggleSkinTag(\'' + SMTool._esc(skinName) + '\')" title="' + (isMarked ? '取消标记' : '标记皮肤（展开备注和截图）') + '">+</span>' +
         '</div>';
 
@@ -762,7 +803,7 @@ SMTool._buildSlotRowHtml = function (node, slotName) {
 
     var html = '<div class="dfp-row dfp-bone-row' + (isMarked ? ' expanded' : '') + '" data-bone="' + SMTool._esc(slotName) + '" onclick="SMTool._toggleSlotTag(\'' + SMTool._esc(slotName) + '\')" style="cursor:pointer">' +
         '<span class="dfp-bone-name">' + SMTool._esc(slotName) + previewBadges + '</span>' +
-        '<span class="dfp-bone-right"></span>' +
+        '<span class="dfp-bone-right">' + (isMarked ? '<button class="dfp-clear-mark-btn" onclick="event.stopPropagation();SMTool._clearMarkedItem(\'' + SMTool._esc(slotName) + '\',\'slot\')" title="清除此插槽的全部标记数据">取消标记</button>' : '') + '</span>' +
         '<span class="' + markClass + '" data-bone="' + SMTool._esc(slotName) + '" onclick="event.stopPropagation();SMTool._toggleSlotTag(\'' + SMTool._esc(slotName) + '\')" title="' + (isMarked ? '取消标记' : '标记插槽（展开备注和截图）') + '">+</span>' +
         '</div>';
 
@@ -1033,6 +1074,49 @@ SMTool._toggleBoneTag = function (boneName, type) {
         if (nEl) {
             var indEl = nEl.querySelector('.node-indicators');
             if (indEl) indEl.outerHTML = SMTool._buildNodeIndicatorsHtml(n);
+        }
+    }
+    SMData._lastPanelNodeId = -1;
+    SMTool._updateFloatPanel();
+};
+
+// ★ 完全清除标记项（支持多选）
+SMTool._clearMarkedItem = function (name, type) {
+    type = type || 'bone';
+    var processed = {};  // 防止同源节点重复处理
+    var selIds = [];
+    SMData.selectedNodes.forEach(function (nid) { selIds.push(nid); });
+    if (selIds.length === 0 && SMData.selectedNode) selIds.push(SMData.selectedNode);
+    for (var si = 0; si < selIds.length; si++) {
+        var node = SMData.nodes.get(selIds[si]);
+        if (!node || node.nodeType !== 'spine') continue;
+        var sameSourceNodes = SMTool._getSameSourceNodes(node);
+        for (var ni = 0; ni < sameSourceNodes.length; ni++) {
+            var n = sameSourceNodes[ni];
+            if (processed[n.id]) continue;
+            processed[n.id] = true;
+            var tagKey = (type === 'slot' ? '_slotTags' : type === 'skin' ? '_skinTags' : '_boneTags');
+            if (n[tagKey]) delete n[tagKey][name];
+            var noteKey = (type === 'slot' ? '_slotNotes' : type === 'skin' ? '_skinNotes' : '_boneNotes');
+            if (n[noteKey]) delete n[noteKey][name];
+            var shotKey = (type === 'slot' ? '_slotScreenshots' : type === 'skin' ? '_skinScreenshots' : '_boneScreenshots');
+            if (n[shotKey] && n[shotKey][name]) {
+                var shots = n[shotKey][name];
+                if (!Array.isArray(shots)) shots = [shots];
+                for (var sj = 0; sj < shots.length; sj++) {
+                    if (typeof shots[sj] === 'number') SMData._shotRelease(shots[sj]);
+                }
+                delete n[shotKey][name];
+            }
+            var refKey = (type === 'slot' ? '_slotShotRefs' : type === 'skin' ? '_skinShotRefs' : '_boneShotRefs');
+            if (n[refKey]) delete n[refKey][name];
+            if (type === 'bone' && n._boneFade) delete n._boneFade[name];
+            SMTool._refreshBoneTagsUI(n);
+            var nEl = SMTool._getEl(n.id);
+            if (nEl) {
+                var indEl = nEl.querySelector('.node-indicators');
+                if (indEl) indEl.outerHTML = SMTool._buildNodeIndicatorsHtml(n);
+            }
         }
     }
     SMData._lastPanelNodeId = -1;
@@ -1534,7 +1618,7 @@ SMTool._generateThumbnail = function (dataUrl) {
             ctx.drawImage(img, 0, 0, w, h);
             resolve(canvas.toDataURL('image/jpeg', 0.75));
         };
-        img.onerror = function () { resolve(dataUrl); }; // 降级：返回原图
+        img.onerror = function () { resolve(null); }; // 生成失败 → 返回 null，由调用方处理
         img.src = dataUrl;
     });
 };
@@ -1661,6 +1745,301 @@ SMTool._dropScreenshot = function (e, boneName) {
             reader.readAsDataURL(f);
         })(file, i);
     }
+};
+
+// ---- 节点面板右上角图片附件（选取/拖放/删除） ----
+SMTool._pickNodeImage = function (nid) {
+    var input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.multiple = true;
+    input.onchange = function () {
+        var files = input.files;
+        if (!files || files.length === 0) return;
+        var node = SMData.nodes.get(nid);
+        if (!node) return;
+        var loaded = 0;
+        var dataUrls = [];
+        for (var i = 0; i < files.length; i++) {
+            (function (file, idx) {
+                var reader = new FileReader();
+                reader.onload = function () {
+                    dataUrls[idx] = reader.result;
+                    loaded++;
+                    if (loaded === files.length) {
+                        if (!node._nodeShotRefs) node._nodeShotRefs = [];
+                        for (var j = 0; j < dataUrls.length; j++) {
+                            if (dataUrls[j]) {
+                                var sid = SMData._shotRegister(dataUrls[j]);
+                                node._nodeImages.push(sid);
+                                // ★ 同步更新 _nodeShotRefs（用于保存/加载）
+                                var ent = SMData._shotStore[sid];
+                                var ext2 = 'png';
+                                if (ent && ent.dataUrl) {
+                                    var m2 = ent.dataUrl.match(/^data:(image\/\w+);/);
+                                    if (m2) ext2 = m2[1].split('/')[1];
+                                    if (ext2 === 'jpeg') ext2 = 'jpg';
+                                }
+                                node._nodeShotRefs.push('_assets/img_' + sid + '.' + ext2);
+                            }
+                        }
+                        SMTool._refreshNodeImages(nid);
+                    }
+                };
+                reader.readAsDataURL(file);
+            })(files[i], i);
+        }
+    };
+    input.click();
+};
+
+SMTool._dropNodeImage = function (e, nid) {
+    var files = e.dataTransfer.files;
+    if (!files || files.length === 0) return;
+    var node = SMData.nodes.get(nid);
+    if (!node) return;
+    var loaded = 0;
+    var dataUrls = [];
+    for (var i = 0; i < files.length; i++) {
+        var file = files[i];
+        if (!file.type.startsWith('image/')) continue;
+        (function (f, idx) {
+            var reader = new FileReader();
+            reader.onload = function () {
+                dataUrls[idx] = reader.result;
+                loaded++;
+                if (loaded === files.length) {
+                    if (!node._nodeShotRefs) node._nodeShotRefs = [];
+                    for (var j = 0; j < dataUrls.length; j++) {
+                        if (dataUrls[j]) {
+                            var sid2 = SMData._shotRegister(dataUrls[j]);
+                            node._nodeImages.push(sid2);
+                            var ent2 = SMData._shotStore[sid2];
+                            var ext3 = 'png';
+                            if (ent2 && ent2.dataUrl) {
+                                var m3 = ent2.dataUrl.match(/^data:(image\/\w+);/);
+                                if (m3) ext3 = m3[1].split('/')[1];
+                                if (ext3 === 'jpeg') ext3 = 'jpg';
+                            }
+                            node._nodeShotRefs.push('_assets/img_' + sid2 + '.' + ext3);
+                        }
+                    }
+                    SMTool._refreshNodeImages(nid);
+                }
+            };
+            reader.readAsDataURL(f);
+        })(file, i);
+    }
+};
+
+// ★ 刷新节点面板图片缩略图（spine 右上角竖排，entry 下方横排）
+// ★ 缩略图懒生成完成 → 刷新引用该 shotId 的所有节点
+SMTool._refreshNodeImageByShotId = function (shotId) {
+    var nodesIter = SMData.nodes.values();
+    var r = nodesIter.next();
+    while (!r.done) {
+        var nd = r.value;
+        if (nd._nodeImages && nd._nodeImages.indexOf(shotId) >= 0 && (nd.nodeType === 'spine' || nd.nodeType === 'entry')) {
+            SMTool._refreshNodeImages(nd.id);
+        }
+        r = nodesIter.next();
+    }
+};
+
+// ★ 重新尝试生成节点图片缩略图
+SMTool._retryNodeImageThumb = function (nid, index) {
+    var node = SMData.nodes.get(nid);
+    if (!node || !node._nodeImages) return;
+    var shotId = node._nodeImages[index];
+    if (typeof shotId !== 'number') return;
+    var entry = SMData._shotStore[shotId];
+    if (entry) {
+        entry._thumbFailed = false;
+        entry._thumbPending = false;
+    }
+    SMTool._refreshNodeImages(nid);
+};
+
+SMTool._refreshNodeImages = function (nid) {
+    var el = SMTool._getEl(nid);
+    if (!el) return;
+    var node = SMData.nodes.get(nid);
+    if (!node || !node._nodeImages || node._nodeImages.length === 0) {
+        var oldC2 = el.querySelector('.node-images');
+        if (oldC2) { oldC2.innerHTML = ''; oldC2.style.display = 'none'; }
+        return;
+    }
+    var isEntry = (node.nodeType === 'entry');
+    var container = el.querySelector('.node-images');
+    if (!container) {
+        container = document.createElement('div');
+        container.className = 'node-images';
+        if (isEntry) container.classList.add('node-images-entry');
+        el.appendChild(container);
+    }
+    container.style.display = 'flex';
+    if (isEntry) {
+        container.style.flexDirection = 'row';
+        container.style.position = 'static';
+        container.style.left = 'auto';
+        container.style.right = 'auto';
+        container.style.top = 'auto';
+    }
+    var thumbW = Math.round((node.width || 300) * 0.8);
+    var thumbH = Math.round(thumbW * 0.75);
+    var html = '';
+    for (var i = 0; i < node._nodeImages.length; i++) {
+        var shotId = node._nodeImages[i];
+        if (shotId === null || shotId === undefined) {
+            html += '<div class="node-img-item node-img-missing" style="width:' + thumbW + 'px;height:' + thumbH + 'px" ' +
+                'onclick="event.stopPropagation();SMTool._reacquireNodeImage(' + nid + ',' + i + ')" title="资源丢失，点击重新获取">' +
+                '<span class="node-img-missing-icon">📁</span>' +
+                '<span class="node-img-missing-text">点击重新获取</span>' +
+                '<span class="node-img-del" onclick="event.stopPropagation();SMTool._removeNodeImage(' + nid + ',' + i + ')" title="删除">×</span>' +
+                '</div>';
+        } else {
+            var entry = SMData._shotStore[shotId];
+            var thumb = SMData._shotGetThumb(shotId);
+            if (!thumb && entry && entry._thumbPending) {
+                // ★ 缩略图正在异步生成中 → 显示加载占位符
+                html += '<div class="node-img-item node-img-loading" style="width:' + thumbW + 'px;height:' + thumbH + 'px" title="缩略图生成中...">' +
+                    '<span class="node-img-missing-icon">⏳</span>' +
+                    '<span class="node-img-del" onclick="event.stopPropagation();SMTool._removeNodeImage(' + nid + ',' + i + ')" title="删除">×</span>' +
+                    '</div>';
+            } else if (!thumb) {
+                // ★ 无缩略图（生成失败或数据缺失）→ 显示丢失占位符，点击尝试重新加载
+                if (entry && entry._thumbFailed) {
+                    // 生成失败 → 点击重新尝试生成缩略图
+                    html += '<div class="node-img-item node-img-missing" style="width:' + thumbW + 'px;height:' + thumbH + 'px" ' +
+                        'onclick="event.stopPropagation();SMTool._retryNodeImageThumb(' + nid + ',' + i + ')" title="缩略图生成失败，点击重试">' +
+                        '<span class="node-img-missing-icon">🖼️</span>' +
+                        '<span class="node-img-missing-text">点击重试</span>' +
+                        '<span class="node-img-del" onclick="event.stopPropagation();SMTool._removeNodeImage(' + nid + ',' + i + ')" title="删除">×</span>' +
+                        '</div>';
+                } else {
+                html += '<div class="node-img-item node-img-missing" style="width:' + thumbW + 'px;height:' + thumbH + 'px" ' +
+                    'onclick="event.stopPropagation();SMTool._reacquireNodeImage(' + nid + ',' + i + ')" title="资源丢失，点击重新获取">' +
+                    '<span class="node-img-missing-icon">📁</span>' +
+                    '<span class="node-img-missing-text">点击重新获取</span>' +
+                    '<span class="node-img-del" onclick="event.stopPropagation();SMTool._removeNodeImage(' + nid + ',' + i + ')" title="删除">×</span>' +
+                    '</div>';
+                }
+            } else {
+                html += '<div class="node-img-item" style="width:' + thumbW + 'px;height:' + thumbH + 'px">' +
+                    '<img src="' + thumb + '" onclick="event.stopPropagation();SMTool._openNodeImage(' + nid + ',' + i + ')" title="点击查看大图">' +
+                    '<span class="node-img-del" onclick="event.stopPropagation();SMTool._removeNodeImage(' + nid + ',' + i + ')" title="删除">×</span>' +
+                    '</div>';
+            }
+        }
+    }
+    container.innerHTML = html;
+};
+
+// ★ 重新获取丢失的节点图片（打开文件选择器）
+SMTool._reacquireNodeImage = function (nid, index) {
+    var node = SMData.nodes.get(nid);
+    if (!node) return;
+    var inp = document.createElement('input');
+    inp.type = 'file';
+    inp.accept = 'image/*';
+    inp.onchange = function () {
+        var file = inp.files[0];
+        if (!file) return;
+        var reader = new FileReader();
+        reader.onload = function () {
+            var oldShotId = node._nodeImages[index];
+            var newShotId = SMData._shotRegister(reader.result);
+            node._nodeImages[index] = newShotId;
+            // ★ 释放旧 shotId 引用计数
+            if (typeof oldShotId === 'number' && oldShotId !== newShotId) SMData._shotRelease(oldShotId);
+            // ★ 同步更新 _nodeShotRefs
+            if (!node._nodeShotRefs) node._nodeShotRefs = [];
+            // 确保数组长度足够
+            while (node._nodeShotRefs.length <= index) node._nodeShotRefs.push('');
+            var entry = SMData._shotStore[newShotId];
+            var ext = 'png';
+            if (entry && entry.dataUrl) {
+                var m = entry.dataUrl.match(/^data:(image\/\w+);/);
+                if (m) ext = m[1].split('/')[1];
+                if (ext === 'jpeg') ext = 'jpg';
+            }
+            node._nodeShotRefs[index] = '_assets/img_' + newShotId + '.' + ext;
+            SMTool._refreshNodeImages(nid);
+        };
+        reader.onerror = function () { alert('读取图片失败'); };
+        reader.readAsDataURL(file);
+    };
+    inp.click();
+};
+
+SMTool._removeNodeImage = function (nid, index) {
+    var node = SMData.nodes.get(nid);
+    if (!node || !node._nodeImages) return;
+    var shotId = node._nodeImages[index];
+    if (typeof shotId === 'number') SMData._shotRelease(shotId);
+    node._nodeImages.splice(index, 1);
+    if (node._nodeShotRefs) node._nodeShotRefs.splice(index, 1);
+    SMTool._refreshNodeImages(nid);
+};
+
+SMTool._openNodeImage = function (nid, index) {
+    var node = SMData.nodes.get(nid);
+    if (!node || !node._nodeImages || node._nodeImages.length === 0) return;
+    var shots = node._nodeImages;
+    if (index === undefined) index = 0;
+    if (index >= shots.length) index = 0;
+    var shotId = shots[index];
+    var dataUrl = SMData._shotGetDataUrl(shotId);
+    if (!dataUrl) return;
+
+    var overlay = document.getElementById('screenshotOverlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'screenshotOverlay';
+        overlay.innerHTML =
+            '<div class="shot-viewer">' +
+                '<img src="" alt="截图" draggable="false">' +
+                '<div class="shot-nav-bar">' +
+                    '<button class="shot-nav-prev" title="上一张 (←)">◀</button>' +
+                    '<span class="shot-nav-info"></span>' +
+                    '<button class="shot-nav-next" title="下一张 (→)">▶</button>' +
+                    '<span class="shot-nav-sep">|</span>' +
+                    '<button class="shot-nav-zoomin" title="放大 (+)">🔍⁺</button>' +
+                    '<span class="shot-zoom-label">100%</span>' +
+                    '<button class="shot-nav-zoomout" title="缩小 (−)">🔍⁻</button>' +
+                    '<button class="shot-nav-reset" title="重置 (0)">↺</button>' +
+                '</div>' +
+                '<span class="close-hint">点击空白关闭 | ESC 关闭 | 滚轮缩放 | ◀▶ 切换</span>' +
+            '</div>';
+        document.body.appendChild(overlay);
+    }
+    // 清理旧事件
+    if (overlay._keyHandler) document.removeEventListener('keydown', overlay._keyHandler);
+    if (overlay._wheelHandler) { var oldImg = overlay.querySelector('img'); if (oldImg) oldImg.removeEventListener('wheel', overlay._wheelHandler); }
+    overlay._nodeImagesRef = { nid: nid, shots: shots };
+    overlay.classList.add('show');
+
+    var img = overlay.querySelector('img');
+    var curIdx = index;
+    var updateImg = function () {
+        var sid = shots[curIdx];
+        img.src = SMData._shotGetDataUrl(sid) || '';
+        img.style.transform = 'scale(1)';
+        overlay.querySelector('.shot-zoom-label').textContent = '100%';
+        overlay.querySelector('.shot-nav-info').textContent = (curIdx + 1) + ' / ' + shots.length;
+    };
+    updateImg();
+
+    overlay.querySelector('.shot-nav-prev').onclick = function (e) { e.stopPropagation(); curIdx = (curIdx - 1 + shots.length) % shots.length; updateImg(); };
+    overlay.querySelector('.shot-nav-next').onclick = function (e) { e.stopPropagation(); curIdx = (curIdx + 1) % shots.length; updateImg(); };
+    overlay.querySelector('.shot-nav-zoomin').onclick = function (e) { e.stopPropagation(); var s = parseFloat(img.style.transform.replace('scale(','').replace(')','')) || 1; s = Math.min(5, s + 0.25); img.style.transform = 'scale(' + s + ')'; overlay.querySelector('.shot-zoom-label').textContent = Math.round(s * 100) + '%'; };
+    overlay.querySelector('.shot-nav-zoomout').onclick = function (e) { e.stopPropagation(); var s = parseFloat(img.style.transform.replace('scale(','').replace(')','')) || 1; s = Math.max(0.25, s - 0.25); img.style.transform = 'scale(' + s + ')'; overlay.querySelector('.shot-zoom-label').textContent = Math.round(s * 100) + '%'; };
+    overlay.querySelector('.shot-nav-reset').onclick = function (e) { e.stopPropagation(); img.style.transform = 'scale(1)'; overlay.querySelector('.shot-zoom-label').textContent = '100%'; };
+    overlay.onclick = function (e) { if (e.target === overlay) SMTool._closeScreenshot(); };
+    overlay._keyHandler = function (e2) { if (e2.key === 'Escape') SMTool._closeScreenshot(); };
+    document.addEventListener('keydown', overlay._keyHandler);
+    overlay._wheelHandler = function (e2) { e2.preventDefault(); var s = parseFloat(img.style.transform.replace('scale(','').replace(')','')) || 1; s = Math.max(0.25, Math.min(5, s + (e2.deltaY > 0 ? -0.25 : 0.25))); img.style.transform = 'scale(' + s + ')'; overlay.querySelector('.shot-zoom-label').textContent = Math.round(s * 100) + '%'; };
+    img.addEventListener('wheel', overlay._wheelHandler);
 };
 
 // ---- 删除骨骼截图 ----
@@ -2075,7 +2454,7 @@ SMTool._updateFloatLabels = function () {
     var container = document.getElementById('floatLabels');
     if (!container) return;
     var z = SMData.view.zoom;
-    var show = z < 0.40;
+    var show = z < 0.25;
     var seen = {};
 
     if (show) {
@@ -2126,14 +2505,14 @@ SMTool._updateFloatLabels = function () {
             label.style.top = (sp.y - fontSize * 2) + 'px';
             label.style.fontSize = fontSize + 'px';
 
-            // ★ 仅当不在编辑状态时更新文字
+            // ★ 第一排显示原始英文状态名（不翻译），第二排显示文件名
             var nameSpan2 = label.querySelector('.fl-name');
             var stateSpan2 = label.querySelector('.fl-state');
             if (nameSpan2 && nameSpan2.contentEditable !== 'true') {
-                nameSpan2.textContent = node.name || '';
+                nameSpan2.textContent = node.currentAnim || '';
             }
             if (stateSpan2) {
-                stateSpan2.textContent = node.currentAnim || '';
+                stateSpan2.textContent = node.sourceFile || '';
             }
             result = nodesIter.next();
         }
@@ -2701,7 +3080,7 @@ SMTool._updateFloatPanel = function () {
                 '⚡ 事件帧' + eventDotHtml +
             '</button>' +
             '<button class="dfp-tab-btn" data-tab="slot" onclick="SMTool._switchPanelTab(\'slot\')">' +
-                '🔧 插槽 <span class="dfp-tab-count">' + node.slots.length + '</span>' + slotDotHtml +
+                '� 插槽 <span class="dfp-tab-count">' + node.slots.length + '</span>' + slotDotHtml +
             '</button>' +
             '<button class="dfp-tab-btn" data-tab="info" onclick="SMTool._switchPanelTab(\'info\')">' +
                 '📋 信息' +
@@ -2801,7 +3180,7 @@ SMTool._updateFloatPanel = function () {
                     '⚡ 事件帧' + eventDotHtml2 +
                 '</button>' +
                 '<button class="dfp-tab-btn" data-tab="slot" onclick="SMTool._switchPanelTab(\'slot\')">' +
-                    '🔧 插槽 <span class="dfp-tab-count">' + node2.slots.length + '</span>' + slotDotHtml2 +
+                    '� 插槽 <span class="dfp-tab-count">' + node2.slots.length + '</span>' + slotDotHtml2 +
                 '</button>' +
                 '<button class="dfp-tab-btn" data-tab="info" onclick="SMTool._switchPanelTab(\'info\')">' +
                     '📋 信息' +

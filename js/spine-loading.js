@@ -192,6 +192,27 @@ SMTool._onDropSpineFiles = function (files, dropX, dropY) {
             accumulatedOffset += H_SPACING;
         }
     }
+
+    // ★ 处理纯图片文件组（无骨架/atlas 的图片）→ 创建图片节点
+    for (var k3 = 0; k3 < keys.length; k3++) {
+        var base3 = keys[k3];
+        var group3 = groups[base3];
+        if (group3._merged) continue;
+        if (!group3.json && !group3.skel && !group3.atlas && group3._pngs) {
+            var pngs = group3._pngs;
+            var wpImg = SMTool.canvasToWorld(dropX + accumulatedOffset, dropY);
+            for (var pi = 0; pi < pngs.length; pi++) {
+                var reader = new FileReader();
+                (function (file, ox) {
+                    reader.onload = function () {
+                        SMTool._addImageNode(reader.result, wpImg.x + ox, wpImg.y + ox);
+                    };
+                    reader.readAsDataURL(file);
+                })(pngs[pi], pi * 50 + accumulatedOffset);
+            }
+            accumulatedOffset += H_SPACING;
+        }
+    }
 };
 
 // ---- 创建节点（多动画自动拆分） ----

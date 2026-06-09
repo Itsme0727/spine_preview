@@ -185,12 +185,15 @@ SMTool._renderConnections = function () {
         var mx = Math.pow(1 - mt, 3) * fs.x + 3 * Math.pow(1 - mt, 2) * mt * cp1s.x + 3 * (1 - mt) * mt * mt * cp2s.x + mt * mt * mt * ts.x;
         var my = Math.pow(1 - mt, 3) * fs.y + 3 * Math.pow(1 - mt, 2) * mt * cp1s.y + 3 * (1 - mt) * mt * mt * cp2s.y + mt * mt * mt * ts.y;
 
-        // 缩放因子（标签大小跟随画布缩放）
-        var fontSize = Math.round(28 * z);
-        var lineHeight = Math.round(40 * z);
-        var padX = Math.round(40 * z);
-        var padY = Math.round(28 * z);
-        var textOffY = Math.round(16 * z);
+        // 缩放因子
+        // ★ 条件框随画布缩小线性放大：z=1.0→1x, z=0.10→1.6x，最大 1.6x
+        var extraScale = 1 + 0.6 * Math.max(0, (1 - z) / 0.9);
+        if (extraScale > 1.6) extraScale = 1.6;
+        var fontSize = Math.round(73 * z * extraScale);
+        var lineHeight = Math.round(88 * z * extraScale);
+        var padX = Math.round(104 * z * extraScale);
+        var padY = Math.round(52 * z * extraScale);
+        var textOffY = Math.round(26 * z * extraScale);  // padY/2 居中
 
         // 将显示文本按 maxCharsPerLine 拆分成多行
         var lines = [];
@@ -236,7 +239,7 @@ SMTool._renderConnections = function () {
         });
 
         ctx.fillStyle = '#282830';  // 深色背景
-        var br = Math.round(8 * z);  // 圆角随缩放
+        var br = Math.round(21 * z * extraScale);  // 圆角随缩放
         SMTool._roundRect(ctx, rectX, rectY, tw, th, br);
         ctx.fill();
         ctx.strokeStyle = connColor;
@@ -246,9 +249,9 @@ SMTool._renderConnections = function () {
 
         ctx.fillStyle = '#ffffff';  // 白色文字
         ctx.textAlign = 'center';
-        ctx.textBaseline = 'top';
+        ctx.textBaseline = 'middle';
         for (var li2 = 0; li2 < lines.length; li2++) {
-            ctx.fillText(lines[li2], mx, rectY + textOffY + li2 * lineHeight);
+            ctx.fillText(lines[li2], mx, rectY + textOffY + li2 * lineHeight + lineHeight / 2);
         }
         }  // closes if (!isEntryExitConn)
     }
@@ -323,13 +326,12 @@ SMTool._getStateConnectorPos = function (node, stateName, type) {
     var el = SMTool._getEl(node.id);
     if (!el) return null;
 
-    // 入口节点只有 output，出口节点只有 input
+    // 入口节点左右端点均可连接
     if (node.nodeType === 'entry') {
-        if (type === 'input') return null;
-        var dotE = el.querySelector('.anim-bar .conn-dot.output');
-        if (dotE) {
-            var rE = dotE.getBoundingClientRect();
-            return SMTool.canvasToWorld(rE.left + rE.width / 2, rE.top + rE.height / 2);
+        var dotE2 = el.querySelector('.anim-bar .conn-dot.' + (type === 'output' ? 'output' : 'input'));
+        if (dotE2) {
+            var rE2 = dotE2.getBoundingClientRect();
+            return SMTool.canvasToWorld(rE2.left + rE2.width / 2, rE2.top + rE2.height / 2);
         }
         return null;
     }

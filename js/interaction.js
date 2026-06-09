@@ -750,7 +750,19 @@ SMTool._onMU = function (e) {
                 }
             }
             if (connC) {
-                SMTool._showCond(connC, e.clientX, e.clientY);
+                // ★ 取条件框底部 + 中心 X
+                var cx2 = e.clientX, by2 = e.clientY;
+                if (SMData._labelRects) {
+                    for (var lrj = 0; lrj < SMData._labelRects.length; lrj++) {
+                        if (SMData._labelRects[lrj].connId === connC.id) {
+                            var lr2 = SMData._labelRects[lrj];
+                            cx2 = lr2.x + lr2.w / 2;
+                            by2 = lr2.y + lr2.h;
+                            break;
+                        }
+                    }
+                }
+                SMTool._showCond(connC, cx2, by2);
             }
         }
         SMData.draggingLabel = null;
@@ -1501,11 +1513,21 @@ SMTool._checkConditionClick = function (mx, my) {
         var distLabel = Math.sqrt((mx - lx) * (mx - lx) + (my - ly) * (my - ly));
 
         if (distLabel < 30) {
-            // 点击了标签 → 选中连线 + 弹出条件编辑器（入口/出口连线不弹编辑器）
+            // 点击了标签 → 选中连线 + 弹出条件编辑器
             SMData.selectedConnection = c.id;
             SMTool._updateStateRowColors();
             if (!isEntryExitConn) {
-                SMTool._showCond(c, mx, my);
+                // ★ 取实际条件框的底部 Y 坐标（非贝塞尔中点）
+                var boxBottom = ly;
+                if (SMData._labelRects) {
+                    for (var lri = 0; lri < SMData._labelRects.length; lri++) {
+                        if (SMData._labelRects[lri].connId === c.id) {
+                            boxBottom = SMData._labelRects[lri].y + SMData._labelRects[lri].h;
+                            break;
+                        }
+                    }
+                }
+                SMTool._showCond(c, lx, boxBottom);
             }
             return true;
         }
@@ -1529,11 +1551,13 @@ SMTool._checkConditionClick = function (mx, my) {
 };
 
 // ---- 显示条件编辑器 ----
-SMTool._showCond = function (conn, sx, sy) {
+SMTool._showCond = function (conn, centerX, boxBottom) {
     var ed = document.getElementById('conditionEditor');
     ed.classList.add('show');
-    ed.style.left = sx + 'px';
-    ed.style.top = sy + 'px';
+    // ★ 水平居中于条件框，垂直紧贴条件框底部 + 10px
+    var edW = ed.offsetWidth || 260;
+    ed.style.left = (centerX - edW / 2) + 'px';
+    ed.style.top = (boxBottom + 10) + 'px';
     ed._cid = conn.id;
     var ta = document.getElementById('condInput');
     ta.value = conn.condition || '';

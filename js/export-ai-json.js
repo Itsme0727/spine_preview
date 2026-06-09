@@ -1,7 +1,7 @@
 /* ================================================================
-   AI 可读动画流 JSON 导出
-   将所有动画流组合、节点参数、连线条件导出为结构化 JSON
-   方便 AI 理解整个动画状态机逻辑和细节参数
+   AI 可读动画流 JSON 导出 v2
+   以"组"为最大组织单元，组内按排序索引排列
+   动画流路径中的状态按流程顺序排列，不暴露画布内部 ID
    挂载到 SMTool 上
    ================================================================ */
 
@@ -38,6 +38,40 @@ SMTool._findAllSourceNodes = function () {
     return { sources: sources, isolated: isolated };
 };
 
+// ---- 计算组的排序索引（与 _renderGroupBoxes 逻辑一致） ----
+// 返回 { groupId: "1" | "2" | "2_2" | ... }
+SMTool._computeGroupSortIndices = function () {
+    var groupBounds = [];
+    for (var i = 0; i < SMData.groups.length; i++) {
+        var g = SMData.groups[i];
+        var bb = SMTool._getGroupBounds(g);
+        if (bb) groupBounds.push({ g: g, bb: bb });
+    }
+    groupBounds.sort(function (a, b) {
+        var dY = a.bb.top - b.bb.top;
+        if (Math.abs(dY) < 0.5) return a.bb.left - b.bb.left;
+        return dY;
+    });
+    var sortMap = {};
+    var currentBase = 0;
+    var currentBaseTop = -Infinity;
+    var sameRowCount = 0;
+    var THRESHOLD = 50;
+    for (var si = 0; si < groupBounds.length; si++) {
+        var item = groupBounds[si];
+        if (si === 0 || Math.abs(item.bb.top - currentBaseTop) > THRESHOLD) {
+            currentBase++;
+            currentBaseTop = item.bb.top;
+            sameRowCount = 1;
+            sortMap[item.g.id] = '' + currentBase;
+        } else {
+            sameRowCount++;
+            sortMap[item.g.id] = currentBase + '_' + sameRowCount;
+        }
+    }
+    return sortMap;
+};
+
 // ---- 获取节点的显示名称 ----
 SMTool._aiNodeDisplayName = function (node) {
     if (!node) return '?';
@@ -46,7 +80,7 @@ SMTool._aiNodeDisplayName = function (node) {
     if (node.nodeType === 'titleText') return node._textContent || '标题';
     var transName = SMTool._translateName(node.currentAnim);
     if (transName && transName !== node.currentAnim) return transName;
-    return node.name || ('Node_' + node.id);
+    return node.name || '';
 };
 
 // ---- 获取节点代表的动画状态名 ----
@@ -54,9 +88,9 @@ SMTool._aiStateName = function (node) {
     if (!node) return '?';
     if (node.nodeType === 'entry') return 'entry';
     if (node.nodeType === 'exit') return 'exit';
-    if (node.nodeType === 'shortText' || node.nodeType === 'textBox') return 'text_' + node.id;
-    if (node.nodeType === 'titleText') return 'title_' + node.id;
-    if (node.nodeType === 'layer') return 'layer_' + node.id;
+    if (node.nodeType === 'shortText' || node.nodeType === 'textBox') return '(文本)';
+    if (node.nodeType === 'titleText') return '(标题)';
+    if (node.nodeType === 'layer') return '(层级)';
     return node.currentAnim || (node.animations && node.animations.length > 0 ? node.animations[0].name : node.name);
 };
 
@@ -72,7 +106,7 @@ SMTool._aiShotRefs = function (shotRefs, name) {
     return result;
 };
 
-// ---- 检查是否有标记内容（tags/notes/screenshots/fade） ----
+// ---- 检查是否有标记内容 ----
 SMTool._aiIsMarked = function (tags, notes, screenshots, shotRefs, fade, name) {
     if (tags && tags[name] && Array.isArray(tags[name]) && tags[name].length > 0) return true;
     if (notes && notes[name] && typeof notes[name] === 'string' && notes[name].trim().length > 0) return true;
@@ -86,7 +120,7 @@ SMTool._aiIsMarked = function (tags, notes, screenshots, shotRefs, fade, name) {
     return false;
 };
 
-// ---- 构建标记项详情（骨骼/皮肤/插槽通用） ----
+// ---- 构建标记项详情 ----
 SMTool._aiBuildMarkedDetail = function (name, tags, notes, shotRefs, fade) {
     var tagsArr = (tags && tags[name]) ? tags[name] : [];
     if (!Array.isArray(tagsArr)) tagsArr = tagsArr ? [tagsArr] : [];
@@ -104,34 +138,29 @@ SMTool._aiBuildMarkedDetail = function (name, tags, notes, shotRefs, fade) {
     };
 };
 
-// ---- 序列化单个节点为 AI 友好的 JSON ----
-SMTool._serializeNodeForAI = function (node) {
-    var obj = {
-        nodeId: node.id,
-        nodeName: node.name,
-        nodeType: node.nodeType,
-        displayName: SMTool._aiNodeDisplayName(node)
-    };
+// ---- 序列化单个状态为 step（sourceFile 和 stateName 置顶） ----
+SMTool._serializeStepForAI = function (node) {
+    var obj = {};
 
     if (node.nodeType === 'spine') {
+        // ★ 源文件名
         obj.sourceFile = node.sourceFile || '';
-        obj.currentAnimation = node.currentAnim || '';
+        // ★ 状态名（英文 + 中文翻译 紧邻）
+        obj.stateName = node.currentAnim || '';
         obj.chineseTranslation = SMTool._translateName(node.currentAnim) || node.currentAnim || '';
+        // 显示名 + 类型
+        obj.displayName = SMTool._aiNodeDisplayName(node);
+        obj.nodeType = 'spine';
         var animDur = 0;
         for (var ai = 0; ai < node.animations.length; ai++) {
             if (node.animations[ai].name === node.currentAnim) { animDur = node.animations[ai].duration; break; }
         }
         obj.animationDurationSeconds = animDur;
-        obj.allAnimations = [];
-        for (var ai2 = 0; ai2 < node.animations.length; ai2++) {
-            obj.allAnimations.push({ name: node.animations[ai2].name, durationSeconds: node.animations[ai2].duration });
-        }
         obj.loopMode = node.loop !== false ? '循环播放' : '单次播放';
         obj.premultipliedAlpha = node.premultipliedAlpha || false;
         obj.currentSkin = node.currentSkin || '';
         obj.stateDescription = node._stateDesc || '';
 
-        // 轨道混合
         if (!node.tracks || node.tracks.length === 0) SMTool._initDefaultTracks(node);
         obj.trackMixing = [];
         for (var ti = 0; ti < node.tracks.length; ti++) {
@@ -147,7 +176,6 @@ SMTool._serializeNodeForAI = function (node) {
             });
         }
 
-        // 皮肤标记（仅已标记的）
         var skinsArr = [];
         for (var ski = 0; ski < (node.skins || []).length; ski++) {
             var skn = node.skins[ski];
@@ -159,7 +187,6 @@ SMTool._serializeNodeForAI = function (node) {
         }
         if (skinsArr.length > 0) obj.skins = skinsArr;
 
-        // 骨骼标记（仅已标记的）
         var bonesArr = [];
         for (var bi = 0; bi < (node.bones || []).length; bi++) {
             var bn = node.bones[bi];
@@ -171,7 +198,6 @@ SMTool._serializeNodeForAI = function (node) {
         }
         if (bonesArr.length > 0) obj.bones = bonesArr;
 
-        // 插槽标记（仅已标记的）
         var slotsArr = [];
         for (var sli = 0; sli < (node.slots || []).length; sli++) {
             var sln = node.slots[sli];
@@ -183,7 +209,6 @@ SMTool._serializeNodeForAI = function (node) {
         }
         if (slotsArr.length > 0) obj.slots = slotsArr;
 
-        // 事件帧
         SMTool._ensureEventFrames(node);
         if (node._eventFrames && node._eventFrames.length > 0) {
             obj.eventFrames = [];
@@ -195,12 +220,20 @@ SMTool._serializeNodeForAI = function (node) {
         if (node._customScale && node._customScale !== 1.0) obj.customScale = node._customScale;
 
     } else if (node.nodeType === 'entry' || node.nodeType === 'exit') {
-        obj.exitText = node._exitText || '';
+        obj.nodeType = node.nodeType;
+        obj.displayName = SMTool._aiNodeDisplayName(node);
+        obj.entryExitText = node._exitText || '';
     } else if (node.nodeType === 'shortText' || node.nodeType === 'textBox') {
+        obj.nodeType = node.nodeType;
+        obj.displayName = SMTool._aiNodeDisplayName(node);
         obj.textContent = node._textContent || '';
     } else if (node.nodeType === 'titleText') {
+        obj.nodeType = 'titleText';
+        obj.displayName = SMTool._aiNodeDisplayName(node);
         obj.titleText = node._textContent || '';
     } else if (node.nodeType === 'layer') {
+        obj.nodeType = 'layer';
+        obj.displayName = SMTool._aiNodeDisplayName(node);
         var ld = SMTool._layerData(node);
         obj.layerCount = ld.layerCount || 0;
         obj.layers = [];
@@ -208,12 +241,10 @@ SMTool._serializeNodeForAI = function (node) {
             var layerInfo = ld.layers[lj];
             var layerObj = { layerNumber: lj };
             if (layerInfo && layerInfo.animNodeId) {
-                layerObj.connectedNodeId = layerInfo.animNodeId;
                 layerObj.connectedAnimationName = layerInfo.animName || '';
                 var linkedNode = SMData.nodes.get(layerInfo.animNodeId);
-                layerObj.connectedNodeDisplayName = linkedNode ? SMTool._aiNodeDisplayName(linkedNode) : '';
+                layerObj.connectedDisplayName = linkedNode ? SMTool._aiNodeDisplayName(linkedNode) : '';
             } else {
-                layerObj.connectedNodeId = null;
                 layerObj.connectedAnimationName = '';
             }
             obj.layers.push(layerObj);
@@ -222,166 +253,226 @@ SMTool._serializeNodeForAI = function (node) {
     return obj;
 };
 
-// ---- 序列化连线为 AI 友好的 JSON ----
-SMTool._serializeConnectionForAI = function (connId) {
+// ---- 序列化连线（仅保留条件文本，不暴露内部 ID） ----
+SMTool._serializeConnForAI = function (connId) {
     for (var i = 0; i < SMData.connections.length; i++) {
         var c = SMData.connections[i];
-        if (c.id === connId) {
-            return {
-                connectionId: c.id,
-                fromNodeId: c.fromNode,
-                toNodeId: c.toNode,
-                fromState: c.fromState || '',
-                toState: c.toState || '',
-                condition: c.condition || ''
-            };
-        }
+        if (c.id === connId) return { condition: c.condition || '' };
     }
-    return null;
+    return { condition: '' };
 };
 
-// ---- 生成路径的人类可读表达式 ----
-SMTool._aiPathExpression = function (path) {
-    var parts = [];
-    for (var si = 0; si < path.nodes.length; si++) {
-        var sn = path.nodes[si];
-        parts.push(sn.anim || ('#' + sn.id));
-        if (si < path.nodes.length - 1) {
-            var conn = SMTool._serializeConnectionForAI(path.conns[si]);
-            var cond = (conn && conn.condition) ? conn.condition : '(无条件)';
-            parts.push('→ [' + cond + '] →');
-        }
+// ---- 为一个源头构建所有动画流（每个 path 一个独立的自包含流） ----
+SMTool._buildFlowsForSource = function (srcNode, startFlowIdx) {
+    var paths = SMTool._findAllFullPaths(srcNode.id);
+    var flowsOut = [];
+
+    if (paths.length === 0) {
+        // 无下游路径 → 单节点流
+        var srcLabel = SMTool._aiNodeDisplayName(srcNode);
+        var srcSF = srcNode.sourceFile ? '[' + srcNode.sourceFile + '] ' : '';
+        var soloFlow = {
+            flowIndex: startFlowIdx,
+            flowExpression: srcSF + srcLabel + '（无下游）',
+            isCycle: false,
+            steps: [SMTool._serializeStepForAI(srcNode)]
+        };
+        soloFlow.steps[0].stepIndex = 0;
+        flowsOut.push(soloFlow);
+        return flowsOut;
     }
-    return parts.join(' ');
+
+    for (var pk = 0; pk < paths.length; pk++) {
+        var pathData = paths[pk];
+        var flowIdx = startFlowIdx + pk;
+
+        // 构建 flowExpression（含源文件名标注）
+        var exprParts = [];
+        for (var si = 0; si < pathData.nodes.length; si++) {
+            var nd = SMData.nodes.get(pathData.nodes[si].id);
+            var label = nd ? SMTool._aiNodeDisplayName(nd) : (pathData.nodes[si].anim || '?');
+            // ★ 标注动画文件名
+            var sf = (nd && nd.sourceFile) ? '[' + nd.sourceFile + '] ' : '';
+            exprParts.push(sf + label);
+            if (si < pathData.nodes.length - 1) {
+                var connPre = SMTool._serializeConnForAI(pathData.conns[si]);
+                exprParts.push('→ (' + (connPre.condition || '无条件') + ') →');
+            }
+        }
+
+        var flowObj = {
+            flowIndex: flowIdx,
+            flowExpression: exprParts.join(' '),
+            isCycle: false,
+            steps: []
+        };
+
+        var lastNode = pathData.nodes[pathData.nodes.length - 1];
+        if (lastNode && lastNode.cycleClose) flowObj.isCycle = true;
+
+        // 内联所有 node 参数 + transition 条件到 steps
+        for (var sti = 0; sti < pathData.nodes.length; sti++) {
+            var sn = pathData.nodes[sti];
+            var stepNode = SMData.nodes.get(sn.id);
+
+            var stepObj = SMTool._serializeStepForAI(stepNode || { nodeType: 'spine', name: sn.anim || '?', currentAnim: sn.anim || '', animations: [] });
+            stepObj.stepIndex = sti;
+            stepObj.isCycleClose = sn.cycleClose || false;
+            flowObj.steps.push(stepObj);
+
+            if (sti < pathData.nodes.length - 1 && sti < pathData.conns.length) {
+                var connObj = SMTool._serializeConnForAI(pathData.conns[sti]);
+                connObj.kind = 'transition';
+                flowObj.steps.push(connObj);
+            }
+        }
+
+        flowsOut.push(flowObj);
+    }
+    return flowsOut;
 };
 
 // ================================================================
-//   主导出函数：exportAIJson()
-//   遍历画布所有动画流，生成 AI 可读的结构化 JSON 并下载
+//   主导出：exportAIJson() v2 — 以组为最大单元，每个动画流自包含
 // ================================================================
 SMTool.exportAIJson = function () {
     if (SMData.nodes.size === 0) { SMTool._showSaveToast('画布无节点，无法导出'); return; }
 
+    var groupSortMap = SMTool._computeGroupSortIndices();
+
+    var nodeGroupMap = {};
+    for (var gi = 0; gi < SMData.groups.length; gi++) {
+        var grp = SMData.groups[gi];
+        var arr = [];
+        grp.nodeIds.forEach(function (nid) { arr.push(nid); });
+        for (var ni = 0; ni < arr.length; ni++) {
+            nodeGroupMap[arr[ni]] = { groupId: grp.id, groupObj: grp };
+        }
+    }
+
     var sourceResult = SMTool._findAllSourceNodes();
     var allSources = sourceResult.sources;
     var allIsolated = sourceResult.isolated;
-    var animationFlows = [];
-    var flowIdx = 0;
 
-    // 为每个源头构建动画流
+    var groupSources = {};
+    var ungroupedSources = [];
+    var ungroupedIsolated = [];
+
     for (var si = 0; si < allSources.length; si++) {
         var src = allSources[si];
-        var srcNode = SMData.nodes.get(src.id);
-        if (!srcNode) continue;
-        var paths = SMTool._findAllFullPaths(src.id);
-        flowIdx++;
-        var flow = {
-            flowId: 'flow_' + flowIdx,
-            sourceNodeId: src.id,
-            sourceNodeType: src.nodeType,
-            sourceStateName: SMTool._aiStateName(srcNode),
-            sourceDisplayName: SMTool._aiNodeDisplayName(srcNode),
-            totalPaths: paths.length
-        };
-        if (paths.length === 0) {
-            flow.flowDescription = '源头 "' + flow.sourceDisplayName + '" 无下游路径';
+        var info = nodeGroupMap[src.id];
+        if (info) {
+            var gid = info.groupId;
+            if (!groupSources[gid]) groupSources[gid] = { groupObj: info.groupObj, sortIdx: groupSortMap[gid] || '?', sources: [], isolated: [] };
+            groupSources[gid].sources.push(src);
         } else {
-            var pathDescs = [];
-            for (var pi = 0; pi < Math.min(paths.length, 5); pi++) {
-                var seqNames = [];
-                for (var ni = 0; ni < paths[pi].nodes.length; ni++) seqNames.push(paths[pi].nodes[ni].anim || ('#' + paths[pi].nodes[ni].id));
-                pathDescs.push(seqNames.join(' > '));
-            }
-            if (paths.length > 5) pathDescs.push('...共 ' + paths.length + ' 条路径');
-            flow.flowDescription = '源头 "' + flow.sourceDisplayName + '" → ' + pathDescs.join(' | ');
+            ungroupedSources.push(src);
         }
-
-        var nodesInFlow = {};
-        var collectNode = function (nid) {
-            if (nodesInFlow[nid]) return;
-            var nd = SMData.nodes.get(nid);
-            if (nd) nodesInFlow[nid] = SMTool._serializeNodeForAI(nd);
-        };
-        collectNode(src.id);
-        for (var pj = 0; pj < paths.length; pj++) {
-            for (var nk = 0; nk < paths[pj].nodes.length; nk++) collectNode(paths[pj].nodes[nk].id);
-        }
-        flow.nodes = nodesInFlow;
-
-        flow.paths = [];
-        for (var pk = 0; pk < paths.length; pk++) {
-            var pathData = paths[pk];
-            var pathObj = { pathIndex: pk, pathExpression: SMTool._aiPathExpression(pathData), isCycle: false, steps: [] };
-            var lastNode = pathData.nodes[pathData.nodes.length - 1];
-            if (lastNode && lastNode.cycleClose) pathObj.isCycle = true;
-            for (var sti = 0; sti < pathData.nodes.length; sti++) {
-                var sn = pathData.nodes[sti];
-                var stepNode = SMData.nodes.get(sn.id);
-                pathObj.steps.push({
-                    kind: 'node',
-                    nodeId: sn.id,
-                    nodeType: stepNode ? stepNode.nodeType : 'unknown',
-                    stateName: sn.anim || (stepNode ? SMTool._aiStateName(stepNode) : '?'),
-                    displayName: stepNode ? SMTool._aiNodeDisplayName(stepNode) : (sn.anim || '?'),
-                    isCycleClose: sn.cycleClose || false
-                });
-                if (sti < pathData.nodes.length - 1 && sti < pathData.conns.length) {
-                    var connAI = SMTool._serializeConnectionForAI(pathData.conns[sti]);
-                    if (connAI) pathObj.steps.push({
-                        kind: 'transition',
-                        connectionId: connAI.connectionId,
-                        fromNodeId: connAI.fromNodeId,
-                        toNodeId: connAI.toNodeId,
-                        fromState: connAI.fromState,
-                        toState: connAI.toState,
-                        condition: connAI.condition
-                    });
-                }
-            }
-            flow.paths.push(pathObj);
-        }
-        animationFlows.push(flow);
     }
-
-    // 孤立节点作为独立 flow
     for (var ii = 0; ii < allIsolated.length; ii++) {
         var iso = allIsolated[ii];
-        var isoNode = SMData.nodes.get(iso.id);
-        if (!isoNode) continue;
-        flowIdx++;
-        var nodesObj = {};
-        nodesObj[iso.id] = SMTool._serializeNodeForAI(isoNode);
-        animationFlows.push({
-            flowId: 'flow_isolated_' + flowIdx,
-            sourceNodeId: iso.id,
-            sourceNodeType: iso.nodeType,
-            sourceStateName: SMTool._aiStateName(isoNode),
-            sourceDisplayName: SMTool._aiNodeDisplayName(isoNode),
-            flowDescription: '孤立节点 "' + SMTool._aiNodeDisplayName(isoNode) + '"（无连线）',
-            totalPaths: 0,
-            nodes: nodesObj,
-            paths: []
+        var info2 = nodeGroupMap[iso.id];
+        if (info2) {
+            var gid2 = info2.groupId;
+            if (!groupSources[gid2]) groupSources[gid2] = { groupObj: info2.groupObj, sortIdx: groupSortMap[gid2] || '?', sources: [], isolated: [] };
+            groupSources[gid2].isolated.push(iso);
+        } else {
+            ungroupedIsolated.push(iso);
+        }
+    }
+
+    var groupIds = Object.keys(groupSources);
+    groupIds.sort(function (a, b) {
+        var sa = groupSources[a].sortIdx;
+        var sb = groupSources[b].sortIdx;
+        var na = parseFloat(sa) || 0;
+        var nb = parseFloat(sb) || 0;
+        if (na !== nb) return na - nb;
+        return (sa || '').localeCompare(sb || '');
+    });
+
+    var totalFlows = 0;
+    var groupFlowIdx = 0;
+    var groupsOutput = [];
+
+    // 辅助：为孤立节点创建单节点流
+    var _makeIsoFlow = function (node) {
+        groupFlowIdx++;
+        var sfLabel = (node.sourceFile) ? '[' + node.sourceFile + '] ' : '';
+        return {
+            flowIndex: groupFlowIdx,
+            flowExpression: sfLabel + SMTool._aiNodeDisplayName(node) + '（独立，无连线）',
+            isCycle: false,
+            steps: [SMTool._serializeStepForAI(node)]
+        };
+    };
+
+    for (var gi2 = 0; gi2 < groupIds.length; gi2++) {
+        var gid = groupIds[gi2];
+        var gs = groupSources[gid];
+        var grp = gs.groupObj;
+        var flowsArr = [];
+
+        // 组内的源头 → 构建动画流（每个 path 一个独立流）
+        for (var sj = 0; sj < gs.sources.length; sj++) {
+            var srcNode = SMData.nodes.get(gs.sources[sj].id);
+            if (!srcNode) continue;
+            var newFlows = SMTool._buildFlowsForSource(srcNode, groupFlowIdx + 1);
+            groupFlowIdx += newFlows.length;
+            for (var nf = 0; nf < newFlows.length; nf++) flowsArr.push(newFlows[nf]);
+        }
+        // 组内的孤立节点
+        for (var ik = 0; ik < gs.isolated.length; ik++) {
+            var isoNode = SMData.nodes.get(gs.isolated[ik].id);
+            if (!isoNode) continue;
+            var isoFlow = _makeIsoFlow(isoNode);
+            if (isoFlow.steps[0]) isoFlow.steps[0].stepIndex = 0;
+            flowsArr.push(isoFlow);
+        }
+
+        if (flowsArr.length === 0) continue;
+        totalFlows += flowsArr.length;
+
+        groupsOutput.push({
+            sortIndex: gs.sortIdx,
+            title: grp.title || '',
+            color: grp.color || '',
+            nodeCount: grp.nodeIds ? grp.nodeIds.size : 0,
+            animationFlows: flowsArr
         });
     }
 
-    var totalFlows = animationFlows.length;
-    var totalPathCount = 0;
-    for (var fi = 0; fi < animationFlows.length; fi++) totalPathCount += animationFlows[fi].paths.length;
+    // 未打组的节点
+    var ungroupedFlows = [];
+    for (var uj = 0; uj < ungroupedSources.length; uj++) {
+        var usrcNode = SMData.nodes.get(ungroupedSources[uj].id);
+        if (!usrcNode) continue;
+        var uFlows = SMTool._buildFlowsForSource(usrcNode, groupFlowIdx + 1);
+        groupFlowIdx += uFlows.length;
+        for (var nf2 = 0; nf2 < uFlows.length; nf2++) ungroupedFlows.push(uFlows[nf2]);
+    }
+    for (var uk = 0; uk < ungroupedIsolated.length; uk++) {
+        var uisoNode = SMData.nodes.get(ungroupedIsolated[uk].id);
+        if (!uisoNode) continue;
+        var uisoFlow = _makeIsoFlow(uisoNode);
+        if (uisoFlow.steps[0]) uisoFlow.steps[0].stepIndex = 0;
+        ungroupedFlows.push(uisoFlow);
+    }
+    totalFlows += ungroupedFlows.length;
 
     var result = {
         exportType: 'ai_animation_flow_documentation',
-        exportVersion: '1.0',
+        exportVersion: '2.0',
         exportDate: new Date().toISOString(),
         projectSummary: {
-            totalNodes: SMData.nodes.size,
-            totalConnections: SMData.connections.length,
+            totalGroups: SMData.groups.length,
             totalAnimationFlows: totalFlows,
-            totalAnimationPaths: totalPathCount,
             renderMode: SMData.renderMode || 'perf',
             flowMode: SMData.flowMode || 'full'
         },
-        animationFlows: animationFlows
+        groups: groupsOutput
     };
+    if (ungroupedFlows.length > 0) result.ungrouped = { animationFlows: ungroupedFlows };
 
     var jsonStr = JSON.stringify(result, null, 2);
     var blob = new Blob([jsonStr], { type: 'application/json' });
@@ -391,5 +482,5 @@ SMTool.exportAIJson = function () {
     a.download = 'animation-flow-ai.json';
     a.click();
     URL.revokeObjectURL(url);
-    SMTool._showSaveToast('已导出 AI JSON（' + totalFlows + ' 个动画流, ' + totalPathCount + ' 条路径）');
+    SMTool._showSaveToast('已导出 AI JSON v2（' + groupsOutput.length + ' 组, ' + totalFlows + ' 个动画流）');
 };

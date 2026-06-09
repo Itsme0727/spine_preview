@@ -513,43 +513,67 @@ SMTool.init = function () {
         if (imageBlobs.length === 0) return; // 纯文本 → 浏览器正常处理
 
         e.preventDefault();
-        if (!SMData.selectedNode) return;
-        var node = SMData.nodes.get(SMData.selectedNode);
-        if (!node || node.nodeType !== 'spine') return;
-
-        // 目标骨骼：严格使用 _pasteTargetBone（点击骨骼行/+时设置）
-        var targetBoneName = SMData._pasteTargetBone;
-        if (!targetBoneName || !node._boneTags || !node._boneTags[targetBoneName]) {
-            // 兜底：取第一个已标记的骨骼
-            if (node._boneTags) {
-                var keys = Object.keys(node._boneTags);
-                if (keys.length > 0) targetBoneName = keys[0];
+        var node = SMData.selectedNode ? SMData.nodes.get(SMData.selectedNode) : null;
+        // 如果选中的是 spine 或 entry 节点 → 添加到节点图片附件
+        if (node && (node.nodeType === 'spine' || node.nodeType === 'entry')) {
+            // 仅 spine 节点支持骨骼截图粘贴
+            if (node.nodeType === 'spine') {
+                var targetBoneName = SMData._pasteTargetBone;
+                if (!targetBoneName || !node._boneTags || !node._boneTags[targetBoneName]) {
+                    if (node._boneTags) { var keys = Object.keys(node._boneTags); if (keys.length > 0) targetBoneName = keys[0]; }
+                }
+                if (targetBoneName) {
+                    var loaded = 0; var dataUrls = [];
+                    for (var j = 0; j < imageBlobs.length; j++) {
+                        (function (blob) {
+                            var reader = new FileReader();
+                            reader.onload = function () { dataUrls.push(reader.result); loaded++; if (loaded === imageBlobs.length) { SMTool._addBoneScreenshots(targetBoneName, dataUrls); document.getElementById('sbStatus').textContent = '✅ 已粘贴 ' + loaded + ' 张截图 → ' + targetBoneName; setTimeout(function () { document.getElementById('sbStatus').textContent = ''; }, 2000); } };
+                            reader.onerror = function () { loaded++; };
+                            reader.readAsDataURL(blob);
+                        })(imageBlobs[j]);
+                    }
+                    return;
+                }
             }
-        }
-        if (!targetBoneName) {
-            document.getElementById('sbStatus').textContent = '请先在面板中点击骨骼旁的 + 标记锚点';
-            setTimeout(function () { document.getElementById('sbStatus').textContent = ''; }, 2500);
+            // ★ 粘贴到节点右上角/下方图片附件
+            for (var k = 0; k < imageBlobs.length; k++) {
+                (function (blob) {
+                    var reader2 = new FileReader();
+                    reader2.onload = function () {
+                        var sid3 = SMData._shotRegister(reader2.result);
+                        node._nodeImages.push(sid3);
+                        // ★ 同步更新 _nodeShotRefs
+                        if (!node._nodeShotRefs) node._nodeShotRefs = [];
+                        var ent3 = SMData._shotStore[sid3];
+                        var ext4 = 'png';
+                        if (ent3 && ent3.dataUrl) {
+                            var m4 = ent3.dataUrl.match(/^data:(image\/\w+);/);
+                            if (m4) ext4 = m4[1].split('/')[1];
+                            if (ext4 === 'jpeg') ext4 = 'jpg';
+                        }
+                        node._nodeShotRefs.push('_assets/img_' + sid3 + '.' + ext4);
+                        SMTool._refreshNodeImages(node.id);
+                    };
+                    reader2.readAsDataURL(blob);
+                })(imageBlobs[k]);
+            }
+            document.getElementById('sbStatus').textContent = '✅ 已粘贴 ' + imageBlobs.length + ' 张图片到节点';
+            setTimeout(function () { document.getElementById('sbStatus').textContent = ''; }, 2000);
             return;
         }
-
-        var loaded = 0;
-        var dataUrls = [];
-        for (var j = 0; j < imageBlobs.length; j++) {
-            (function (blob) {
-                var reader = new FileReader();
-                reader.onload = function () {
-                    dataUrls.push(reader.result);
-                    loaded++;
-                    if (loaded === imageBlobs.length) {
-                        SMTool._addBoneScreenshots(targetBoneName, dataUrls);
-                        document.getElementById('sbStatus').textContent = '✅ 已粘贴 ' + loaded + ' 张截图 → ' + targetBoneName;
-                        setTimeout(function () { document.getElementById('sbStatus').textContent = ''; }, 2000);
-                    }
+        // ★ 无 spine 节点选中 → 创建独立图片节点
+        var wpImg = SMTool.canvasToWorld(window.innerWidth / 2, window.innerHeight / 2);
+        for (var k2 = 0; k2 < imageBlobs.length; k2++) {
+            (function (blob, idx) {
+                var reader3 = new FileReader();
+                reader3.onload = function () {
+                    SMTool._addImageNode(reader3.result, wpImg.x + idx * 50, wpImg.y + idx * 50);
                 };
-                reader.onerror = function () { loaded++; };
-                reader.readAsDataURL(blob);
-            })(imageBlobs[j]);
+                reader3.readAsDataURL(blob);
+            })(imageBlobs[k2], k2);
         }
+        document.getElementById('sbStatus').textContent = '✅ 已粘贴 ' + imageBlobs.length + ' 张图片到画布';
+        setTimeout(function () { document.getElementById('sbStatus').textContent = ''; }, 2000);
     });
 
     // 全局点击关闭右键菜单
@@ -657,8 +681,10 @@ SMTool.init = function () {
     // ---- 动画组模式切换 ----
     SMTool.setFlowMode = function (mode) {
         SMData.flowMode = mode;
-        document.getElementById('flowModeThree').classList.toggle('active', mode === 'three');
-        document.getElementById('flowModeFull').classList.toggle('active', mode === 'full');
+        var fm3 = document.getElementById('flowModeThree');
+        var fmf = document.getElementById('flowModeFull');
+        if (fm3) fm3.classList.toggle('active', mode === 'three');
+        if (fmf) fmf.classList.toggle('active', mode === 'full');
         // 清除焦点和播放状态
         SMData._flowFocus = null;
         SMData._fullPlayback.activePathIdx = -1;
@@ -1006,8 +1032,12 @@ SMTool.init = function () {
     // ---- 渲染模式切换 ----
     SMTool.setRenderMode = function (mode) {
         SMData.renderMode = mode;
-        document.getElementById('modePerf').classList.toggle('active', mode === 'perf');
-        document.getElementById('modeDyn').classList.toggle('active', mode === 'dyn');
+        var elS = document.getElementById('modeStatic');
+        var elP = document.getElementById('modePerf');
+        var elD = document.getElementById('modeDyn');
+        if (elS) elS.classList.toggle('active', mode === 'static');
+        if (elP) elP.classList.toggle('active', mode === 'perf');
+        if (elD) elD.classList.toggle('active', mode === 'dyn');
     };
 
     // ---- 文本节点创建 ----
@@ -1095,7 +1125,7 @@ SMTool.init = function () {
         var id = SMData.nextId++;
         var node = new SpineNodeData(id);
         node.nodeType = 'entry';
-        node.name = '入口';
+        node.name = '阶段号';
         node.x = wx; node.y = wy;
         node.width = 260;
         SMData.nodes.set(id, node);
@@ -1229,6 +1259,11 @@ SMTool.init = function () {
                 _debugCanvasW: n._debugCanvasW || 0,
                 _debugCanvasH: n._debugCanvasH || 0,
                 infoCollapsed: !!n.infoCollapsed,
+                // ★ 图片节点数据
+                _imageDataUrl: n._imageDataUrl || '',
+                // ★ 节点面板右上角图片附件
+                _nodeImages: n._nodeImages ? n._nodeImages.slice() : [],
+                _nodeShotRefs: n._nodeShotRefs ? n._nodeShotRefs.slice() : [],
                 // ★ 层级节点数据
                 _layerData: n._layerData ? JSON.parse(JSON.stringify(n._layerData)) : null
             });
@@ -1393,6 +1428,11 @@ SMTool.init = function () {
                 existing._debugCanvasW = nd._debugCanvasW || 0;
                 existing._debugCanvasH = nd._debugCanvasH || 0;
                 existing.infoCollapsed = !!nd.infoCollapsed;
+                // ★ 图片节点数据
+                existing._imageDataUrl = nd._imageDataUrl || '';
+                // ★ 节点面板右上角图片附件
+                existing._nodeImages = nd._nodeImages || [];
+                existing._nodeShotRefs = nd._nodeShotRefs || [];
                 // ★ 恢复层级节点数据
                 if (nd._layerData) existing._layerData = JSON.parse(JSON.stringify(nd._layerData));
                 else if (nd.nodeType === 'layer') existing._layerData = { layerCount: 2, layers: {} };
@@ -1557,6 +1597,11 @@ SMTool.init = function () {
                 node._debugCanvasW = nd._debugCanvasW || 0;
                 node._debugCanvasH = nd._debugCanvasH || 0;
                 node.infoCollapsed = !!nd.infoCollapsed;
+                // ★ 图片节点数据
+                node._imageDataUrl = nd._imageDataUrl || '';
+                // ★ 节点面板右上角图片附件
+                node._nodeImages = nd._nodeImages || [];
+                node._nodeShotRefs = nd._nodeShotRefs || [];
                 // ★ 恢复层级节点数据
                 if (nd._layerData) node._layerData = JSON.parse(JSON.stringify(nd._layerData));
                 else if (nd.nodeType === 'layer') node._layerData = { layerCount: 2, layers: {} };
@@ -1637,10 +1682,16 @@ SMTool.init = function () {
         SMTool._updateFloatPanel();
 
         // 同步模式按钮
-        document.getElementById('modePerf').classList.toggle('active', SMData.renderMode === 'perf');
-        document.getElementById('modeDyn').classList.toggle('active', SMData.renderMode === 'dyn');
-        document.getElementById('flowModeThree').classList.toggle('active', SMData.flowMode === 'three');
-        document.getElementById('flowModeFull').classList.toggle('active', SMData.flowMode === 'full');
+        var elS2 = document.getElementById('modeStatic');
+        var elP2 = document.getElementById('modePerf');
+        var elD2 = document.getElementById('modeDyn');
+        if (elS2) elS2.classList.toggle('active', SMData.renderMode === 'static');
+        if (elP2) elP2.classList.toggle('active', SMData.renderMode === 'perf');
+        if (elD2) elD2.classList.toggle('active', SMData.renderMode === 'dyn');
+        var elFM3 = document.getElementById('flowModeThree');
+        var elFMF = document.getElementById('flowModeFull');
+        if (elFM3) elFM3.classList.toggle('active', SMData.flowMode === 'three');
+        if (elFMF) elFMF.classList.toggle('active', SMData.flowMode === 'full');
     };
 
     // 压入撤销栈（在操作前调用）
@@ -2145,6 +2196,59 @@ SMTool.ctxAddTitle = function () {
 SMTool._updateTitleText = function (nid, text) {
     var node = SMData.nodes.get(nid);
     if (node) { node._textContent = text; node.name = text; }
+};
+
+// ★ 右键菜单：插入图片
+SMTool.ctxInsertImage = function () {
+    document.getElementById('ctxMenu').style.display = 'none';
+    var inp = document.createElement('input');
+    inp.type = 'file';
+    inp.accept = 'image/*';
+    inp.multiple = true;
+    inp.onchange = function () {
+        var files = Array.from(inp.files);
+        if (!files.length) return;
+        var wp = SMTool.canvasToWorld(SMData._mx || window.innerWidth / 2, SMData._my || window.innerHeight / 2);
+        var offsetX = 0;
+        for (var i = 0; i < files.length; i++) {
+            var reader = new FileReader();
+            (function (file, ox) {
+                reader.onload = function () {
+                    SMTool._addImageNode(reader.result, wp.x + ox, wp.y + ox);
+                };
+                reader.readAsDataURL(file);
+            })(files[i], offsetX);
+            offsetX += 50;
+        }
+    };
+    inp.click();
+};
+
+// ★ 新增图片节点（支持粘贴/拖放/右键导入）
+SMTool._addImageNode = function (dataUrl, wx, wy) {
+    SMTool.pushUndo();
+    var id = SMData.nextId++;
+    var node = new SpineNodeData(id);
+    node.nodeType = 'image';
+    node.name = '图片';
+    node._imageDataUrl = dataUrl;
+    node.x = wx !== undefined ? wx : (Math.random() * 200 - 100 + window.innerWidth / 2);
+    node.y = wy !== undefined ? wy : (Math.random() * 200 - 100 + window.innerHeight / 2);
+    node.width = 300;
+    SMData.nodes.set(id, node);
+    SMTool._createEl(node);
+    SMTool._updatePos(node);
+    SMData.selectedNodes.clear();
+    SMData.selectedNodes.add(id);
+    SMData.selectedNode = id;
+    SMTool._updateSel();
+    SMTool._updateSB();
+};
+
+// ★ 更新入口节点名称
+SMTool._updateEntryName = function (nid, text) {
+    var node = SMData.nodes.get(nid);
+    if (node) node.name = text;
 };
 
 // ---- 按指定间距分布 ----

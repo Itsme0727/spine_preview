@@ -66,17 +66,41 @@ SMTool._collectAllBoneScreenshots = function () {
     return shotMap;
 };
 
-// ---- 保存骨骼截图为原始格式文件到指定目录（★ 保持上传时的原始图片格式）----
+// ---- 保存骨骼截图 + 节点图片附件到 _assets/ 目录 ----
 SMTool._saveCompanionImages = function (dirHandle) {
+    // ★ 收集所有骨骼/皮肤/插槽截图
     var shotMap = SMTool._collectAllBoneScreenshots();
-    var shotIds = Object.keys(shotMap);
-
-    // ★ 清空所有节点的 _boneShotRefs，完全基于当前 _boneScreenshots 重建
+    // ★ 收集所有节点右上角图片附件
     var nodesIter = SMData.nodes.values();
     var nr = nodesIter.next();
     while (!nr.done) {
-        nr.value._boneShotRefs = {};
+        var n = nr.value;
+        if (n._nodeImages && n._nodeImages.length > 0 && (n.nodeType === 'spine' || n.nodeType === 'entry')) {
+            for (var ni = 0; ni < n._nodeImages.length; ni++) {
+                var shotId = n._nodeImages[ni];
+                if (typeof shotId !== 'number') continue;
+                if (shotMap[shotId]) {
+                    // ★ 已存在（共享图片）→ 仅追加节点引用，不重复保存文件
+                    (shotMap[shotId]._nodeRefs = shotMap[shotId]._nodeRefs || []).push({ nodeId: n.id, idx: ni });
+                    continue;
+                }
+                var dataUrl = SMData._shotGetDataUrl(shotId);
+                if (!dataUrl || dataUrl.indexOf('data:image/') !== 0) continue;
+                shotMap[shotId] = { dataUrl: dataUrl, refs: [] };
+                (shotMap[shotId]._nodeRefs = shotMap[shotId]._nodeRefs || []).push({ nodeId: n.id, idx: ni });
+            }
+        }
         nr = nodesIter.next();
+    }
+    var shotIds = Object.keys(shotMap);
+
+    // ★ 清空所有节点的引用，完全基于当前数据重建
+    var nodesIter2 = SMData.nodes.values();
+    var nr2 = nodesIter2.next();
+    while (!nr2.done) {
+        nr2.value._boneShotRefs = {};
+        nr2.value._nodeShotRefs = [];
+        nr2 = nodesIter2.next();
     }
 
     if (shotIds.length === 0) return Promise.resolve();
@@ -118,6 +142,17 @@ SMTool._saveCompanionImages = function (dirHandle) {
                     node._boneShotRefs[ref.boneName][ref.idx] = '_assets/' + finalName;
                 }
             }
+            // ★ 为节点右上角图片附件设置 _nodeShotRefs
+            if (shotInfo._nodeRefs) {
+                for (var rn = 0; rn < shotInfo._nodeRefs.length; rn++) {
+                    var nref = shotInfo._nodeRefs[rn];
+                    var nnode = SMData.nodes.get(nref.nodeId);
+                    if (nnode) {
+                        if (!nnode._nodeShotRefs) nnode._nodeShotRefs = [];
+                        nnode._nodeShotRefs[nref.idx] = '_assets/' + finalName;
+                    }
+                }
+            }
 
             (function (fn, dataUrl, sid) {
                 var p = Promise.resolve().then(function () {
@@ -143,11 +178,12 @@ SMTool._saveCompanionImages = function (dirHandle) {
 // 返回 Promise<{loaded: number, missing: string[], total: number}>
 SMTool._loadCompanionImages = function (dirHandle) {
     // 收集所有引用，按文件名去重
-    var fileRefs = {}; // { fileName: [{node, boneName, idx}] }
+    var fileRefs = {}; // { fileName: [{node, boneName, idx, type}] }
     var nodesIter = SMData.nodes.values();
     var result = nodesIter.next();
     while (!result.done) {
         var n = result.value;
+        // 骨骼截图引用
         if (n._boneShotRefs && n.nodeType === 'spine') {
             var boneNames = Object.keys(n._boneShotRefs);
             for (var b = 0; b < boneNames.length; b++) {
@@ -159,8 +195,18 @@ SMTool._loadCompanionImages = function (dirHandle) {
                     if (!refPath) continue;
                     var fileName = refPath.replace('_assets/', '');
                     if (!fileRefs[fileName]) fileRefs[fileName] = [];
-                    fileRefs[fileName].push({ node: n, boneName: bn, idx: r });
+                    fileRefs[fileName].push({ node: n, boneName: bn, idx: r, type: 'bone' });
                 }
+            }
+        }
+        // ★ 节点右上角图片附件引用
+        if (n._nodeShotRefs && n._nodeShotRefs.length > 0 && (n.nodeType === 'spine' || n.nodeType === 'entry')) {
+            for (var ni = 0; ni < n._nodeShotRefs.length; ni++) {
+                var refPath2 = n._nodeShotRefs[ni];
+                if (!refPath2) continue;
+                var fileName2 = refPath2.replace('_assets/', '');
+                if (!fileRefs[fileName2]) fileRefs[fileName2] = [];
+                fileRefs[fileName2].push({ node: n, idx: ni, type: 'nodeImage' });
             }
         }
         result = nodesIter.next();
@@ -176,6 +222,20 @@ SMTool._loadCompanionImages = function (dirHandle) {
         var missingList = [];
         var loadedCache = {}; // fileName → shotId
         var promises = [];
+
+        // ★ 加载前：将所有 _nodeImages 中的旧 shotId 清空，防止
+        // _nodeShotRefs 与 _nodeImages 不同步时残留旧 shotId 碰撞
+        var clearIter = SMData.nodes.values();
+        var cr = clearIter.next();
+        while (!cr.done) {
+            var cn = cr.value;
+            if (cn._nodeImages && cn._nodeImages.length > 0 && (cn.nodeType === 'spine' || cn.nodeType === 'entry')) {
+                for (var ci = 0; ci < cn._nodeImages.length; ci++) {
+                    if (typeof cn._nodeImages[ci] === 'number') cn._nodeImages[ci] = null;
+                }
+            }
+            cr = clearIter.next();
+        }
 
         for (var f = 0; f < fileNames.length; f++) {
             var fn = fileNames[f];
@@ -194,13 +254,22 @@ SMTool._loadCompanionImages = function (dirHandle) {
                                 loadedCache[fileName] = newShotId;
                                 loadedCount++;
 
-                                // 为所有引用此文件的节点设置 _boneScreenshots
+                                // 为所有引用此文件的节点设置对应数据
                                 for (var ri = 0; ri < refArr.length; ri++) {
                                     var ref = refArr[ri];
-                                    if (!ref.node._boneScreenshots) ref.node._boneScreenshots = {};
-                                    if (!ref.node._boneScreenshots[ref.boneName]) ref.node._boneScreenshots[ref.boneName] = [];
-                                    if (!Array.isArray(ref.node._boneScreenshots[ref.boneName])) ref.node._boneScreenshots[ref.boneName] = [ref.node._boneScreenshots[ref.boneName]];
-                                    ref.node._boneScreenshots[ref.boneName][ref.idx] = newShotId;
+                                    if (ref.type === 'nodeImage') {
+                                        // ★ 节点右上角图片附件
+                                        if (!ref.node._nodeImages) ref.node._nodeImages = [];
+                                        ref.node._nodeImages[ref.idx] = newShotId;
+                                    } else {
+                                        // 骨骼截图
+                                        if (!ref.node._boneScreenshots) ref.node._boneScreenshots = {};
+                                        if (!ref.node._boneScreenshots[ref.boneName]) ref.node._boneScreenshots[ref.boneName] = [];
+                                        if (!Array.isArray(ref.node._boneScreenshots[ref.boneName])) ref.node._boneScreenshots[ref.boneName] = [ref.node._boneScreenshots[ref.boneName]];
+                                        ref.node._boneScreenshots[ref.boneName][ref.idx] = newShotId;
+                                    }
+                                    // ★ 第一个引用已由 _shotRegister 计数，后续引用需额外 +1
+                                    if (ri > 0) SMData._shotAddRef(newShotId);
                                 }
                                 resolve();
                             };
@@ -211,9 +280,14 @@ SMTool._loadCompanionImages = function (dirHandle) {
                             reader.readAsDataURL(file);
                         });
                     }).catch(function () {
-                        // ★ 文件不存在 → 记录缺失
+                        // ★ 文件不存在 → 记录缺失，并清除对应节点的图片引用防止旧 shotId 碰撞
                         missingList.push(fileName);
-                        // 但不清除 _boneShotRefs，保留引用以便后续重试
+                        for (var rj = 0; rj < refArr.length; rj++) {
+                            var ref2 = refArr[rj];
+                            if (ref2.type === 'nodeImage' && ref2.node._nodeImages) {
+                                ref2.node._nodeImages[ref2.idx] = null;
+                            }
+                        }
                     })
                 );
             })(fn, refs);
@@ -252,8 +326,18 @@ SMTool._loadCompanionImagesFromEntry = function (dirEntry) {
                     if (!refPath) continue;
                     var fileName = refPath.replace('_assets/', '');
                     if (!fileRefs[fileName]) fileRefs[fileName] = [];
-                    fileRefs[fileName].push({ node: n, boneName: bn, idx: r });
+                    fileRefs[fileName].push({ node: n, boneName: bn, idx: r, type: 'bone' });
                 }
+            }
+        }
+        // ★ 同时收集节点图片附件引用
+        if (n._nodeShotRefs && n._nodeShotRefs.length > 0 && (n.nodeType === 'spine' || n.nodeType === 'entry')) {
+            for (var ni2 = 0; ni2 < n._nodeShotRefs.length; ni2++) {
+                var rp2 = n._nodeShotRefs[ni2];
+                if (!rp2) continue;
+                var fn2 = rp2.replace('_assets/', '');
+                if (!fileRefs[fn2]) fileRefs[fn2] = [];
+                fileRefs[fn2].push({ node: n, idx: ni2, type: 'nodeImage' });
             }
         }
         result = nodesIter.next();
@@ -280,6 +364,19 @@ SMTool._loadCompanionImagesFromEntry = function (dirEntry) {
                     }
                 }
 
+                // ★ 加载前：清空所有旧 shotId，防止残留碰撞
+                var clearIter2 = SMData.nodes.values();
+                var cr2 = clearIter2.next();
+                while (!cr2.done) {
+                    var cn2 = cr2.value;
+                    if (cn2._nodeImages && cn2._nodeImages.length > 0 && (cn2.nodeType === 'spine' || cn2.nodeType === 'entry')) {
+                        for (var cj = 0; cj < cn2._nodeImages.length; cj++) {
+                            if (typeof cn2._nodeImages[cj] === 'number') cn2._nodeImages[cj] = null;
+                        }
+                    }
+                    cr2 = clearIter2.next();
+                }
+
                 for (var f = 0; f < fileNames.length; f++) {
                     (function (fileName, refArr) {
                         assetsDir.getFile(fileName, { create: false },
@@ -291,26 +388,52 @@ SMTool._loadCompanionImagesFromEntry = function (dirEntry) {
                                         loadedCount++;
                                         for (var ri = 0; ri < refArr.length; ri++) {
                                             var ref = refArr[ri];
-                                            if (!ref.node._boneScreenshots) ref.node._boneScreenshots = {};
-                                            if (!ref.node._boneScreenshots[ref.boneName]) ref.node._boneScreenshots[ref.boneName] = [];
-                                            if (!Array.isArray(ref.node._boneScreenshots[ref.boneName])) ref.node._boneScreenshots[ref.boneName] = [ref.node._boneScreenshots[ref.boneName]];
-                                            ref.node._boneScreenshots[ref.boneName][ref.idx] = newShotId;
+                                            if (ref.type === 'nodeImage') {
+                                                if (!ref.node._nodeImages) ref.node._nodeImages = [];
+                                                ref.node._nodeImages[ref.idx] = newShotId;
+                                            } else {
+                                                if (!ref.node._boneScreenshots) ref.node._boneScreenshots = {};
+                                                if (!ref.node._boneScreenshots[ref.boneName]) ref.node._boneScreenshots[ref.boneName] = [];
+                                                if (!Array.isArray(ref.node._boneScreenshots[ref.boneName])) ref.node._boneScreenshots[ref.boneName] = [ref.node._boneScreenshots[ref.boneName]];
+                                                ref.node._boneScreenshots[ref.boneName][ref.idx] = newShotId;
+                                            }
+                                            // ★ 第一个引用已由 _shotRegister 计数，后续引用需额外 +1
+                                            if (ri > 0) SMData._shotAddRef(newShotId);
                                         }
                                         checkDone();
                                     };
                                     reader.onerror = function () {
                                         missingList.push(fileName);
+                                        // ★ 清除引用
+                                        for (var rj = 0; rj < refArr.length; rj++) {
+                                            var ref2 = refArr[rj];
+                                            if (ref2.type === 'nodeImage' && ref2.node._nodeImages) {
+                                                ref2.node._nodeImages[ref2.idx] = null;
+                                            }
+                                        }
                                         checkDone();
                                     };
                                     reader.readAsDataURL(file);
                                 }, function () {
                                     missingList.push(fileName);
+                                    for (var rj2 = 0; rj2 < refArr.length; rj2++) {
+                                        var ref3 = refArr[rj2];
+                                        if (ref3.type === 'nodeImage' && ref3.node._nodeImages) {
+                                            ref3.node._nodeImages[ref3.idx] = null;
+                                        }
+                                    }
                                     checkDone();
                                 });
                             },
                             function () {
                                 // 文件不存在
                                 missingList.push(fileName);
+                                for (var rj3 = 0; rj3 < refArr.length; rj3++) {
+                                    var ref4 = refArr[rj3];
+                                    if (ref4.type === 'nodeImage' && ref4.node._nodeImages) {
+                                        ref4.node._nodeImages[ref4.idx] = null;
+                                    }
+                                }
                                 checkDone();
                             }
                         );
@@ -348,8 +471,18 @@ SMTool._loadCompanionImagesFromPath = function (dirPath) {
                     if (!refPath) continue;
                     var fileName = refPath.replace('_assets/', '');
                     if (!fileRefs[fileName]) fileRefs[fileName] = [];
-                    fileRefs[fileName].push({ node: n, boneName: bn, idx: r });
+                    fileRefs[fileName].push({ node: n, boneName: bn, idx: r, type: 'bone' });
                 }
+            }
+        }
+        // ★ 同时收集节点图片附件引用
+        if (n._nodeShotRefs && n._nodeShotRefs.length > 0 && (n.nodeType === 'spine' || n.nodeType === 'entry')) {
+            for (var ni3 = 0; ni3 < n._nodeShotRefs.length; ni3++) {
+                var rp3 = n._nodeShotRefs[ni3];
+                if (!rp3) continue;
+                var fn3 = rp3.replace('_assets/', '');
+                if (!fileRefs[fn3]) fileRefs[fn3] = [];
+                fileRefs[fn3].push({ node: n, idx: ni3, type: 'nodeImage' });
             }
         }
         result = nodesIter.next();
@@ -358,6 +491,19 @@ SMTool._loadCompanionImagesFromPath = function (dirPath) {
     var fileNames = Object.keys(fileRefs);
     var totalRefs = fileNames.length;
     if (totalRefs === 0) return Promise.resolve({ loaded: 0, missing: [], total: 0 });
+
+    // ★ 加载前：清空所有旧 shotId，防止残留碰撞
+    var clearIter3 = SMData.nodes.values();
+    var cr3 = clearIter3.next();
+    while (!cr3.done) {
+        var cn3 = cr3.value;
+        if (cn3._nodeImages && cn3._nodeImages.length > 0 && (cn3.nodeType === 'spine' || cn3.nodeType === 'entry')) {
+            for (var ck = 0; ck < cn3._nodeImages.length; ck++) {
+                if (typeof cn3._nodeImages[ck] === 'number') cn3._nodeImages[ck] = null;
+            }
+        }
+        cr3 = clearIter3.next();
+    }
 
     var loadedCount = 0;
     var missingList = [];
@@ -385,21 +531,39 @@ SMTool._loadCompanionImagesFromPath = function (dirPath) {
                         loadedCount++;
                         for (var ri = 0; ri < refArr.length; ri++) {
                             var ref = refArr[ri];
-                            if (!ref.node._boneScreenshots) ref.node._boneScreenshots = {};
-                            if (!ref.node._boneScreenshots[ref.boneName]) ref.node._boneScreenshots[ref.boneName] = [];
-                            if (!Array.isArray(ref.node._boneScreenshots[ref.boneName])) ref.node._boneScreenshots[ref.boneName] = [ref.node._boneScreenshots[ref.boneName]];
-                            ref.node._boneScreenshots[ref.boneName][ref.idx] = newShotId;
+                            if (ref.type === 'nodeImage') {
+                                if (!ref.node._nodeImages) ref.node._nodeImages = [];
+                                ref.node._nodeImages[ref.idx] = newShotId;
+                            } else {
+                                if (!ref.node._boneScreenshots) ref.node._boneScreenshots = {};
+                                if (!ref.node._boneScreenshots[ref.boneName]) ref.node._boneScreenshots[ref.boneName] = [];
+                                if (!Array.isArray(ref.node._boneScreenshots[ref.boneName])) ref.node._boneScreenshots[ref.boneName] = [ref.node._boneScreenshots[ref.boneName]];
+                                ref.node._boneScreenshots[ref.boneName][ref.idx] = newShotId;
+                            }
+                            if (ri > 0) SMData._shotAddRef(newShotId);
                         }
                         console.log('[Path] ✅ 加载成功:', fileName);
                     } catch (e) {
                         console.log('[Path] ❌ 解析失败:', fileName, e.message);
                         missingList.push(fileName);
+                        for (var rj = 0; rj < refArr.length; rj++) {
+                            var ref2 = refArr[rj];
+                            if (ref2.type === 'nodeImage' && ref2.node._nodeImages) {
+                                ref2.node._nodeImages[ref2.idx] = null;
+                            }
+                        }
                     }
                     resolve();
                 };
                 img.onerror = function () {
                     console.log('[Path] ❌ 文件不存在:', fileName);
                     missingList.push(fileName);
+                    for (var rj2 = 0; rj2 < refArr.length; rj2++) {
+                        var ref3 = refArr[rj2];
+                        if (ref3.type === 'nodeImage' && ref3.node._nodeImages) {
+                            ref3.node._nodeImages[ref3.idx] = null;
+                        }
+                    }
                     resolve();
                 };
                 img.src = url;
@@ -493,7 +657,12 @@ SMTool._serializeData = function () {
             _slotTags: n._slotTags,
             _slotNotes: n._slotNotes,
             _slotFade: n._slotFade,
-            _slotShotRefs: n._slotShotRefs
+            _slotShotRefs: n._slotShotRefs,
+            // ★ 图片节点数据
+            _imageDataUrl: n._imageDataUrl || '',
+            // ★ 节点面板右上角图片附件
+            _nodeImages: n._nodeImages ? n._nodeImages.slice() : [],
+            _nodeShotRefs: n._nodeShotRefs ? n._nodeShotRefs.slice() : []
         });
         result = nodesIter.next();
     }
@@ -741,6 +910,15 @@ SMTool._tryLoadCompanionImages = function () {
                     if (arr[r] && typeof arr[r] === 'string' && arr[r].indexOf('_assets/') === 0) {
                         uniqueFiles[arr[r].replace('_assets/', '')] = true;
                     }
+                }
+            }
+        }
+        // ★ 同时收集节点图片附件引用
+        if (n._nodeShotRefs && n._nodeShotRefs.length > 0 && (n.nodeType === 'spine' || n.nodeType === 'entry')) {
+            for (var ni = 0; ni < n._nodeShotRefs.length; ni++) {
+                var rp = n._nodeShotRefs[ni];
+                if (rp && typeof rp === 'string' && rp.indexOf('_assets/') === 0) {
+                    uniqueFiles[rp.replace('_assets/', '')] = true;
                 }
             }
         }
@@ -993,6 +1171,44 @@ SMTool.importData = function () {
             // ★ 目录句柄已在上方设置，_tryLoadCompanionImages 自动静默加载截图
             return SMTool._tryLoadCompanionImages();
         }).then(function () {
+            // ★ 预生成所有节点图片的缩略图（避免大图撑爆 img 标签）
+            var nodesPre = SMData.nodes.values();
+            var rPre = nodesPre.next();
+            var thumbPromises = [];
+            while (!rPre.done) {
+                var nd = rPre.value;
+                if (nd._nodeImages && nd._nodeImages.length > 0 && (nd.nodeType === 'spine' || nd.nodeType === 'entry')) {
+                    for (var ti = 0; ti < nd._nodeImages.length; ti++) {
+                        var sid = nd._nodeImages[ti];
+                        if (typeof sid !== 'number') continue;
+                        var entry = SMData._shotStore[sid];
+                        if (entry && entry.dataUrl && !entry.thumbDataUrl && !entry._thumbPending) {
+                            entry._thumbPending = true;
+                            thumbPromises.push((function (shotId) {
+                                return SMTool._generateThumbnail(entry.dataUrl).then(function (t) { return { sid: shotId, thumb: t }; });
+                            })(sid));
+                        }
+                    }
+                }
+                rPre = nodesPre.next();
+            }
+            return Promise.all(thumbPromises).then(function (results) {
+                for (var ri = 0; ri < results.length; ri++) {
+                    var r = results[ri];
+                    var ent = SMData._shotStore[r.sid];
+                    if (ent) { ent.thumbDataUrl = r.thumb; ent._thumbPending = false; }
+                }
+            });
+        }).then(function () {
+            // ★ 刷新所有节点的图片附件缩略图
+            var nodesIter4 = SMData.nodes.values();
+            var r4 = nodesIter4.next();
+            while (!r4.done) {
+                if (r4.value._nodeImages && r4.value._nodeImages.length > 0 && (r4.value.nodeType === 'spine' || r4.value.nodeType === 'entry')) {
+                    SMTool._refreshNodeImages(r4.value.id);
+                }
+                r4 = nodesIter4.next();
+            }
             SMTool._updateFloatPanel();
             SMTool._showSaveToast('导入完成');
         }).catch(function (err) {
@@ -1152,6 +1368,12 @@ SMTool._processImportJson = function (jsonText, fileHandle) {
             }
             node._slotShotRefs = nd._slotShotRefs || {};
 
+            // ★ 图片节点数据
+            node._imageDataUrl = nd._imageDataUrl || '';
+            // ★ 节点面板右上角图片附件
+            node._nodeImages = nd._nodeImages || [];
+            node._nodeShotRefs = nd._nodeShotRefs || [];
+
             SMData.nodes.set(nd.id, node);
             SMData.nextId = Math.max(SMData.nextId, nd.id + 1);
 
@@ -1229,6 +1451,15 @@ SMTool._importDataLegacy = function () {
                 // ★ 传统导入也尝试加载伴随图片
                 return SMTool._tryLoadCompanionImages();
             }).then(function () {
+                // ★ 刷新所有节点的图片附件缩略图
+                var nodesIter4b = SMData.nodes.values();
+                var r4b = nodesIter4b.next();
+                while (!r4b.done) {
+                    if (r4b.value._nodeImages && r4b.value._nodeImages.length > 0 && r4b.value.nodeType === 'spine') {
+                        SMTool._refreshNodeImages(r4b.value.id);
+                    }
+                    r4b = nodesIter4b.next();
+                }
                 SMTool._updateFloatPanel();
                 SMTool._showSaveToast('导入完成');
             }).catch(function (err) {

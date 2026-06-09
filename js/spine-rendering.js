@@ -434,13 +434,20 @@ SMTool._loop = function (now) {
             } catch (e) {}
         }
 
-        // 动画更新：动态模式始终 60fps，性能模式 <20% 冻结（但播放中的动画组节点不受限）
+        // 动画更新：动态模式始终 60fps，性能模式 <20% 冻结，静态模式仅选中节点播放
         var isFlowPlaying = SMData._fullPlayback && SMData._fullPlayback.isPlaying;
         var isPlayingNode = isFlowPlaying && SMData._fullPlayback.activePathIdx >= 0 &&
             SMData._fullPaths[SMData._fullPlayback.activePathIdx] &&
             SMData._fullPaths[SMData._fullPlayback.activePathIdx].nodes[SMData._fullPlayback.currentStep] &&
             SMData._fullPaths[SMData._fullPlayback.activePathIdx].nodes[SMData._fullPlayback.currentStep].id === node.id;
-        if (SMData.renderMode === 'dyn' || z >= 0.20 || isPlayingNode) {
+        var isSelectedNode = SMData.selectedNodes.has(node.id);
+        var shouldAnimate = false;
+        if (SMData.renderMode === 'static') {
+            shouldAnimate = isSelectedNode || isPlayingNode;
+        } else {
+            shouldAnimate = (SMData.renderMode === 'dyn' || z >= 0.20 || isPlayingNode);
+        }
+        if (shouldAnimate) {
             node.state.update(dt);
             node.state.apply(node.skeleton);
 

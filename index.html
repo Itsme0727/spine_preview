@@ -7,7 +7,7 @@
     <meta http-equiv="Expires" content="0" />
     <title>Spine Animation State Machine</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link rel="stylesheet" href="css/styles.css?v=101" />
+    <link rel="stylesheet" href="css/styles.css?v=104" />
 </head>
 <body>
     <!-- ===== 画布层 ===== -->
@@ -106,6 +106,7 @@
         <div class="ctx-item" onclick="SMTool.ctxDuplicateNode()">📋 复制节点</div>
         <div class="ctx-sep"></div>
         <div class="ctx-item" onclick="SMTool.ctxAddTitle()">📝 标题</div>
+        <div class="ctx-item" onclick="SMTool.ctxInsertImage()">🖼️ 插入图片</div>
     </div>
 
     <!-- ===== 标签悬浮提示 ===== -->
@@ -130,7 +131,8 @@
 
     <!-- ===== 渲染模式切换 ===== -->
     <div id="modeToggle">
-        <button id="modePerf" class="active" onclick="SMTool.setRenderMode('perf')">性能</button>
+        <button id="modeStatic" class="active" onclick="SMTool.setRenderMode('static')">静态</button>
+        <button id="modePerf" onclick="SMTool.setRenderMode('perf')">性能</button>
         <button id="modeDyn" onclick="SMTool.setRenderMode('dyn')">动态</button>
     </div>
 

@@ -62,7 +62,7 @@ var SMData = {
     nextGroupId: 1,
 
     // 渲染模式：'perf' | 'dyn'
-    renderMode: 'perf',
+    renderMode: 'static',
 
     // 底部动画组合浮窗面板状态
     _flowPanel: {
@@ -257,23 +257,38 @@ SMData._shotGetThumb = function (shotId) {
     var entry = SMData._shotStore[shotId];
     if (!entry) return null;
     if (entry.thumbDataUrl) return entry.thumbDataUrl;
-    // 懒生成缩略图（同步标记为 pending，异步完成）
-    if (entry._thumbPending) return entry.dataUrl; // 降级返回原图
+    // ★ 懒生成缩略图（异步完成）
+    if (entry._thumbPending) return null; // 正在生成中
+    if (entry._thumbFailed) return null; // 之前生成失败，不再重试
+    if (!entry.dataUrl) return null;
     entry._thumbPending = true;
     var genThumb = (window.SMTool && window.SMTool._generateThumbnail);
     if (genThumb) {
         genThumb(entry.dataUrl).then(function (thumb) {
-            entry.thumbDataUrl = thumb;
+            if (thumb) {
+                entry.thumbDataUrl = thumb;
+            } else {
+                entry._thumbFailed = true; // 生成失败，标记不再重试
+            }
             entry._thumbPending = false;
-            // 缩略图就绪后刷新面板（HTML 构建时已通过 _shotGetThumb 使用真实图片）
+            // 缩略图就绪后刷新面板
             if (SMData._lastPanelNodeId >= 0) {
                 SMData._lastPanelNodeId = -1;
                 var updateFn = window.SMTool && window.SMTool._updateFloatPanel;
                 if (updateFn) updateFn();
             }
+            // ★ 刷新所有引用此 shotId 的节点缩略图
+            var refreshFn = window.SMTool && window.SMTool._refreshNodeImageByShotId;
+            if (refreshFn) refreshFn(shotId);
+        }).catch(function () {
+            entry._thumbPending = false;
+            entry._thumbFailed = true;
         });
+    } else {
+        entry._thumbPending = false;
+        entry._thumbFailed = true;
     }
-    return entry.dataUrl; // 降级：缩略图未就绪时返回原图
+    return null; // ★ 缩略图未就绪，返回 null（由调用方处理占位）
 };
 
 // 增加引用计数（复制节点时使用）
@@ -376,6 +391,11 @@ var SpineNodeData = (function () {
         this._slotNotes = {};       // { slotName: "备注文本" }
         this._slotScreenshots = {}; // { slotName: [shotId, ...] }
         this._slotFade = {};        // { slotName: { enabled: bool, duration: number } }
+
+        // ★ 节点面板右上角图片附件（shotId 数组）
+        this._nodeImages = [];
+        // ★ 节点图片附件文件引用路径（导出/导入用）
+        this._nodeShotRefs = [];
 
         this._customScale = 1.0;    // 用户自定义缩放比例（拖拽缩放图标调整）
         this._debugOffsetX = 0;     // 调试模式：动画层水平偏移（世界单位）
