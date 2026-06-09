@@ -366,6 +366,19 @@ SMTool._syncLayerAnim = function (nid) {
 
 /** ★ 立即刷新所有层级节点的盒子文字（连线增/删后调用） */
 SMTool._refreshAllLayerBoxes = function () {
+    // ★ 优化：先按 fromNode 建立连线索引，避免 O(N×C) 嵌套遍历
+    var connIndex = {}; // { fromNodeId: { layerNum: { toNode, toNodeObj } } }
+    for (var ci = 0; ci < SMData.connections.length; ci++) {
+        var c = SMData.connections[ci];
+        var ln = c._layerNum;
+        if (!ln && typeof c.fromState === 'string' && c.fromState.indexOf('layer_') === 0) {
+            ln = parseInt(c.fromState.replace('layer_', '')) || 0;
+        }
+        if (!ln) continue;
+        if (!connIndex[c.fromNode]) connIndex[c.fromNode] = {};
+        connIndex[c.fromNode][ln] = { toNode: c.toNode, toNodeObj: SMData.nodes.get(c.toNode) };
+    }
+
     var nodesIter = SMData.nodes.values();
     var r = nodesIter.next();
     while (!r.done) {
@@ -375,26 +388,20 @@ SMTool._refreshAllLayerBoxes = function () {
         if (!el) { r = nodesIter.next(); continue; }
         var boxes = el.querySelectorAll('.layer-box-text');
         var ld = SMTool._layerData(ln);
+        var nodeConns = connIndex[ln.id] || {};
         for (var li = 0; li < boxes.length; li++) {
             var lnum = li + 1;
             var txt = '请连线动画节点';
-            // 三重兜底（同 _updateSel）
-            var foundConn = false;
-            for (var ci = 0; ci < SMData.connections.length; ci++) {
-                var c = SMData.connections[ci];
-                if (c.fromNode === ln.id && (c._layerNum === lnum || c.fromState === 'layer_' + lnum)) {
-                    var tn = SMData.nodes.get(c.toNode);
-                    if (tn) { txt = (tn.sourceFile || tn.name || '动画节点') + (tn.currentAnim ? ' — ' + tn.currentAnim : ''); foundConn = true; break; }
-                }
-            }
-            // ★ 无连线则清除该层的旧数据，确保盒子文字立即还原
-            if (!foundConn) {
+            var cinfo = nodeConns[lnum];
+            if (cinfo && cinfo.toNodeObj) {
+                txt = (cinfo.toNodeObj.sourceFile || cinfo.toNodeObj.name || '动画节点') + (cinfo.toNodeObj.currentAnim ? ' — ' + cinfo.toNodeObj.currentAnim : '');
+            } else {
+                // ★ 无连线则清除该层的旧数据
                 if (ld.layers[lnum]) delete ld.layers[lnum];
             }
             boxes[li].textContent = txt;
-            // ★ 同步 connected class（连线高亮）
             var boxEl = boxes[li].parentElement;
-            if (boxEl) boxEl.classList.toggle('connected', foundConn);
+            if (boxEl) boxEl.classList.toggle('connected', !!cinfo);
         }
         r = nodesIter.next();
     }

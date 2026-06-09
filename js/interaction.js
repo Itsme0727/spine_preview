@@ -458,11 +458,13 @@ SMTool._onMM = function (e) {
     if (SMData.connecting) {
         SMData.connecting.mx = e.clientX;
         SMData.connecting.my = e.clientY;
+        SMData._forceRedraw = true;
         SMTool._highlightTarget(e.clientX, e.clientY);
     }
 
     // 拖拽控制点
     if (SMData.draggingCP) {
+        SMData._forceRedraw = true;
         var conn = null;
         for (var i = 0; i < SMData.connections.length; i++) {
             if (SMData.connections[i].id === SMData.draggingCP.connId) {
@@ -491,6 +493,7 @@ SMTool._onMM = function (e) {
 
     // 拖拽条件标签（整体移动贝塞尔曲线走势）
     if (SMData.draggingLabel) {
+        SMData._forceRedraw = true;
         var connL = null;
         for (var k = 0; k < SMData.connections.length; k++) {
             if (SMData.connections[k].id === SMData.draggingLabel.connId) {
@@ -520,6 +523,7 @@ SMTool._onMM = function (e) {
 
     // 拖拽节点（单拖拽）
     if (SMData.draggedNode) {
+        SMData._forceRedraw = true;
         var wp2 = SMTool.canvasToWorld(e.clientX, e.clientY);
         SMData.draggedNode.x = wp2.x - SMData.dragOffset.x;
         SMData.draggedNode.y = wp2.y - SMData.dragOffset.y;
@@ -529,6 +533,7 @@ SMTool._onMM = function (e) {
 
     // 多节点拖拽（含组拖拽）
     if (SMData.isMultiDragging) {
+        SMData._forceRedraw = true;
         var wp3 = SMTool.canvasToWorld(e.clientX, e.clientY);
         var draggedList = [];
         var nodesIter3 = SMData.nodes.values();

@@ -309,30 +309,6 @@ SMTool._loop = function (now) {
     var dt = Math.min((now - SMTool._lt) / 1000, 0.1);
     SMTool._lt = now;
     SMTool._fc++;
-    if (now - SMTool._ft >= 1000) {
-        document.getElementById('sbFPS').textContent = 'FPS: ' + Math.round(SMTool._fc * 1000 / (now - SMTool._ft));
-        // 内存（Chrome only，含 JS 堆 + DOM 等）
-        if (performance.memory) {
-            var mb = (performance.memory.totalJSHeapSize / 1048576).toFixed(1);
-            document.getElementById('sbMemory').textContent = '内存: ' + mb + 'MB';
-        }
-        // 统计全局 Draw 和骨骼数
-        var totalDraws = 0, totalBones = 0;
-        var nodesIter2 = SMData.nodes.values();
-        var r2 = nodesIter2.next();
-        while (!r2.done) {
-            var nd = r2.value;
-            if (nd.skeleton) {
-                totalBones += nd.bones.length;
-                totalDraws += (nd.skeleton.drawOrder ? nd.skeleton.drawOrder.length : 0);
-            }
-            r2 = nodesIter2.next();
-        }
-        document.getElementById('sbBones').textContent = '骨骼: ' + totalBones;
-        document.getElementById('sbDraws').textContent = 'Draw call: ' + totalDraws;
-        SMTool._fc = 0;
-        SMTool._ft = now;
-    }
 
     var gl = SMTool._sharedGL;
     if (!gl) return;
@@ -342,21 +318,12 @@ SMTool._loop = function (now) {
     var cwFull = sharedCanvas.width;
     var chFull = sharedCanvas.height;
 
-    // 每帧全清画布为透明，同时清除模板缓冲区，确保非渲染区域不会残留旧像素
-    gl.disable(gl.SCISSOR_TEST);
-    gl.viewport(0, 0, cwFull, chFull);
-    gl.clearColor(0, 0, 0, 0);
-    gl.clearStencil(0);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
-
     // ---- 视口裁剪：计算当前可见的世界坐标范围 ----
     var z = SMData.view.zoom;
     var vx = SMData.view.x;
     var vy = SMData.view.y;
-    // 紧凑缓冲区：仅扩展半屏，边缘节点冻结动画
     var vpW = cwFull / z;
     var vpH = chFull / z;
-    // 可见区（渲染 + 动画更新）
     var visLeft   = -vx - vpW / 2;
     var visTop    = -vy - vpH / 2;
     var visRight  = visLeft + vpW;
@@ -368,6 +335,38 @@ SMTool._loop = function (now) {
     var frzRight  = visRight + margin;
     var frzBottom = visBottom + margin;
 
+    // ★ 优化：合并统计与渲染为一次遍历
+    var doStats = (now - SMTool._ft >= 1000);
+    var totalDraws = 0, totalBones = 0;
+
+    // ★ 优化：没有需要渲染的节点时跳过全清操作
+    var hasVisibleNode = false;
+
+    // 每帧全清画布（仅当有节点需要渲染时）
+    gl.disable(gl.SCISSOR_TEST);
+    gl.viewport(0, 0, cwFull, chFull);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clearStencil(0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
+
+    // ★ 优化：帧级 GL 混合状态初始化（仅一次，不再逐节点重复）
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+
+    // ★ 优化：缓存 ManagedWebGLRenderingContext 能力检测（仅首次）
+    if (SMTool._mcBlendFuncCap === undefined) {
+        var mcCheck = SMTool._sharedManagedContext4x;
+        if (mcCheck) {
+            SMTool._mcBlendFuncCap = (typeof mcCheck.blendFunc === 'function');
+            SMTool._mcBlendSrcProp = (mcCheck._blendSrc !== undefined) ? '_blendSrc' : ((mcCheck._cachedBlendSrc !== undefined) ? '_cachedBlendSrc' : null);
+            SMTool._mcBlendDstProp = SMTool._mcBlendSrcProp ? SMTool._mcBlendSrcProp.replace('Src', 'Dst') : null;
+        } else {
+            SMTool._mcBlendFuncCap = false;
+            SMTool._mcBlendSrcProp = null;
+            SMTool._mcBlendDstProp = null;
+        }
+    }
+
     gl.enable(gl.SCISSOR_TEST);
 
     var nodesIter = SMData.nodes.values();
@@ -375,7 +374,10 @@ SMTool._loop = function (now) {
     while (!result.done) {
         var node = result.value;
 
-        if (!node.state || !node.skeleton || !node._canvasWidth) { result = nodesIter.next(); continue; }
+        // ★ 快速跳过：无渲染数据的节点
+        if (!node.state || !node.skeleton || !node._canvasWidth) {
+            result = nodesIter.next(); continue;
+        }
 
         if (node._needsWebGLRetry) {
             var WGLnow = window.spine38 && window.spine38.webgl;
@@ -397,15 +399,21 @@ SMTool._loop = function (now) {
         var scaledW = nodeW * nodeScale;
         var scaledH = nodeH * nodeScale;
 
+        // ★ 优化：统计骨骼/Draw（合并到主循环，避免二次遍历）
+        if (doStats && node.skeleton) {
+            totalBones += node.bones.length;
+            totalDraws += (node.skeleton.drawOrder ? node.skeleton.drawOrder.length : 0);
+        }
+
         if (node.x + scaledW < frzLeft || node.x > frzRight ||
             node.y + scaledH < frzTop || node.y > frzBottom) {
             node._visible = false; result = nodesIter.next(); continue;
         }
         node._visible = true;
+        hasVisibleNode = true;
 
         var sp = SMTool.worldToCanvas(node.x, node.y);
         var sx = Math.round(sp.x), sy = Math.round(sp.y);
-        var nodeScale = (node._customScale !== undefined ? node._customScale : 1.0);
         var sw = Math.round(nodeW * z * nodeScale), sh = Math.round(nodeH * z * nodeScale);
 
         // 跳过 header 区域，scissor 从 canvas-wrap 位置开始
@@ -495,32 +503,21 @@ SMTool._loop = function (now) {
         gl.viewport(sx, glY, sw, sh);
         gl.clearColor(0, 0, 0, 0);
         gl.clearStencil(0);
-        // 同时清除颜色和模板缓冲区 — stencil 对裁剪/Mask 至关重要
         gl.clear(gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
-        // 重置混合模式为默认值，防止上一节点的 slot 混合模式污染当前节点
-        gl.enable(gl.BLEND);
-        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-        // 【关键】同步 batcher 的内部混合状态缓存。
-        // PolygonBatcher 内部缓存 srcBlend/dstBlend，若与目标值一致则跳过 gl.blendFunc()。
-        // 我们的外部 gl.blendFunc() 重置不被 batcher 感知 → batcher 可能错误跳过设置。
-        // 将 batcher 内部缓存同步到当前 GL 实际值，确保首次 draw 时状态一致。
+
+        // ★ 优化：同步 batcher 内部混合状态（帧级已重置 GL，此处仅同步缓存）
         if (node.batcher) {
             node.batcher.srcBlend = gl.ONE;
             node.batcher.dstBlend = gl.ONE_MINUS_SRC_ALPHA;
         }
-        // 同样同步 4.x ManagedWebGLRenderingContext 的混合状态缓存（若存在）
-        var mc = SMTool._sharedManagedContext4x;
-        if (mc) {
-            try {
-                // 尝试通过 managedContext 的 blendFunc API 同步（同时更新缓存和 GL）
-                if (typeof mc.blendFunc === 'function') {
-                    mc.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-                }
-            } catch (e) {
-                // 回退：直接修改内部缓存属性（不同版本属性名可能不同）
-                try { if (mc._blendSrc !== undefined) { mc._blendSrc = gl.ONE; mc._blendDst = gl.ONE_MINUS_SRC_ALPHA; } } catch (e2) {}
-                try { if (mc._cachedBlendSrc !== undefined) { mc._cachedBlendSrc = gl.ONE; mc._cachedBlendDst = gl.ONE_MINUS_SRC_ALPHA; } } catch (e2) {}
-            }
+
+        // ★ 优化：同步 ManagedWebGLRenderingContext（使用缓存的能力检测）
+        var mcSync = SMTool._sharedManagedContext4x;
+        if (mcSync && SMTool._mcBlendFuncCap) {
+            mcSync.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+        } else if (mcSync && SMTool._mcBlendSrcProp) {
+            mcSync[SMTool._mcBlendSrcProp] = gl.ONE;
+            mcSync[SMTool._mcBlendDstProp] = gl.ONE_MINUS_SRC_ALPHA;
         }
 
         if ((node._spineVer === '4.3' || node._spineVer === '4.2') && node.sceneRenderer && node.sceneRenderer.begin) {
@@ -557,16 +554,44 @@ SMTool._loop = function (now) {
 
     gl.disable(gl.SCISSOR_TEST);
 
-    // 绘制网格和连线（2D Canvas，不受 WebGL 影响）
-    SMTool._renderGrid();
-    SMTool._renderGroupBoxes(SMTool.gridCtx);
-    SMTool._renderConnections();
+    // ★ 优化：统计（合并到主循环，无需二次遍历）
+    if (doStats) {
+        document.getElementById('sbFPS').textContent = 'FPS: ' + Math.round(SMTool._fc * 1000 / (now - SMTool._ft));
+        if (performance.memory) {
+            var mb = (performance.memory.totalJSHeapSize / 1048576).toFixed(1);
+            document.getElementById('sbMemory').textContent = '内存: ' + mb + 'MB';
+        }
+        document.getElementById('sbBones').textContent = '骨骼: ' + totalBones;
+        document.getElementById('sbDraws').textContent = 'Draw call: ' + totalDraws;
+        SMTool._fc = 0;
+        SMTool._ft = now;
+    }
+
+    // ★ 优化：2D Canvas 脏标记 — 仅在视图/连线变化时重绘网格和连线
+    // 但以下情况必须每帧重绘：框选拖拽中、连线拖拽中、控制点拖拽中、标签拖拽中
+    var viewChanged = (SMData.view.zoom !== SMData._lastViewZoom ||
+        SMData.view.x !== SMData._lastViewX || SMData.view.y !== SMData._lastViewY);
+    var connChanged = (SMData.connections.length !== SMData._lastConnCount) || viewChanged;
+    var selChanged = (SMData.selectedConnection !== SMData._lastSelConn) || (SMData.selectedNodes.size !== SMData._lastSelCount);
+    var needsRedraw = viewChanged || connChanged || selChanged || SMData._forceRedraw ||
+        SMData.marqueeActive || SMData.connecting || SMData.draggingCP || SMData.draggingLabel ||
+        SMData.isPanning || SMData.draggedNode || SMData.isMultiDragging;
+
+    if (needsRedraw) {
+        SMData._lastViewZoom = SMData.view.zoom;
+        SMData._lastViewX = SMData.view.x;
+        SMData._lastViewY = SMData.view.y;
+        SMData._lastConnCount = SMData.connections.length;
+        SMData._lastSelConn = SMData.selectedConnection;
+        SMData._lastSelCount = SMData.selectedNodes.size;
+        SMData._forceRedraw = false;
+
+        SMTool._renderGrid();
+        SMTool._renderGroupBoxes(SMTool.gridCtx);
+        SMTool._renderConnections();
+    }
     SMTool._renderSnapLines();
-
-    // 鸟瞰图（小地图）
     SMTool._renderMinimap();
-
-    // ★ 右上角动画预览浮窗渲染
     SMTool._renderAnimPreview(now);
 };
 

@@ -7,7 +7,7 @@
     <meta http-equiv="Expires" content="0" />
     <title>Spine Animation State Machine</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link rel="stylesheet" href="css/styles.css?v=104" />
+    <link rel="stylesheet" href="css/styles.css?v=20260609" />
 </head>
 <body>
     <!-- ===== 画布层 ===== -->
@@ -112,6 +112,23 @@
     <!-- ===== 标签悬浮提示 ===== -->
     <div id="labelTooltip"></div>
 
+    <!-- ===== 重复文件替换弹窗 ===== -->
+    <div id="dupReplaceDialog">
+        <div class="dup-overlay" onclick="event.stopPropagation()"></div>
+        <div class="dup-box">
+            <div class="dup-title">⚠️ 检测到重复动画文件</div>
+            <div class="dup-body">
+                <p>工程中已存在动画文件 "<strong id="dupFileName"></strong>"。</p>
+                <p>请选择操作：</p>
+            </div>
+            <div class="dup-actions">
+                <button class="dup-btn-replace" id="dupBtnReplace">🔄 替换动画<br><span>仅刷新 Spine 画面数据，保留所有标记/截图/参数</span></button>
+                <button class="dup-btn-new" id="dupBtnNew">➕ 新建动画<br><span>作为新的独立节点添加到画布</span></button>
+            </div>
+            <button class="dup-close" id="dupBtnClose" title="取消">✕</button>
+        </div>
+    </div>
+
     <!-- ===== 状态栏 ===== -->
     <div id="statusBar">
         <span id="sbNodes">节点: 0</span>
@@ -210,17 +227,17 @@
          9. export-import.js — 项目导出/导入
         10. app.js — 主入口（汇总 + 初始化）
          ================================================================ -->
-    <script src="js/lib/spine-loader.js?v=99"></script>
-    <script src="js/data-model.js?v=99"></script>
-    <script src="js/spine-loading.js?v=99"></script>
-    <script src="js/spine-rendering.js?v=99"></script>
-    <script src="js/grid-connections.js?v=99"></script>
-    <script src="js/minimap.js?v=99"></script>
-    <script src="js/ui-dom.js?v=99"></script>
-    <script src="js/interaction.js?v=99"></script>
-    <script src="js/export-import.js?v=99"></script>
-    <script src="js/export-ai-json.js?v=1"></script>
-    <script src="js/layer-node-v2.js?v=2"></script>
-    <script src="js/app.js?v=99"></script>
+    <script src="js/lib/spine-loader.js?v=20260609"></script>
+    <script src="js/data-model.js?v=20260609"></script>
+    <script src="js/spine-loading.js?v=20260609"></script>
+    <script src="js/spine-rendering.js?v=20260609"></script>
+    <script src="js/grid-connections.js?v=20260609"></script>
+    <script src="js/minimap.js?v=20260609"></script>
+    <script src="js/ui-dom.js?v=20260609"></script>
+    <script src="js/interaction.js?v=20260609"></script>
+    <script src="js/export-import.js?v=20260609"></script>
+    <script src="js/export-ai-json.js?v=20260609"></script>
+    <script src="js/layer-node-v2.js?v=20260609"></script>
+    <script src="js/app.js?v=20260609"></script>
 </body>
 </html>

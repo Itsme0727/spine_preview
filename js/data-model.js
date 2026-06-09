@@ -155,7 +155,16 @@ var SMData = {
     _snapEnabled: true,  // 吸附功能开关
 
     // ★ 组内编辑模式（双击组进入，存储正在编辑的组 ID，null=未进入）
-    _groupEditMode: null
+    _groupEditMode: null,
+
+    // ★ 2D Canvas 缓存状态（避免每帧无效重绘）
+    _lastViewZoom: 0,
+    _lastViewX: 0,
+    _lastViewY: 0,
+    _lastConnCount: -1,
+    _lastSelConn: -1,
+    _lastSelCount: -1,
+    _forceRedraw: true   // 初始强制重绘一次
 };
 
 // ---- 快速采样 hash（非加密，用于去重查找的 O(1) 索引） ----
@@ -412,6 +421,14 @@ var SpineNodeData = (function () {
         //   loop      - 是否循环播放
         // track 0 是底层基础动画，track 1/2/... 依次叠加混合
         this.tracks = [];
+
+        // ★ 脏标记：为 true 时需要在下一帧重新渲染（位置/动画/皮肤变化时置 true）
+        this._dirty = true;
+        // ★ 上一帧的屏幕位置缓存（用于检测是否需要重绘）
+        this._lastSX = 0;
+        this._lastSY = 0;
+        this._lastSW = 0;
+        this._lastSH = 0;
     }
     return SpineNodeData;
 })();

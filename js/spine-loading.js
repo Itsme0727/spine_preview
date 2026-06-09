@@ -1,5 +1,5 @@
 /* ================================================================
-   Spine 文件加载 & 解析
+   Spine 文件加载 & 解析  [v20260609-2]
    负责: 拖拽文件的读取、Spine 版本检测、atlas 解析、skeleton 解析
    挂载到 SMTool 上
    ================================================================ */
@@ -7,10 +7,12 @@
 var SMTool = window.SMTool || {};
 
 // ---- 辅助函数 ----
+// ★ 优化：复用单个缓存 DOM 元素，避免频繁创建/销毁
+SMTool._escDiv = null;
 SMTool._esc = function (s) {
-    var d = document.createElement('div');
-    d.textContent = s;
-    return d.innerHTML;
+    if (!SMTool._escDiv) SMTool._escDiv = document.createElement('div');
+    SMTool._escDiv.textContent = s;
+    return SMTool._escDiv.innerHTML;
 };
 
 // 安全转义字符串，用于嵌入 HTML onclick 属性中的 JS 字符串字面量
@@ -36,25 +38,16 @@ SMTool._base64ToUint8 = function (base64) {
 // ---- 从拖拽文件创建节点 ----
 SMTool._onDrop = function (e) {
     var files = Array.from(e.dataTransfer.files);
-    if (files.length !== 1) { SMTool._onDropSpineFiles(files, e.clientX, e.clientY); return; }
+    if (files.length !== 1) { 
+        SMTool._onDropSpineFiles(files, e.clientX, e.clientY);
+        return; 
+    }
     var f = files[0];
 
-    // ★ 彻底 dump File 对象所有属性
-    console.log('[Drop] === 文件属性 dump ===');
-    console.log('[Drop] name:', f.name, 'size:', f.size, 'type:', f.type);
-    console.log('[Drop] .path:', f.path, 'type:', typeof f.path);
-    console.log('[Drop] .webkitRelativePath:', f.webkitRelativePath);
-    // 枚举所有自有属性
-    var ownKeys = Object.getOwnPropertyNames(f);
-    console.log('[Drop] ownPropertyNames:', ownKeys);
-    // 也检查 __proto__ 上的
-    try {
-        var protoKeys = Object.getOwnPropertyNames(Object.getPrototypeOf(f));
-        console.log('[Drop] proto keys:', protoKeys.slice(0, 30));
-    } catch (ex) {}
-    console.log('[Drop] ====================');
-
-    if (!f.name.toLowerCase().endsWith('.json')) { SMTool._onDropSpineFiles(files, e.clientX, e.clientY); return; }
+    if (!f.name.toLowerCase().endsWith('.json')) { 
+        SMTool._onDropSpineFiles(files, e.clientX, e.clientY);
+        return; 
+    }
 
     var reader = new FileReader();
     var item = (e.dataTransfer.items && e.dataTransfer.items[0]) || null;
@@ -102,7 +95,8 @@ SMTool._onDrop = function (e) {
                 SMTool._onDropSpineFiles(files, e.clientX, e.clientY); return;
             }
         } catch (ex) {
-            SMTool._onDropSpineFiles(files, e.clientX, e.clientY); return;
+            try { SMTool._onDropSpineFiles(files, e.clientX, e.clientY); } catch (ex2) { console.error('[Drop] Error in _onDropSpineFiles:', ex2); }
+            return;
         }
 
         console.log('[Drop] 识别为项目文件');
@@ -124,7 +118,9 @@ SMTool._onDrop = function (e) {
             console.error('[Drop] 导入失败:', err);
         });
     };
-    reader.onerror = function () { SMTool._onDropSpineFiles(files, e.clientX, e.clientY); };
+    reader.onerror = function () { 
+        try { SMTool._onDropSpineFiles(files, e.clientX, e.clientY); } catch (ex) { console.error('[Drop] Error in _onDropSpineFiles:', ex); }
+    };
     reader.readAsText(f);
 };
 
@@ -142,37 +138,32 @@ SMTool._onDropSpineFiles = function (files, dropX, dropY) {
                 break;
             }
         }
-        if (!groups[base]) groups[base] = {};
+        if (!groups[base]) { groups[base] = {}; }
         var ext = f.name.split('.').pop().toLowerCase();
-        // 多图集支持：PNG 文件用 _pngs 数组存储，避免同名扩展覆盖
         if (ext === 'png' || ext === 'jpg' || ext === 'jpeg') {
-            if (!groups[base]._pngs) groups[base]._pngs = [];
+            if (!groups[base]._pngs) { groups[base]._pngs = []; }
             groups[base]._pngs.push(f);
-            if (!groups[base].png) groups[base].png = f; // 第一个作为默认
+            if (!groups[base].png) { groups[base].png = f; }
         } else {
             groups[base][ext] = f;
         }
     }
 
-    // 合并孤儿 PNG 组：如果某组只有图片没有骨架，尝试合并到前缀匹配的父组
+    // Merge orphan PNG groups
     var keys = Object.keys(groups);
     for (var k = 0; k < keys.length; k++) {
         var base = keys[k];
         var group = groups[base];
         if (!group.json && !group.skel && !group.atlas && group._pngs) {
-            // 寻找父组：其 base 是当前 base 的前缀
             for (var m = 0; m < keys.length; m++) {
                 var parentBase = keys[m];
-                if (parentBase === base) continue;
+                if (parentBase === base) { continue; }
                 var parentGroup = groups[parentBase];
-                if ((parentGroup.json || parentGroup.skel || parentGroup.atlas) &&
-                    base.indexOf(parentBase) === 0 && base.length > parentBase.length) {
-                    // 合并 PNG 到父组
-                    if (!parentGroup._pngs) parentGroup._pngs = [];
+                if ((parentGroup.json || parentGroup.skel || parentGroup.atlas) && base.indexOf(parentBase) === 0 && base.length > parentBase.length) {
+                    if (!parentGroup._pngs) { parentGroup._pngs = []; }
                     for (var pi = 0; pi < group._pngs.length; pi++) {
                         parentGroup._pngs.push(group._pngs[pi]);
                     }
-                    console.log('[Drop] Merged orphan PNGs of "' + base + '" into parent "' + parentBase + '"');
                     group._merged = true;
                     break;
                 }
@@ -180,39 +171,478 @@ SMTool._onDropSpineFiles = function (files, dropX, dropY) {
         }
     }
 
-    // 计算累计水平偏移，防止多个文件组的节点重叠
+    // Create nodes (with duplicate detection)
     var accumulatedOffset = 0;
-    var H_SPACING = 350; // 每个文件组之间的水平间距（屏幕像素）
+    var H_SPACING = 350;
     for (var k2 = 0; k2 < keys.length; k2++) {
         var base2 = keys[k2];
         var group2 = groups[base2];
-        if (group2._merged) continue; // 跳过已合并的孤儿组
+        if (group2._merged) { continue; }
         if (group2.json || group2.skel) {
-            SMTool._createNode(group2, base2, dropX + accumulatedOffset, dropY);
-            accumulatedOffset += H_SPACING;
-        }
-    }
-
-    // ★ 处理纯图片文件组（无骨架/atlas 的图片）→ 创建图片节点
-    for (var k3 = 0; k3 < keys.length; k3++) {
-        var base3 = keys[k3];
-        var group3 = groups[base3];
-        if (group3._merged) continue;
-        if (!group3.json && !group3.skel && !group3.atlas && group3._pngs) {
-            var pngs = group3._pngs;
-            var wpImg = SMTool.canvasToWorld(dropX + accumulatedOffset, dropY);
-            for (var pi = 0; pi < pngs.length; pi++) {
-                var reader = new FileReader();
-                (function (file, ox) {
-                    reader.onload = function () {
-                        SMTool._addImageNode(reader.result, wpImg.x + ox, wpImg.y + ox);
-                    };
-                    reader.readAsDataURL(file);
-                })(pngs[pi], pi * 50 + accumulatedOffset);
+            var existingIds = SMTool._checkDuplicateSourceFile(base2);
+            if (existingIds.length > 0) {
+                SMTool._showDuplicateDialog(base2, group2, dropX + accumulatedOffset, dropY, existingIds);
+            } else {
+                SMTool._createNode(group2, base2, dropX + accumulatedOffset, dropY);
+                SMData._forceRedraw = true;
             }
             accumulatedOffset += H_SPACING;
         }
     }
+
+    // Handle pure image file groups
+    for (var k3 = 0; k3 < keys.length; k3++) {
+        var base3 = keys[k3];
+        var group3 = groups[base3];
+        if (group3._merged) { continue; }
+        if (!group3.json && !group3.skel && !group3.atlas && group3._pngs) {
+            var pngs = group3._pngs;
+            var wpImg = SMTool.canvasToWorld(dropX + accumulatedOffset, dropY);
+            for (var pi2 = 0; pi2 < pngs.length; pi2++) {
+                var reader2 = new FileReader();
+                (function (file, ox) {
+                    reader2.onload = function () {
+                        SMTool._addImageNode(reader2.result, wpImg.x + ox, wpImg.y + ox);
+                    };
+                    reader2.readAsDataURL(file);
+                })(pngs[pi2], pi2 * 50 + accumulatedOffset);
+            }
+            accumulatedOffset += H_SPACING;
+        }
+    }
+};
+
+// ================================================================
+// ★ 重复文件检测 & 替换逻辑
+// ================================================================
+
+/**
+ * 检查工程中是否已存在同名动画文件
+ * @param {string} baseName - 去除后缀的文件名
+ * @returns {number[]} 已存在的节点 ID 列表
+ */
+SMTool._checkDuplicateSourceFile = function (baseName) {
+    var ids = [];
+    var nodesIter = SMData.nodes.values();
+    var r = nodesIter.next();
+    while (!r.done) {
+        var node = r.value;
+        if (node.sourceFile === baseName && node.nodeType === 'spine') {
+            ids.push(node.id);
+        }
+        r = nodesIter.next();
+    }
+    return ids;
+};
+
+/**
+ * 显示重复文件选择弹窗
+ * @param {string} baseName - 文件名
+ * @param {object} fileGroup - 文件组
+ * @param {number} dropX - 拖放屏幕 X
+ * @param {number} dropY - 拖放屏幕 Y
+ * @param {number[]} existingIds - 已有节点 ID 列表
+ */
+SMTool._showDuplicateDialog = function (baseName, fileGroup, dropX, dropY, existingIds) {
+    var dialog = document.getElementById('dupReplaceDialog');
+    if (!dialog) {
+        SMTool._createNode(fileGroup, baseName, dropX, dropY);
+        return;
+    }
+
+    // 设置文件名
+    var nameEl = document.getElementById('dupFileName');
+    if (nameEl) nameEl.textContent = baseName;
+
+    // 绑定按钮事件（先解绑再绑定，防止重复）
+    var btnReplace = document.getElementById('dupBtnReplace');
+    var btnNew = document.getElementById('dupBtnNew');
+    var btnClose = document.getElementById('dupBtnClose');
+
+    function cleanup() {
+        dialog.classList.remove('show');
+        if (btnReplace) btnReplace.onclick = null;
+        if (btnNew) btnNew.onclick = null;
+        if (btnClose) btnClose.onclick = null;
+    }
+
+    if (btnReplace) {
+        btnReplace.onclick = function () {
+            cleanup();
+            SMTool._replaceSpineData(existingIds, fileGroup, baseName);
+        };
+    }
+
+    if (btnNew) {
+        btnNew.onclick = function () {
+            cleanup();
+            SMTool._createNode(fileGroup, baseName, dropX, dropY);
+        };
+    }
+
+    if (btnClose) {
+        btnClose.onclick = function () {
+            cleanup();
+        };
+    }
+
+    // 点击遮罩关闭
+    var overlay = dialog.querySelector('.dup-overlay');
+    if (overlay) {
+        overlay.onclick = function () { cleanup(); };
+    }
+
+    dialog.classList.add('show');
+};
+
+/**
+ * 替换已有节点的 Spine 核心数据，保留所有用户自定义参数
+ * @param {number[]} existingIds - 已有节点 ID 列表
+ * @param {object} fileGroup - 新的文件组
+ * @param {string} baseName - 文件名
+ */
+SMTool._replaceSpineData = function (existingIds, fileGroup, baseName) {
+    console.log('[Replace] Replacing spine data for ' + existingIds.length + ' nodes of "' + baseName + '"');
+
+    // ★ 先读取所有文件内容，然后逐个替换节点
+    var readPromises = [];
+    var pngFiles = fileGroup._pngs || [];
+    if (fileGroup.png && pngFiles.length === 0) pngFiles = [fileGroup.png];
+    var readNames = {};
+    for (var pi = 0; pi < pngFiles.length; pi++) {
+        readNames[pngFiles[pi].name.toLowerCase()] = true;
+        readPromises.push(SMTool._readFile(pngFiles[pi]));
+    }
+    var fileKeys = Object.keys(fileGroup);
+    for (var i = 0; i < fileKeys.length; i++) {
+        var k = fileKeys[i];
+        if (k === '_pngs' || k === '_merged' || k === 'png') continue;
+        var f = fileGroup[k];
+        if (!readNames[f.name.toLowerCase()]) {
+            readPromises.push(SMTool._readFile(f));
+        }
+    }
+
+    Promise.all(readPromises).then(function (results) {
+        // 解析文件内容
+        var atlasText = '', skelBin = null, skelJson = null;
+        var imgMap = {};
+        for (var ri = 0; ri < results.length; ri++) {
+            var r = results[ri];
+            if (r.t === 'txt') {
+                var s = r.d;
+                if (s.charCodeAt(0) === 0xFEFF) s = s.slice(1);
+                try {
+                    var j = JSON.parse(s);
+                    if (j.bones || j.slots || j.skins || j.animations || j.events ||
+                        (j.skeleton && (typeof j.skeleton === 'object') &&
+                            (j.bones !== undefined || j.slots !== undefined || j.skins !== undefined || j.animations !== undefined))) {
+                        skelJson = j;
+                    }
+                } catch (e) {
+                    if (!atlasText) atlasText = r.d;
+                }
+            } else if (r.t === 'img') {
+                imgMap[r.n.toLowerCase()] = r.d;
+            } else if (r.t === 'bin') {
+                skelBin = r.d;
+            }
+        }
+
+        var imgNames = Object.keys(imgMap);
+        if (imgNames.length === 0 || !atlasText || (!skelJson && !skelBin)) {
+            console.error('[Replace] Missing required files');
+            return;
+        }
+
+        // 检测版本
+        var detectedVersion = '';
+        if (skelJson) {
+            detectedVersion = (skelJson.skeleton && skelJson.skeleton.spine) || '';
+        } else if (skelBin) {
+            detectedVersion = SMTool._detectBinaryVersion(skelBin);
+        }
+        var atlasIs4x = /^pma\s*:/m.test(atlasText);
+        var useVer = SMTool._resolveRuntimeVersion(detectedVersion, skelBin, atlasIs4x);
+        var SP = SMTool._getSpineRuntime(useVer);
+        var WGL = useVer === '3.8' ? (window.spine38 && window.spine38.webgl) : null;
+        if (!SP) { console.error('[Replace] No runtime for ' + useVer); return; }
+        if (useVer === '3.8' && atlasIs4x) {
+            atlasText = atlasText.replace(/^pma\s*:.*$/gm, '').replace(/\n{2,}/g, '\n');
+        }
+
+        // 匹配 atlas 页面到图片
+        var atlasPageNames = SMTool._extractAtlasPageNames(atlasText);
+        var pageDataUrls = [];
+        for (var ai = 0; ai < atlasPageNames.length; ai++) {
+            var pageName = atlasPageNames[ai].name;
+            var pageNameLower = pageName.toLowerCase();
+            var foundUrl = imgMap[pageNameLower];
+            if (!foundUrl) {
+                for (var mi = 0; mi < imgNames.length; mi++) {
+                    if (imgNames[mi].indexOf(pageNameLower) !== -1 || pageNameLower.indexOf(imgNames[mi]) !== -1) {
+                        foundUrl = imgMap[imgNames[mi]]; break;
+                    }
+                }
+            }
+            if (foundUrl) {
+                pageDataUrls.push({ name: pageName, dataUrl: foundUrl });
+            } else if (imgNames.length > 0) {
+                pageDataUrls.push({ name: pageName, dataUrl: imgMap[imgNames[0]] });
+            }
+        }
+        if (pageDataUrls.length === 0 && imgNames.length > 0) {
+            pageDataUrls.push({ name: imgNames[0], dataUrl: imgMap[imgNames[0]] });
+        }
+
+        // 加载所有图片
+        var imgs = [];
+        var loadedCount = 0;
+        var totalPages = pageDataUrls.length;
+        if (totalPages === 0) { console.error('[Replace] No texture pages'); return; }
+
+        function onAllImagesLoaded() {
+            // ★ 逐个替换每个已有节点
+            for (var ni = 0; ni < existingIds.length; ni++) {
+                var nodeId = existingIds[ni];
+                var node = SMData.nodes.get(nodeId);
+                if (!node) continue;
+
+                // === 保存用户自定义数据 ===
+                var savedAnim = node.currentAnim;
+                var savedSkin = node.currentSkin;
+                var savedLoop = node.loop;
+                var savedPMA = node.premultipliedAlpha;
+                var savedTracks = node.tracks ? JSON.parse(JSON.stringify(node.tracks)) : [];
+                var savedScale = node._customScale;
+                var savedOffX = node._debugOffsetX || 0;
+                var savedOffY = node._debugOffsetY || 0;
+                var savedBoneTags = node._boneTags ? JSON.parse(JSON.stringify(node._boneTags)) : {};
+                var savedBoneNotes = node._boneNotes ? JSON.parse(JSON.stringify(node._boneNotes)) : {};
+                var savedBoneScreenshots = node._boneScreenshots ? JSON.parse(JSON.stringify(node._boneScreenshots)) : {};
+                var savedBoneShotRefs = node._boneShotRefs ? JSON.parse(JSON.stringify(node._boneShotRefs)) : {};
+                var savedBoneFade = node._boneFade ? JSON.parse(JSON.stringify(node._boneFade)) : {};
+                var savedSkinTags = node._skinTags ? JSON.parse(JSON.stringify(node._skinTags)) : {};
+                var savedSkinNotes = node._skinNotes ? JSON.parse(JSON.stringify(node._skinNotes)) : {};
+                var savedSkinScreenshots = node._skinScreenshots ? JSON.parse(JSON.stringify(node._skinScreenshots)) : {};
+                var savedSkinFade = node._skinFade ? JSON.parse(JSON.stringify(node._skinFade)) : {};
+                var savedSlotTags = node._slotTags ? JSON.parse(JSON.stringify(node._slotTags)) : {};
+                var savedSlotNotes = node._slotNotes ? JSON.parse(JSON.stringify(node._slotNotes)) : {};
+                var savedSlotScreenshots = node._slotScreenshots ? JSON.parse(JSON.stringify(node._slotScreenshots)) : {};
+                var savedSlotFade = node._slotFade ? JSON.parse(JSON.stringify(node._slotFade)) : {};
+                var savedStateDesc = node._stateDesc || '';
+                var savedNodeImages = node._nodeImages ? node._nodeImages.slice() : [];
+                var savedNodeShotRefs = node._nodeShotRefs ? node._nodeShotRefs.slice() : [];
+                var savedTextContent = node._textContent || '';
+                var savedExitText = node._exitText || '';
+
+                // === 清理旧 WebGL 资源 ===
+                if (node.state) node.state.clearTracks();
+                SMTool._releaseNodeTextures(node);
+                if (node.batcher) { try { node.batcher.dispose(); } catch (e) {} }
+                if (node.shader) { try { node.shader.dispose(); } catch (e) {} }
+                if (node.sceneRenderer) { try { node.sceneRenderer.dispose(); } catch (e) {} node.sceneRenderer = null; }
+                node._managedContext = null;
+                node.glTextures = [];
+
+                // === 替换源数据 ===
+                node._srcSkelJson = skelJson;
+                node._srcSkelBinBase64 = skelBin ? SMTool._uint8ToBase64(skelBin) : null;
+                node._srcAtlasText = atlasText;
+                node._srcTexDataUrl = pageDataUrls.length > 0 ? pageDataUrls[0].dataUrl : '';
+                node._srcTexDataUrls = pageDataUrls;
+                node._srcType = skelBin ? 'skel' : 'json';
+                node._srcFileNames = [];
+                for (var ri2 = 0; ri2 < results.length; ri2++) {
+                    if (results[ri2].n) node._srcFileNames.push(results[ri2].n);
+                }
+                node._spineVer = useVer;
+                node._SP = SP;
+                node._physParam = (useVer !== '3.8' && SP.Physics) ? SP.Physics.update : undefined;
+                node.version = '';
+                node.textureImg = imgs[0] || null;
+                node._texImgs = imgs;
+
+                // === 重新解析 Spine 数据 ===
+                try {
+                    // 创建 Atlas
+                    var atlas;
+                    if (useVer === '4.3' || useVer === '4.2') {
+                        atlas = new SP.TextureAtlas(atlasText);
+                    } else {
+                        atlas = new SP.TextureAtlas(atlasText, function (pagePath) {
+                            var pathStr = (typeof pagePath === 'string') ? pagePath : (pagePath && pagePath.name ? pagePath.name : '');
+                            var pageFileName = pathStr.replace(/\\/g, '/').split('/').pop().toLowerCase();
+                            var matchImg = imgs[0];
+                            if (pageDataUrls && imgs) {
+                                for (var pdi = 0; pdi < pageDataUrls.length; pdi++) {
+                                    if (pageDataUrls[pdi].name.toLowerCase() === pageFileName && imgs[pdi]) {
+                                        matchImg = imgs[pdi]; break;
+                                    }
+                                }
+                            }
+                            return new SP.FakeTexture(matchImg);
+                        });
+                    }
+                    node.atlasData = atlas;
+
+                    // 加载 SkeletonData
+                    var al = new SP.AtlasAttachmentLoader(atlas);
+                    var sd;
+                    if (skelBin) {
+                        var bl = new SP.SkeletonBinary(al);
+                        bl.scale = 1;
+                        sd = bl.readSkeletonData(skelBin);
+                    } else {
+                        var jl = new SP.SkeletonJson(al);
+                        jl.scale = 1;
+                        sd = jl.readSkeletonData(skelJson);
+                    }
+                    node.skeletonData = sd;
+                    node.version = sd.version || '';
+
+                    // 更新动画/皮肤/插槽/骨骼列表
+                    node.animations = [];
+                    for (var aii = 0; aii < sd.animations.length; aii++) {
+                        node.animations.push({ name: sd.animations[aii].name, duration: sd.animations[aii].duration });
+                    }
+                    node.skins = [];
+                    for (var sii = 0; sii < sd.skins.length; sii++) {
+                        node.skins.push(sd.skins[sii].name);
+                    }
+                    node.slots = [];
+                    for (var slii = 0; slii < sd.slots.length; slii++) {
+                        node.slots.push(sd.slots[slii].name);
+                    }
+                    node.bones = [];
+                    for (var bii = 0; bii < sd.bones.length; bii++) {
+                        node.bones.push(sd.bones[bii].name);
+                    }
+
+                    // 创建 Skeleton
+                    var sk = new SP.Skeleton(sd);
+                    if (sd.defaultSkin) sk.setSkin(sd.defaultSkin);
+                    sk.setToSetupPose();
+                    if (atlas.pages.length > 0 && (atlas.pages[0].pma || atlas.pages[0].premultipliedAlpha)) {
+                        node.premultipliedAlpha = true;
+                    }
+                    node.skeleton = sk;
+
+                    // 创建 AnimationState
+                    var stateData = new SP.AnimationStateData(sd);
+                    var state = new SP.AnimationState(stateData);
+                    node.state = state;
+
+                    // 设置 WebGL 渲染
+                    if (SMTool._setupWebGLRenderer) {
+                        SMTool._setupWebGLRenderer(node, SP, WGL, atlas, imgs, useVer);
+                    }
+
+                    // 初始渲染一帧
+                    if (node.state && node.skeleton) {
+                        node.state.update(0);
+                        node.state.apply(node.skeleton);
+                        if (isNaN(node.skeleton.x)) node.skeleton.x = 0;
+                        if (isNaN(node.skeleton.y)) node.skeleton.y = 0;
+                        node.skeleton.updateWorldTransform(node._physParam);
+                        SMTool._centerSkeletonAfterAnim(node);
+                    }
+                } catch (e) {
+                    console.error('[Replace] Failed to parse spine data for node #' + nodeId + ':', e);
+                }
+
+                // === 恢复用户自定义数据 ===
+                node._customScale = savedScale;
+                node._debugOffsetX = savedOffX;
+                node._debugOffsetY = savedOffY;
+                node._boneTags = savedBoneTags;
+                node._boneNotes = savedBoneNotes;
+                node._boneScreenshots = savedBoneScreenshots;
+                node._boneShotRefs = savedBoneShotRefs;
+                node._boneFade = savedBoneFade;
+                node._skinTags = savedSkinTags;
+                node._skinNotes = savedSkinNotes;
+                node._skinScreenshots = savedSkinScreenshots;
+                node._skinFade = savedSkinFade;
+                node._slotTags = savedSlotTags;
+                node._slotNotes = savedSlotNotes;
+                node._slotScreenshots = savedSlotScreenshots;
+                node._slotFade = savedSlotFade;
+                node._stateDesc = savedStateDesc;
+                node._nodeImages = savedNodeImages;
+                node._nodeShotRefs = savedNodeShotRefs;
+                node._textContent = savedTextContent;
+                node._exitText = savedExitText;
+                node.loop = savedLoop;
+                node.premultipliedAlpha = savedPMA;
+                node.tracks = savedTracks;
+
+                // 恢复动画/皮肤（如果新文件中有同名动画/皮肤）
+                var animFound = false;
+                for (var aii2 = 0; aii2 < node.animations.length; aii2++) {
+                    if (node.animations[aii2].name === savedAnim) { animFound = true; break; }
+                }
+                node.currentAnim = animFound ? savedAnim : (node.animations.length > 0 ? node.animations[0].name : '');
+                if (!node.tracks || node.tracks.length === 0) {
+                    SMTool._initDefaultTracks(node);
+                }
+                if (!node.tracks[0].animName) {
+                    node.tracks[0].animName = node.currentAnim;
+                }
+                SMTool._applyTracksToState(node);
+
+                var skinFound = false;
+                for (var sii2 = 0; sii2 < node.skins.length; sii2++) {
+                    if (node.skins[sii2] === savedSkin) { skinFound = true; break; }
+                }
+                if (skinFound && node.skeleton && node.skeletonData) {
+                    for (var sii3 = 0; sii3 < node.skeletonData.skins.length; sii3++) {
+                        if (node.skeletonData.skins[sii3].name === savedSkin) {
+                            node.skeleton.setSkin(node.skeletonData.skins[sii3]);
+                            node.skeleton.setSlotsToSetupPose();
+                            node.currentSkin = savedSkin;
+                            break;
+                        }
+                    }
+                } else if (!skinFound && node.skeletonData && node.skeletonData.defaultSkin) {
+                    node.currentSkin = node.skeletonData.defaultSkin.name || '';
+                }
+
+                // 刷新 DOM
+                SMTool._updateEl(node);
+                SMTool._updatePos(node);
+            }
+
+            SMTool._updateSB();
+            SMTool._updateSel();
+            SMTool._updateStateRowColors();
+            SMTool._updateDuplicateHighlights();
+            SMTool._checkMissingStates();
+            SMTool._refreshAllTranslations();
+            SMData._forceRedraw = true;
+            document.getElementById('sbStatus').textContent = '✅ 已替换 ' + existingIds.length + ' 个节点的动画数据';
+            setTimeout(function () { document.getElementById('sbStatus').textContent = ''; }, 2500);
+        }
+
+        for (var pi2 = 0; pi2 < totalPages; pi2++) {
+            (function (idx) {
+                var img = new Image();
+                img.onload = function () {
+                    imgs[idx] = img;
+                    loadedCount++;
+                    if (loadedCount >= totalPages) onAllImagesLoaded();
+                };
+                img.onerror = function () {
+                    imgs[idx] = null;
+                    loadedCount++;
+                    if (loadedCount >= totalPages) onAllImagesLoaded();
+                };
+                img.src = pageDataUrls[idx].dataUrl;
+            })(pi2);
+        }
+    }).catch(function (err) {
+        console.error('[Replace] Failed:', err);
+    });
 };
 
 // ---- 创建节点（多动画自动拆分） ----
@@ -435,7 +865,6 @@ SMTool._onND = function (e, nid) {
         }
         if (!groups[base]) groups[base] = {};
         var ext = f.name.split('.').pop().toLowerCase();
-        // 多图集支持：PNG 文件用 _pngs 数组存储
         if (ext === 'png' || ext === 'jpg' || ext === 'jpeg') {
             if (!groups[base]._pngs) groups[base]._pngs = [];
             groups[base]._pngs.push(f);
@@ -472,13 +901,22 @@ SMTool._onND = function (e, nid) {
     if (!node) return;
 
     for (var k2 = 0; k2 < keys.length; k2++) {
-        var g = groups[keys[k2]];
+        var base2 = keys[k2];
+        var g = groups[base2];
         if (g._merged) continue;
-        SMTool._loadSpine(node, g).then(function () {
-            SMTool._updateEl(node);
-        }).catch(function (err) {
-            console.error('[NodeDrop] Failed:', err);
-        });
+
+        // ★ 重复检测：如果工程已有同名文件，弹出替换/新建对话框
+        var existingIds = SMTool._checkDuplicateSourceFile(base2);
+        if (existingIds.length > 0) {
+            SMTool._showDuplicateDialog(base2, g, e.clientX, e.clientY, existingIds);
+        } else {
+            // 无重复 → 直接替换当前节点的 Spine 数据
+            SMTool._loadSpine(node, g).then(function () {
+                SMTool._updateEl(node);
+            }).catch(function (err) {
+                console.error('[NodeDrop] Failed:', err);
+            });
+        }
         break;
     }
 };

@@ -2428,23 +2428,39 @@ SMTool._updatePos = function (node) {
     SMTool._updateFloatLabels();
 };
 
+// ★ 优化：rAF 批量合并，避免同一帧内多次全量刷新
+SMTool._allPosScheduled = false;
+SMTool._allPosQueued = false;
+
 SMTool._updateAllPos = function () {
-    var nodesIter = SMData.nodes.values();
-    var result = nodesIter.next();
-    while (!result.done) {
-        SMTool._updatePos(result.value);
-        result = nodesIter.next();
-    }
+    // ★ 如果已经安排了 rAF，标记排队即可
+    if (SMTool._allPosScheduled) { SMTool._allPosQueued = true; return; }
+    SMTool._allPosScheduled = true;
 
-    // 连线端口：画布缩小时放大，放大时缩小，但保持最小可见
-    var z = SMData.view.zoom;
-    var dotScale = Math.max(0.25, Math.min(2, 2 - z));
-    var dots = document.querySelectorAll('.spine-node .conn-dot');
-    for (var i = 0; i < dots.length; i++) {
-        dots[i].style.transform = 'scale(' + dotScale + ')';
-    }
+    requestAnimationFrame(function () {
+        SMTool._allPosScheduled = false;
+        SMTool._allPosQueued = false;
 
-    SMTool._updateFloatLabels();
+        var nodesIter = SMData.nodes.values();
+        var result = nodesIter.next();
+        while (!result.done) {
+            SMTool._updatePos(result.value);
+            result = nodesIter.next();
+        }
+
+        // 连线端口：画布缩小时放大，放大时缩小，但保持最小可见
+        var z = SMData.view.zoom;
+        var dotScale = Math.max(0.25, Math.min(2, 2 - z));
+        var dots = document.querySelectorAll('.spine-node .conn-dot');
+        for (var i = 0; i < dots.length; i++) {
+            dots[i].style.transform = 'scale(' + dotScale + ')';
+        }
+
+        SMTool._updateFloatLabels();
+
+        // ★ 如果排队期间又有新请求，再次调度
+        if (SMTool._allPosQueued) SMTool._updateAllPos();
+    });
 };
 
 // ---- 浮动大字标签（缩放 < 40% 时显示，固定字号不随缩放放大）----
