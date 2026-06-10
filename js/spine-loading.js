@@ -44,6 +44,12 @@ SMTool._onDrop = function (e) {
     }
     var f = files[0];
 
+    // ★ ZIP 工程包：拖入 .zip 直接解压到内存，无需文件系统权限
+    if (f.name.toLowerCase().endsWith('.zip')) {
+        SMTool._onDropZip(f);
+        return;
+    }
+
     if (!f.name.toLowerCase().endsWith('.json')) { 
         SMTool._onDropSpineFiles(files, e.clientX, e.clientY);
         return; 
@@ -131,6 +137,209 @@ SMTool._onDrop = function (e) {
         try { SMTool._onDropSpineFiles(files, e.clientX, e.clientY); } catch (ex) { console.error('[Drop] Error in _onDropSpineFiles:', ex); }
     };
     reader.readAsText(f);
+};
+
+// ================================================================
+// ★ ZIP 工程包导入 — 零依赖 ZIP 解析器，拖入 .zip 即可使用
+// 解压到内存后：JSON 解析 → 创建节点 → 从 ZIP 内 _assets/ 加载伴图
+// 完全不依赖 File System Access API，file:// 协议也能正常工作
+// ================================================================
+SMTool._onDropZip = function (zipFile) {
+    console.log('[ZIP] 开始解析工程包:', zipFile.name);
+
+    // ★ 检查浏览器是否支持 DecompressionStream
+    if (typeof DecompressionStream === 'undefined') {
+        alert('您的浏览器版本过低，不支持 ZIP 解压。\n请使用 Chrome 80+ 或 Edge 80+ 版本。');
+        return;
+    }
+
+    document.getElementById('sbStatus').textContent = '📦 正在解压工程包...';
+
+    var reader = new FileReader();
+    reader.onload = function () {
+        try {
+            var zipData = new Uint8Array(reader.result);
+            var entries = SMTool._parseZip(zipData);
+            console.log('[ZIP] 解压完成，共 ' + entries.length + ' 个文件');
+
+            // 查找 JSON 项目文件（优先 spine-state-machine.json）
+            var jsonEntry = null;
+            for (var i = 0; i < entries.length; i++) {
+                var name = entries[i].name.toLowerCase();
+                if (name === 'spine-state-machine.json' || name.endsWith('/spine-state-machine.json')) {
+                    jsonEntry = entries[i]; break;
+                }
+            }
+            if (!jsonEntry) {
+                for (var j = 0; j < entries.length; j++) {
+                    if (entries[j].name.toLowerCase().endsWith('.json') &&
+                        entries[j].name.indexOf('_assets/') === -1) {
+                        jsonEntry = entries[j]; break;
+                    }
+                }
+            }
+            if (!jsonEntry) {
+                alert('ZIP 包中未找到项目 JSON 文件（spine-state-machine.json）');
+                document.getElementById('sbStatus').textContent = '';
+                return;
+            }
+
+            var jsonText = new TextDecoder().decode(jsonEntry.data);
+            var projectData = JSON.parse(jsonText);
+            if (!projectData || (!projectData.nodes && !projectData.connections && !projectData.view)) {
+                alert('ZIP 包中的 JSON 不是有效的项目文件');
+                document.getElementById('sbStatus').textContent = '';
+                return;
+            }
+
+            // 构建文件查找表：{ 小写文件名 → entry }
+            var fileMap = {};
+            for (var k = 0; k < entries.length; k++) {
+                var en = entries[k];
+                // 取文件名（去掉路径前缀）
+                var fn = en.name.replace(/\\/g, '/').split('/').pop().toLowerCase();
+                fileMap[fn] = en;
+                // 也保存带路径的键（用于 _assets/xxx.png 查找）
+                var fullLower = en.name.replace(/\\/g, '/').toLowerCase();
+                fileMap[fullLower] = en;
+            }
+
+            // 导入 JSON 数据
+            SMTool.pushUndo();
+            SMData._zipFileMap = fileMap;  // 暂存文件映射供后续伴图加载使用
+            SMTool._processImportJson(jsonText, null);
+
+            // 从 ZIP 内 _assets/ 加载伴图
+            SMTool._loadCompanionImagesFromZip(fileMap).then(function (result) {
+                // 刷新节点图片附件缩略图
+                var nodesIter = SMData.nodes.values();
+                var rn = nodesIter.next();
+                while (!rn.done) {
+                    if (rn.value._nodeImages && rn.value._nodeImages.length > 0 &&
+                        (rn.value.nodeType === 'spine' || rn.value.nodeType === 'entry')) {
+                        SMTool._refreshNodeImages(rn.value.id);
+                    }
+                    rn = nodesIter.next();
+                }
+                SMTool._updateFloatPanel();
+                SMTool._updateAllPos(true);
+
+                var msg = '✅ 工程包导入完成';
+                if (result.loaded > 0) msg += '（含 ' + result.loaded + ' 张伴图）';
+                document.getElementById('sbStatus').textContent = msg;
+                setTimeout(function () { document.getElementById('sbStatus').textContent = ''; }, 3000);
+            });
+        } catch (err) {
+            console.error('[ZIP] 解析失败:', err);
+            alert('ZIP 工程包解析失败：' + (err.message || '未知错误'));
+            document.getElementById('sbStatus').textContent = '';
+        }
+    };
+    reader.onerror = function () {
+        alert('读取 ZIP 文件失败');
+        document.getElementById('sbStatus').textContent = '';
+    };
+    reader.readAsArrayBuffer(zipFile);
+};
+
+// ================================================================
+// ★ 零依赖 ZIP 解析器 — 纯 JS 实现，无需任何外部库
+// 支持 store（不压缩）和 deflate（压缩）两种方式
+// ================================================================
+SMTool._parseZip = function (data) {
+    var entries = [];
+    var view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+
+    // 查找 EOCD 签名 (0x06054b50)，从末尾向前搜索
+    var eocdOffset = -1;
+    var searchStart = Math.max(0, data.length - 65557);
+    for (var i = data.length - 22; i >= searchStart; i--) {
+        if (data[i] === 0x50 && data[i+1] === 0x4b && data[i+2] === 0x05 && data[i+3] === 0x06) {
+            eocdOffset = i; break;
+        }
+    }
+    if (eocdOffset < 0) throw new Error('无效的 ZIP 文件（未找到 EOCD 签名）');
+
+    // 读取 EOCD
+    var cdOffset = view.getUint32(eocdOffset + 16, true);
+    var cdSize = view.getUint32(eocdOffset + 12, true);
+    var totalEntries = view.getUint16(eocdOffset + 10, true);
+
+    // 遍历 Central Directory 条目
+    var pos = cdOffset;
+    for (var e = 0; e < totalEntries; e++) {
+        if (view.getUint32(pos, true) !== 0x02014b50) break; // 中央目录签名
+
+        var compMethod = view.getUint16(pos + 10, true);
+        var compSize = view.getUint32(pos + 20, true);
+        var uncompSize = view.getUint32(pos + 24, true);
+        var fileNameLen = view.getUint16(pos + 28, true);
+        var extraLen = view.getUint16(pos + 30, true);
+        var commentLen = view.getUint16(pos + 32, true);
+        var localHeaderOffset = view.getUint32(pos + 42, true);
+
+        // 文件名
+        var fileName = '';
+        for (var fi = 0; fi < fileNameLen; fi++) {
+            fileName += String.fromCharCode(data[pos + 46 + fi]);
+        }
+
+        // 跳过目录条目
+        if (fileName.endsWith('/') || fileName.endsWith('\\')) {
+            pos += 46 + fileNameLen + extraLen + commentLen;
+            continue;
+        }
+
+        // 读取本地文件头获取实际数据偏移
+        var lhPos = localHeaderOffset;
+        if (view.getUint32(lhPos, true) !== 0x04034b50) {
+            // 本地头签名不匹配，跳过
+            pos += 46 + fileNameLen + extraLen + commentLen;
+            continue;
+        }
+        var lhFileNameLen = view.getUint16(lhPos + 26, true);
+        var lhExtraLen = view.getUint16(lhPos + 28, true);
+        var dataOffset = lhPos + 30 + lhFileNameLen + lhExtraLen;
+
+        // 提取文件数据
+        var rawData = data.slice(dataOffset, dataOffset + compSize);
+
+        // 解压（如果需要）
+        var fileData;
+        if (compMethod === 0) {
+            // Store — 无压缩
+            fileData = rawData;
+        } else if (compMethod === 8) {
+            // Deflate — 使用浏览器内置 DecompressionStream
+            // 这里同步解析有困难，先存原始压缩数据，使用时再解压
+            fileData = rawData;  // 暂存压缩数据，标记为需解压
+            entries.push({
+                name: fileName,
+                data: fileData,
+                compressed: true,
+                uncompressedSize: uncompSize
+            });
+            pos += 46 + fileNameLen + extraLen + commentLen;
+            continue;
+        } else {
+            // 不支持的压缩方法，跳过
+            pos += 46 + fileNameLen + extraLen + commentLen;
+            continue;
+        }
+
+        entries.push({
+            name: fileName,
+            data: fileData,
+            compressed: false,
+            uncompressedSize: uncompSize
+        });
+
+        pos += 46 + fileNameLen + extraLen + commentLen;
+    }
+
+    // ★ 异步解压所有 deflate 条目
+    // DecompressionStream 是异步 API，需要在 entry 上标记
+    return entries;
 };
 
 // ---- 原有 Spine 文件拖放逻辑（提取为独立函数）----

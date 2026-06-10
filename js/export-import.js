@@ -293,13 +293,16 @@ SMTool._loadCompanionImages = function (dirHandle) {
             })(fn, refs);
         }
 
-        return Promise.allSettled ? Promise.allSettled(promises).then(function () {
-            return { loaded: loadedCount, missing: missingList, total: totalRefs };
-        }) : Promise.all(promises).then(function () {
-            return { loaded: loadedCount, missing: missingList, total: totalRefs };
-        }).catch(function () {
-            return { loaded: loadedCount, missing: missingList, total: totalRefs };
-        });
+        return (typeof Promise.allSettled === 'function'
+            ? Promise.allSettled(promises).then(function () {
+                return { loaded: loadedCount, missing: missingList, total: totalRefs };
+            })
+            : Promise.all(promises).then(function () {
+                return { loaded: loadedCount, missing: missingList, total: totalRefs };
+            }).catch(function () {
+                return { loaded: loadedCount, missing: missingList, total: totalRefs };
+            })
+        );
     }).catch(function () {
         // ★ _assets 目录不存在 → 所有文件都缺失
         return { loaded: 0, missing: fileNames.slice(), total: totalRefs };
@@ -571,17 +574,193 @@ SMTool._loadCompanionImagesFromPath = function (dirPath) {
         })(fileNames[f], fileRefs[fileNames[f]]);
     }
 
-    var settle = Promise.allSettled || function (arr) {
-        return Promise.all(arr.map(function (p) {
-            return p.then(function (v) { return { status: 'fulfilled', value: v }; })
-                    .catch(function (e) { return { status: 'rejected', reason: e }; });
-        }));
-    };
+    // ★ 安全包装：确保 Promise.allSettled 不丢失 this 上下文
+    var settle = (typeof Promise.allSettled === 'function')
+        ? function (arr) { return Promise.allSettled(arr); }
+        : function (arr) {
+            return Promise.all(arr.map(function (p) {
+                return p.then(function (v) { return { status: 'fulfilled', value: v }; })
+                        .catch(function (e) { return { status: 'rejected', reason: e }; });
+            }));
+        };
     return settle(fetches).then(function () {
         console.log('[Path] 加载完毕: loaded=' + loadedCount + ' missing=' + missingList.length);
         return { loaded: loadedCount, missing: missingList, total: totalRefs };
     });
 };
+
+// ================================================================
+// ★ 从 ZIP 内 _assets/ 加载伴图 — 零文件系统依赖
+// fileMap: { 小写文件名 → { name, data, compressed, uncompressedSize } }
+// ================================================================
+SMTool._inflateZipEntry = function (entry) {
+    if (!entry.compressed) return Promise.resolve(entry.data);
+    // DecompressionStream 需要 ReadableStream → 创建 Blob → stream
+    var blob = new Blob([entry.data]);
+    var ds = new DecompressionStream('deflate-raw');
+    var streamIn = blob.stream();
+    var streamOut = streamIn.pipeThrough(ds);
+    return new Response(streamOut).arrayBuffer().then(function (buf) {
+        return new Uint8Array(buf);
+    });
+};
+
+SMTool._loadCompanionImagesFromZip = function (fileMap) {
+    // 收集引用
+    var fileRefs = {};
+    var nodesIter = SMData.nodes.values();
+    var result = nodesIter.next();
+    while (!result.done) {
+        var n = result.value;
+        if (n._boneShotRefs && n.nodeType === 'spine') {
+            var boneNames = Object.keys(n._boneShotRefs);
+            for (var b = 0; b < boneNames.length; b++) {
+                var bn = boneNames[b];
+                var refList = n._boneShotRefs[bn];
+                var arr = Array.isArray(refList) ? refList : (refList ? [refList] : []);
+                for (var r = 0; r < arr.length; r++) {
+                    var refPath = arr[r];
+                    if (!refPath) continue;
+                    var key = refPath.replace(/\\/g, '/').toLowerCase();
+                    if (!fileRefs[key]) fileRefs[key] = [];
+                    fileRefs[key].push({ node: n, boneName: bn, idx: r, type: 'bone' });
+                }
+            }
+        }
+        if (n._nodeShotRefs && n._nodeShotRefs.length > 0 && (n.nodeType === 'spine' || n.nodeType === 'entry')) {
+            for (var ni = 0; ni < n._nodeShotRefs.length; ni++) {
+                var rp = n._nodeShotRefs[ni];
+                if (!rp) continue;
+                var key = rp.replace(/\\/g, '/').toLowerCase();
+                if (!fileRefs[key]) fileRefs[key] = [];
+                fileRefs[key].push({ node: n, idx: ni, type: 'nodeImage' });
+            }
+        }
+        result = nodesIter.next();
+    }
+
+    var refKeys = Object.keys(fileRefs);
+    if (refKeys.length === 0) return Promise.resolve({ loaded: 0, missing: [], total: 0 });
+
+    // 清空旧 shotId
+    var clearIter = SMData.nodes.values();
+    var cr = clearIter.next();
+    while (!cr.done) {
+        var cn = cr.value;
+        if (cn._nodeImages && cn._nodeImages.length > 0 && (cn.nodeType === 'spine' || cn.nodeType === 'entry')) {
+            for (var ci = 0; ci < cn._nodeImages.length; ci++) {
+                if (typeof cn._nodeImages[ci] === 'number') cn._nodeImages[ci] = null;
+            }
+        }
+        cr = clearIter.next();
+    }
+
+    var loadedCount = 0;
+    var missingList = [];
+    var promises = [];
+
+    for (var k = 0; k < refKeys.length; k++) {
+        (function (refKey, refArr) {
+            // 在 fileMap 中查找匹配的文件
+            var entry = fileMap[refKey];  // 精确匹配
+            if (!entry) {
+                // 尝试用文件名匹配（忽略路径前缀）
+                var fnOnly = refKey.split('/').pop();
+                entry = fileMap[fnOnly];
+            }
+            if (!entry) {
+                // 也尝试带 _assets/ 前缀
+                var withAssets = ('_assets/' + refKey.split('/').pop()).toLowerCase();
+                entry = fileMap[withAssets];
+            }
+
+            if (!entry) {
+                missingList.push(refKey);
+                for (var rj = 0; rj < refArr.length; rj++) {
+                    var ref2 = refArr[rj];
+                    if (ref2.type === 'nodeImage' && ref2.node._nodeImages) {
+                        ref2.node._nodeImages[ref2.idx] = null;
+                    }
+                }
+                return;
+            }
+
+            var p = SMTool._inflateZipEntry(entry).then(function (decompressed) {
+                // 将 Uint8Array 转为 Blob → dataURL
+                var mime = 'image/png';
+                var lowerName = entry.name.toLowerCase();
+                if (lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg')) mime = 'image/jpeg';
+                else if (lowerName.endsWith('.webp')) mime = 'image/webp';
+                else if (lowerName.endsWith('.gif')) mime = 'image/gif';
+
+                var blob = new Blob([decompressed], { type: mime });
+                return new Promise(function (resolve) {
+                    var fr = new FileReader();
+                    fr.onload = function () {
+                        var dataUrl = fr.result;
+                        // ★ 保持原始格式，不转为 JPEG（保留透明通道等）
+                        var newShotId = SMData._shotRegister(dataUrl);
+                        // 记录原始文件名
+                        var se = SMData._shotStore[newShotId];
+                        if (se) {
+                            se._fileName = entry.name.replace(/\\/g, '/').split('/').pop();
+                        }
+                        loadedCount++;
+                        for (var ri = 0; ri < refArr.length; ri++) {
+                            var ref = refArr[ri];
+                            if (ref.type === 'nodeImage') {
+                                if (!ref.node._nodeImages) ref.node._nodeImages = [];
+                                ref.node._nodeImages[ref.idx] = newShotId;
+                            } else {
+                                if (!ref.node._boneScreenshots) ref.node._boneScreenshots = {};
+                                if (!ref.node._boneScreenshots[ref.boneName]) ref.node._boneScreenshots[ref.boneName] = [];
+                                if (!Array.isArray(ref.node._boneScreenshots[ref.boneName])) ref.node._boneScreenshots[ref.boneName] = [ref.node._boneScreenshots[ref.boneName]];
+                                ref.node._boneScreenshots[ref.boneName][ref.idx] = newShotId;
+                            }
+                            if (ri > 0) SMData._shotAddRef(newShotId);
+                        }
+                        resolve();
+                    };
+                    fr.onerror = function () {
+                        missingList.push(refKey);
+                        for (var rj2 = 0; rj2 < refArr.length; rj2++) {
+                            var ref3 = refArr[rj2];
+                            if (ref3.type === 'nodeImage' && ref3.node._nodeImages) {
+                                ref3.node._nodeImages[ref3.idx] = null;
+                            }
+                        }
+                        resolve();
+                    };
+                    fr.readAsDataURL(blob);
+                });
+            }).catch(function () {
+                missingList.push(refKey);
+                for (var rj3 = 0; rj3 < refArr.length; rj3++) {
+                    var ref4 = refArr[rj3];
+                    if (ref4.type === 'nodeImage' && ref4.node._nodeImages) {
+                        ref4.node._nodeImages[ref4.idx] = null;
+                    }
+                }
+            });
+            promises.push(p);
+        })(refKeys[k], fileRefs[refKeys[k]]);
+    }
+
+    // ★ 安全包装：确保 Promise.allSettled 不丢失 this 上下文
+    var settle = (typeof Promise.allSettled === 'function')
+        ? function (arr) { return Promise.allSettled(arr); }
+        : function (arr) {
+            return Promise.all(arr.map(function (p) {
+                return p.then(function (v) { return { status: 'fulfilled', value: v }; })
+                        .catch(function (e) { return { status: 'rejected', reason: e }; });
+            }));
+        };
+    return settle(promises).then(function () {
+        console.log('[ZIP] 伴图加载完毕: loaded=' + loadedCount + ' missing=' + missingList.length);
+        return { loaded: loadedCount, missing: missingList, total: refKeys.length };
+    });
+};
+
 SMTool._serializeData = function () {
     var data = {
         nodes: [],
@@ -715,6 +894,209 @@ SMTool._showSaveToast = function (msg) {
     toast._hideTimer = setTimeout(function () {
         toast.classList.remove('show');
     }, 2500);
+};
+
+// ================================================================
+// ★ ZIP 工程包导出 — 将 JSON + _assets/ 图片打包为 .zip 下载
+// 零依赖：手动构建 ZIP 格式（store 模式，无压缩）
+// ================================================================
+SMTool.exportAsZip = function () {
+    if (SMData.nodes.size === 0) { alert('画布上无节点，请先添加 Spine 动画'); return; }
+    document.getElementById('sbStatus').textContent = '📦 正在打包工程...';
+
+    // ★ 第一步：收集所有图片并确定 ZIP 内文件名
+    // 构建 shotId → zipFileName 映射
+    var shotFileName = {};    // { shotId: '_assets/xxx.png' }
+    var imageData = {};       // { shotId: { dataUrl, bytes } }
+    var usedBaseNames = {};
+    var nodesIter = SMData.nodes.values();
+    var rn = nodesIter.next();
+    while (!rn.done) {
+        var node = rn.value;
+        var collectShots = function (shotArr) {
+            var arr = Array.isArray(shotArr) ? shotArr : (shotArr ? [shotArr] : []);
+            for (var si = 0; si < arr.length; si++) {
+                var sid = arr[si];
+                if (typeof sid !== 'number') continue;
+                if (imageData[sid]) continue;  // 已处理
+                var se = SMData._shotStore[sid];
+                if (!se || !se.dataUrl || se.dataUrl.indexOf('data:image/') !== 0) continue;
+                // 确定文件名
+                var baseName = (se._fileName && se._fileName.replace(/\.[^.]+$/, '')) || ('img_' + sid);
+                var mimeMatch = se.dataUrl.match(/^data:(image\/\w+);/);
+                var ext = 'png';
+                if (mimeMatch) { ext = mimeMatch[1].split('/')[1]; if (ext === 'jpeg') ext = 'jpg'; }
+                var zipName = '_assets/' + baseName + '.' + ext;
+                // 去重
+                if (usedBaseNames[zipName]) {
+                    var c = 2;
+                    while (usedBaseNames['_assets/' + baseName + '_' + c + '.' + ext]) c++;
+                    zipName = '_assets/' + baseName + '_' + c + '.' + ext;
+                }
+                usedBaseNames[zipName] = true;
+                shotFileName[sid] = zipName;
+                // 解码 base64
+                var base64 = se.dataUrl.split(',')[1];
+                var binaryStr = atob(base64);
+                var bytes = new Uint8Array(binaryStr.length);
+                for (var bi = 0; bi < binaryStr.length; bi++) bytes[bi] = binaryStr.charCodeAt(bi);
+                imageData[sid] = { dataUrl: se.dataUrl, bytes: bytes, zipName: zipName };
+            }
+        };
+        // 收集 _nodeImages
+        if (node._nodeImages && node._nodeImages.length > 0) collectShots(node._nodeImages);
+        // 收集 _boneScreenshots
+        if (node._boneScreenshots && node.nodeType === 'spine') {
+            var bns = Object.keys(node._boneScreenshots);
+            for (var bi2 = 0; bi2 < bns.length; bi2++) collectShots(node._boneScreenshots[bns[bi2]]);
+        }
+        rn = nodesIter.next();
+    }
+
+    // ★ 第二步：重建 _nodeShotRefs / _boneShotRefs，使 JSON 引用与 ZIP 内路径一致
+    var nodesIter2 = SMData.nodes.values();
+    var rn2 = nodesIter2.next();
+    while (!rn2.done) {
+        var node2 = rn2.value;
+        // 重建 _nodeShotRefs
+        if (node2._nodeImages && node2._nodeImages.length > 0 &&
+            (node2.nodeType === 'spine' || node2.nodeType === 'entry')) {
+            if (!node2._nodeShotRefs) node2._nodeShotRefs = [];
+            for (var ni = 0; ni < node2._nodeImages.length; ni++) {
+                var sid = node2._nodeImages[ni];
+                node2._nodeShotRefs[ni] = (typeof sid === 'number' && shotFileName[sid]) ? shotFileName[sid] : '';
+            }
+        }
+        // 重建 _boneShotRefs
+        if (node2._boneScreenshots && node2.nodeType === 'spine') {
+            if (!node2._boneShotRefs) node2._boneShotRefs = {};
+            var bns2 = Object.keys(node2._boneScreenshots);
+            for (var bj = 0; bj < bns2.length; bj++) {
+                var bn2 = bns2[bj];
+                var shots2 = node2._boneScreenshots[bn2];
+                var arr2 = Array.isArray(shots2) ? shots2 : (shots2 ? [shots2] : []);
+                if (!node2._boneShotRefs[bn2]) node2._boneShotRefs[bn2] = [];
+                for (var sk = 0; sk < arr2.length; sk++) {
+                    var sid2 = arr2[sk];
+                    node2._boneShotRefs[bn2][sk] = (typeof sid2 === 'number' && shotFileName[sid2]) ? shotFileName[sid2] : '';
+                }
+            }
+        }
+        rn2 = nodesIter2.next();
+    }
+
+    // ★ 第三步：序列化 JSON（现在 _shotRefs 指向正确的 ZIP 内路径）
+    var jsonStr = SMTool._serializeData();
+
+    // ★ 第四步：构建 ZIP
+    var zipParts = [];
+    var centralDir = [];
+    var centralOffset = 0;
+
+    function addFile(name, dataBytes) {
+        var nameBytes = new TextEncoder().encode(name);
+        var localHeader = new ArrayBuffer(30 + nameBytes.length);
+        var lhView = new DataView(localHeader);
+        lhView.setUint32(0, 0x04034b50, true);
+        lhView.setUint16(4, 20, true);
+        lhView.setUint16(6, 0, true);
+        lhView.setUint16(8, 0, true);  // store
+        lhView.setUint32(10, (26 << 25) | (6 << 21) | (10 << 16) | (12 << 11), true);
+        lhView.setUint32(14, 0, true);
+        lhView.setUint32(18, dataBytes.length, true);
+        lhView.setUint32(22, dataBytes.length, true);
+        lhView.setUint16(26, nameBytes.length, true);
+        lhView.setUint16(28, 0, true);
+        var nameArr = new Uint8Array(localHeader, 30);
+        nameArr.set(nameBytes);
+        zipParts.push(new Uint8Array(localHeader));
+        zipParts.push(dataBytes);
+        centralDir.push({ offset: centralOffset, name: name, nameBytes: nameBytes, size: dataBytes.length });
+        centralOffset += localHeader.byteLength + dataBytes.length;
+    }
+
+    // 添加 JSON
+    var jsonBytes = new TextEncoder().encode(jsonStr);
+    addFile('spine-state-machine.json', jsonBytes);
+
+    // 添加图片
+    var imgSids = Object.keys(imageData);
+    for (var ii = 0; ii < imgSids.length; ii++) {
+        var img = imageData[imgSids[ii]];
+        addFile(img.zipName, img.bytes);
+    }
+
+    // 3. 写 Central Directory
+    var cdStart = centralOffset;
+    var cdBytesTotal = 0;
+    var cdParts = [];
+    for (var ci = 0; ci < centralDir.length; ci++) {
+        var cd = centralDir[ci];
+        var cdHeader = new ArrayBuffer(46 + cd.nameBytes.length);
+        var cdView = new DataView(cdHeader);
+        cdView.setUint32(0, 0x02014b50, true);         // 中央目录签名
+        cdView.setUint16(4, 20, true);                  // 创建版本
+        cdView.setUint16(6, 20, true);                  // 提取版本
+        cdView.setUint16(8, 0, true);                   // 标志
+        cdView.setUint16(10, 0, true);                  // 压缩方法
+        cdView.setUint32(12, 0, true);                  // 修改时间
+        cdView.setUint32(16, 0, true);                  // CRC32
+        cdView.setUint32(20, cd.size, true);            // 压缩大小
+        cdView.setUint32(24, cd.size, true);            // 原始大小
+        cdView.setUint16(28, cd.nameBytes.length, true);
+        cdView.setUint16(30, 0, true);                  // 额外字段
+        cdView.setUint16(32, 0, true);                  // 文件注释
+        cdView.setUint16(34, 0, true);                  // 磁盘号
+        cdView.setUint16(36, 0, true);                  // 内部属性
+        cdView.setUint32(38, 0, true);                  // 外部属性
+        cdView.setUint32(42, cd.offset, true);          // 本地头偏移
+        var cdNameArr = new Uint8Array(cdHeader, 46);
+        cdNameArr.set(cd.nameBytes);
+        cdParts.push(new Uint8Array(cdHeader));
+        cdBytesTotal += cdHeader.byteLength;
+    }
+
+    // 4. EOCD
+    var eocd = new ArrayBuffer(22);
+    var eocdView = new DataView(eocd);
+    eocdView.setUint32(0, 0x06054b50, true);
+    eocdView.setUint16(4, 0, true);
+    eocdView.setUint16(6, 0, true);
+    eocdView.setUint16(8, centralDir.length, true);
+    eocdView.setUint16(10, centralDir.length, true);
+    eocdView.setUint32(12, cdBytesTotal, true);
+    eocdView.setUint32(16, cdStart, true);
+    eocdView.setUint16(20, 0, true);
+
+    // 组装所有部分
+    var totalSize = 0;
+    for (var pi = 0; pi < zipParts.length; pi++) totalSize += zipParts[pi].length;
+    for (var pj = 0; pj < cdParts.length; pj++) totalSize += cdParts[pj].length;
+    totalSize += 22;
+
+    var finalZip = new Uint8Array(totalSize);
+    var offset = 0;
+    for (var pk = 0; pk < zipParts.length; pk++) {
+        finalZip.set(zipParts[pk], offset);
+        offset += zipParts[pk].length;
+    }
+    for (var pl = 0; pl < cdParts.length; pl++) {
+        finalZip.set(cdParts[pl], offset);
+        offset += cdParts[pl].length;
+    }
+    finalZip.set(new Uint8Array(eocd), offset);
+
+    // 下载
+    var blob = new Blob([finalZip], { type: 'application/zip' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'spine-state-machine.zip';
+    a.click();
+    URL.revokeObjectURL(url);
+
+    document.getElementById('sbStatus').textContent = '✅ 已导出工程包（含 ' + imgSids.length + ' 张图片）';
+    setTimeout(function () { document.getElementById('sbStatus').textContent = ''; }, 3000);
 };
 
 // ---- 静默覆写 JSON 到指定文件句柄（用于拖入文件的直接覆写）----
@@ -1119,7 +1501,13 @@ SMTool._retryLoadMissingImages = function () {
 
 // ---- 导入项目（★ 使用目录选择器：一次选目录，JSON + _assets 截图全部自动加载）----
 SMTool.importData = function () {
-    if (window.showDirectoryPicker) {
+    // ★ file:// 协议下 showDirectoryPicker 不可用，降级为传统文件选择
+    var useDirPicker = false;
+    try {
+        useDirPicker = (window.showDirectoryPicker && window.location.protocol !== 'file:');
+    } catch (e) { useDirPicker = false; }
+
+    if (useDirPicker) {
         // ★ 一步：选择项目目录（JSON 和 _assets/ 在同一目录下）
         window.showDirectoryPicker({ mode: 'readwrite' }).then(function (dirHandle) {
             SMData._assetsDirHandle = dirHandle;
@@ -1468,7 +1856,7 @@ SMTool._importDataLegacy = function () {
                 SMTool._updateFloatPanel();
                 var msg = '导入完成';
                 if (loadResult && loadResult.loaded > 0) msg += '（含 ' + loadResult.loaded + ' 张伴图）';
-                else if (loadResult && loadResult.total > 0) msg += '（伴图未加载，请将 _assets/ 文件夹放在 JSON 同目录下）';
+                else if (loadResult && loadResult.total > 0) msg += '（⚠️ 伴图缺失 — 建议使用 📦导出ZIP + 拖入.zip 方式跨电脑传输）';
                 SMTool._showSaveToast(msg);
             }).catch(function (err) {
                 console.error('[Import] 传统导入失败:', err);

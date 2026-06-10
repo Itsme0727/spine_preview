@@ -1842,7 +1842,7 @@ SMTool.init = function () {
     SMTool._updateSB();
 
     console.log('🎬 Spine Animation State Machine ready!');
-    console.log('  拖拽 spine 文件三件套 (.json/.skel + .atlas + .png) 到画布上');
+    console.log('  拖拽 .zip 工程包 或 spine 文件到画布上');
     console.log('  Alt+拖拽=平移 | 滚轮=缩放 | 右键=平移');
 
     // ================================================================

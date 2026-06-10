@@ -7,7 +7,7 @@
     <meta http-equiv="Expires" content="0" />
     <title>Spine Animation State Machine</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link rel="stylesheet" href="css/styles.css?v=20260610" />
+    <link rel="stylesheet" href="css/styles.css?v=20260610b" />
 </head>
 <body>
     <!-- ===== 画布层 ===== -->
@@ -39,6 +39,7 @@
         <button onclick="SMTool.exportData()">💾 导出</button>
         <button onclick="SMTool.importData()">📥 导入</button>
         <button onclick="SMTool.exportAIJson()" style="background:#10b981;color:#fff">🤖 导出AI</button>
+        <button onclick="SMTool.exportAsZip()" style="background:#f59e0b;color:#000;font-weight:700">📦 导出ZIP</button>
         <span class="sep"></span>
         <button id="btnTestLayer" onclick="SMTool._testLayerPreviewDirect()" style="background:#7c5ce7;color:#fff">🧪 测试层级叠加</button>
     </div>
@@ -86,7 +87,7 @@
             <div class="icon">📂</div>
             拖拽 Spine 文件到此处
             <br /><span class="sub">需要 .json/.skel + .atlas + .png</span>
-            <br /><span class="sub" style="margin-top:6px;color:#ffd966">也可拖入导出的 .json 项目文件快速导入</span>
+            <br /><span class="sub" style="margin-top:6px;color:#ffd966">也可拖入导出的 .json 或 📦 .zip 项目文件</span>
         </div>
     </div>
 
@@ -227,17 +228,17 @@
          9. export-import.js — 项目导出/导入
         10. app.js — 主入口（汇总 + 初始化）
          ================================================================ -->
-    <script src="js/lib/spine-loader.js?v=20260610"></script>
-    <script src="js/data-model.js?v=20260610"></script>
-    <script src="js/spine-loading.js?v=20260610"></script>
-    <script src="js/spine-rendering.js?v=20260610"></script>
-    <script src="js/grid-connections.js?v=20260610"></script>
-    <script src="js/minimap.js?v=20260610"></script>
-    <script src="js/ui-dom.js?v=20260610"></script>
-    <script src="js/interaction.js?v=20260610"></script>
-    <script src="js/export-import.js?v=20260610"></script>
-    <script src="js/export-ai-json.js?v=20260610"></script>
-    <script src="js/layer-node-v2.js?v=20260610"></script>
-    <script src="js/app.js?v=20260610"></script>
+    <script src="js/lib/spine-loader.js?v=20260610b"></script>
+    <script src="js/data-model.js?v=20260610b"></script>
+    <script src="js/spine-loading.js?v=20260610b"></script>
+    <script src="js/spine-rendering.js?v=20260610b"></script>
+    <script src="js/grid-connections.js?v=20260610b"></script>
+    <script src="js/minimap.js?v=20260610b"></script>
+    <script src="js/ui-dom.js?v=20260610b"></script>
+    <script src="js/interaction.js?v=20260610b"></script>
+    <script src="js/export-import.js?v=20260610b"></script>
+    <script src="js/export-ai-json.js?v=20260610b"></script>
+    <script src="js/layer-node-v2.js?v=20260610b"></script>
+    <script src="js/app.js?v=20260610b"></script>
 </body>
 </html>
