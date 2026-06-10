@@ -192,10 +192,20 @@ SMTool._createEl = function (node) {
 
     SMTool.nodesLayer.appendChild(el);
 
-    // ★ 初始化：已有状态描述内容时标黄
+    // ★ 初始化：已有状态描述内容时标黄 + 撑开高度
+    // 使用 setTimeout(0) 延迟到浏览器完成布局后再读 scrollHeight，
+    // 否则 appendChild 后同步读取永远是 0，高度被 min-height:96px 锁死
     if (node._stateDesc && node._stateDesc.trim().length > 0) {
         var taInit = el.querySelector('.state-desc');
-        if (taInit) taInit.classList.add('has-content');
+        if (taInit) {
+            taInit.classList.add('has-content');
+            (function (ta) {
+                setTimeout(function () {
+                    ta.style.height = '0px';
+                    ta.style.height = ta.scrollHeight + 'px';
+                }, 0);
+            })(taInit);
+        }
     }
     // ★ 初始化：已有节点附件图片时渲染缩略图
     if (node._nodeImages && node._nodeImages.length > 0) {
@@ -584,10 +594,14 @@ SMTool._updateStateDesc = function (nid, value) {
     if (node) node._stateDesc = value;
     var ta = document.querySelector('#sn-' + nid + ' .state-desc');
     if (ta) {
-        ta.style.height = 'auto'; ta.style.height = Math.max(32, ta.scrollHeight) + 'px';
+        // ★ 自动撑开：先缩到 0 触发 scrollHeight 重算，再设为目标高度，CSS min-height:96px 兜底
+        ta.style.height = '0px';
+        ta.style.height = ta.scrollHeight + 'px';
         // ★ 有内容时文字变黄色
         if (value && value.trim().length > 0) ta.classList.add('has-content');
         else ta.classList.remove('has-content');
+        // ★ textarea 高度变化后刷新节点位置，确保连线端点跟随
+        if (node) SMTool._updatePos(node);
     }
 };
 
@@ -2405,6 +2419,26 @@ SMTool._updateEl = function (node) {
     if (indEl) {
         indEl.outerHTML = SMTool._buildNodeIndicatorsHtml(node);
     }
+
+    // ★ 同步状态描述框内容 + 自动撑开高度（替换文件后 _createEl 不会重新执行）
+    var stateDescTa = el.querySelector('.state-desc');
+    if (stateDescTa) {
+        var curVal = stateDescTa.value;
+        var newVal = node._stateDesc || '';
+        if (curVal !== newVal) stateDescTa.value = newVal;
+        if (newVal.trim().length > 0) {
+            stateDescTa.classList.add('has-content');
+        } else {
+            stateDescTa.classList.remove('has-content');
+        }
+        // 延迟撑开（等浏览器完成文本布局）
+        (function (ta) {
+            setTimeout(function () {
+                ta.style.height = '0px';
+                ta.style.height = ta.scrollHeight + 'px';
+            }, 0);
+        })(stateDescTa);
+    }
 };
 
 // ---- 获取节点 DOM 元素 ----
@@ -2432,7 +2466,37 @@ SMTool._updatePos = function (node) {
 SMTool._allPosScheduled = false;
 SMTool._allPosQueued = false;
 
-SMTool._updateAllPos = function () {
+// ★ 核心：同步更新所有节点 DOM 位置（缩放/平移时使用，避免连线偏移）
+SMTool._updateAllPosCore = function () {
+    var nodesIter = SMData.nodes.values();
+    var result = nodesIter.next();
+    while (!result.done) {
+        SMTool._updatePos(result.value);
+        result = nodesIter.next();
+    }
+
+    // 连线端口：画布缩小时放大，放大时缩小，但保持最小可见
+    var z = SMData.view.zoom;
+    var dotScale = Math.max(0.25, Math.min(2, 2 - z));
+    var dots = document.querySelectorAll('.spine-node .conn-dot');
+    for (var i = 0; i < dots.length; i++) {
+        dots[i].style.transform = 'scale(' + dotScale + ')';
+    }
+
+    SMTool._updateFloatLabels();
+};
+
+SMTool._updateAllPos = function (forceSync) {
+    // ★ 缩放/平移操作必须同步更新 DOM，否则下一帧 _renderConnections
+    // 会用新 zoom 读取旧 DOM 位置（getBoundingClientRect），算出错误世界坐标导致连线偏移
+    if (forceSync) {
+        // 清除待处理的异步更新（本次同步已覆盖）
+        SMTool._allPosScheduled = false;
+        SMTool._allPosQueued = false;
+        SMTool._updateAllPosCore();
+        return;
+    }
+
     // ★ 如果已经安排了 rAF，标记排队即可
     if (SMTool._allPosScheduled) { SMTool._allPosQueued = true; return; }
     SMTool._allPosScheduled = true;
@@ -2441,22 +2505,7 @@ SMTool._updateAllPos = function () {
         SMTool._allPosScheduled = false;
         SMTool._allPosQueued = false;
 
-        var nodesIter = SMData.nodes.values();
-        var result = nodesIter.next();
-        while (!result.done) {
-            SMTool._updatePos(result.value);
-            result = nodesIter.next();
-        }
-
-        // 连线端口：画布缩小时放大，放大时缩小，但保持最小可见
-        var z = SMData.view.zoom;
-        var dotScale = Math.max(0.25, Math.min(2, 2 - z));
-        var dots = document.querySelectorAll('.spine-node .conn-dot');
-        for (var i = 0; i < dots.length; i++) {
-            dots[i].style.transform = 'scale(' + dotScale + ')';
-        }
-
-        SMTool._updateFloatLabels();
+        SMTool._updateAllPosCore();
 
         // ★ 如果排队期间又有新请求，再次调度
         if (SMTool._allPosQueued) SMTool._updateAllPos();

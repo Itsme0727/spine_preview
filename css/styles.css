@@ -1697,15 +1697,13 @@ body {
     border: 1px solid var(--border);
     color: var(--text2);
     padding: 8px 10px;
-    font-size: 52px;
+    font-size: 46px;
     font-family: inherit;
     border-radius: 6px;
-    resize: vertical;
+    resize: none;
     min-height: 96px;
-    max-height: 400px;
-    height: auto;
     box-sizing: border-box;
-    overflow-y: auto;
+    overflow: hidden;
 }
 .state-desc:focus {
     color: var(--text);

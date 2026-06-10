@@ -112,6 +112,15 @@ SMTool._onDrop = function (e) {
         }).then(function () {
             return SMTool._tryLoadCompanionImages();
         }).then(function () {
+            // ★ 伴图加载完成后刷新所有节点图片附件缩略图（_createEl 阶段旧 shotId 已失效）
+            var nodesIter4 = SMData.nodes.values();
+            var r4 = nodesIter4.next();
+            while (!r4.done) {
+                if (r4.value._nodeImages && r4.value._nodeImages.length > 0 && (r4.value.nodeType === 'spine' || r4.value.nodeType === 'entry')) {
+                    SMTool._refreshNodeImages(r4.value.id);
+                }
+                r4 = nodesIter4.next();
+            }
             SMTool._updateFloatPanel();
             SMTool._showSaveToast('导入完成');
         }).catch(function (err) {
@@ -620,6 +629,26 @@ SMTool._replaceSpineData = function (existingIds, fileGroup, baseName) {
             SMTool._checkMissingStates();
             SMTool._refreshAllTranslations();
             SMData._forceRedraw = true;
+
+            // ★ 替换文件后，浮窗预览面板持有旧 skeleton/state/纹理，
+            // 但 _showAnimPreview 的 sameSource 检测只看文件名（替换后不变），
+            // 会误判为"同源"而跳过 GL 重建，导致旧画面残留。
+            // 此处强制销毁并重建预览，使其使用新数据。
+            var pp = SMData._animPreview;
+            if (pp && pp.visible && pp.nodeId != null) {
+                for (var rni = 0; rni < existingIds.length; rni++) {
+                    if (pp.nodeId === existingIds[rni]) {
+                        var updatedNode = SMData.nodes.get(pp.nodeId);
+                        if (updatedNode && updatedNode.skeleton && updatedNode.state) {
+                            SMTool._destroyAnimPreview();
+                            pp.visible = true;
+                            SMTool._initAnimPreview(updatedNode);
+                        }
+                        break;
+                    }
+                }
+            }
+
             document.getElementById('sbStatus').textContent = '✅ 已替换 ' + existingIds.length + ' 个节点的动画数据';
             setTimeout(function () { document.getElementById('sbStatus').textContent = ''; }, 2500);
         }

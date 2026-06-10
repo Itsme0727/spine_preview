@@ -1449,21 +1449,30 @@ SMTool._importDataLegacy = function () {
         r.onload = function () {
             SMTool._processImportJson(r.result, null).then(function () {
                 // ★ 传统导入也尝试加载伴随图片
-                return SMTool._tryLoadCompanionImages();
-            }).then(function () {
-                // ★ 刷新所有节点的图片附件缩略图
+                try {
+                    return SMTool._tryLoadCompanionImages();
+                } catch (e) {
+                    console.warn('[Import] 伴图加载异常:', e.message);
+                    return Promise.resolve({ loaded: 0, missing: [], total: 0 });
+                }
+            }).then(function (loadResult) {
+                // ★ 刷新所有节点的图片附件缩略图（入口节点和动画节点都需要）
                 var nodesIter4b = SMData.nodes.values();
                 var r4b = nodesIter4b.next();
                 while (!r4b.done) {
-                    if (r4b.value._nodeImages && r4b.value._nodeImages.length > 0 && r4b.value.nodeType === 'spine') {
+                    if (r4b.value._nodeImages && r4b.value._nodeImages.length > 0 && (r4b.value.nodeType === 'spine' || r4b.value.nodeType === 'entry')) {
                         SMTool._refreshNodeImages(r4b.value.id);
                     }
                     r4b = nodesIter4b.next();
                 }
                 SMTool._updateFloatPanel();
-                SMTool._showSaveToast('导入完成');
+                var msg = '导入完成';
+                if (loadResult && loadResult.loaded > 0) msg += '（含 ' + loadResult.loaded + ' 张伴图）';
+                else if (loadResult && loadResult.total > 0) msg += '（伴图未加载，请将 _assets/ 文件夹放在 JSON 同目录下）';
+                SMTool._showSaveToast(msg);
             }).catch(function (err) {
                 console.error('[Import] 传统导入失败:', err);
+                alert('导入失败：' + (err.message || '未知错误'));
             });
         };
         r.readAsText(f);

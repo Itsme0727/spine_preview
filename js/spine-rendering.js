@@ -586,6 +586,16 @@ SMTool._loop = function (now) {
         SMData._lastSelCount = SMData.selectedNodes.size;
         SMData._forceRedraw = false;
 
+        // ★ 防御：连线渲染依赖 getBoundingClientRect() 读取 DOM 端点位置。
+        // 若 _updateAllPos 还在 rAF 队列中未执行（缩放/平移触发的延迟更新），
+        // 则 DOM 位置是旧的，而 view.zoom/x/y 已更新，canvasToWorld 换算会错位。
+        // 此处强制同步刷新 DOM，确保连线端点坐标与 WebGL 画面一致。
+        if (viewChanged && SMTool._allPosScheduled) {
+            SMTool._allPosScheduled = false;
+            SMTool._allPosQueued = false;
+            SMTool._updateAllPosCore();
+        }
+
         SMTool._renderGrid();
         SMTool._renderGroupBoxes(SMTool.gridCtx);
         SMTool._renderConnections();
@@ -620,7 +630,9 @@ SMTool._onWheel = function (e) {
     var my = e.clientY - window.innerHeight / 2;
     SMData.view.x += mx * (1 / SMData.view.zoom - 1 / oz);
     SMData.view.y += my * (1 / SMData.view.zoom - 1 / oz);
-    SMTool._updateAllPos();
+    // ★ forceSync=true：缩放时必须同步更新 DOM 位置，
+    // 否则下一帧 _renderConnections 用新 zoom 读旧 DOM 位置会算出错误坐标
+    SMTool._updateAllPos(true);
     SMTool._syncZoomUI();
 };
 
@@ -632,7 +644,8 @@ SMTool._onZoomSlider = function (e) {
     var cy = window.innerHeight / 2;
     SMData.view.x += cx * (1 / SMData.view.zoom - 1 / oz);
     SMData.view.y += cy * (1 / SMData.view.zoom - 1 / oz);
-    SMTool._updateAllPos();
+    // ★ forceSync=true：缩放滑块同样需要同步更新 DOM
+    SMTool._updateAllPos(true);
     SMTool._syncZoomUI();
 };
 
@@ -1408,13 +1421,15 @@ SMTool.fitAll = function () {
     SMData.view.zoom = Math.min(window.innerWidth / (Mx - mx + 200), window.innerHeight / (My - my + 200), 2);
     SMData.view.x = -(mx + Mx) / 2;
     SMData.view.y = -(my + My) / 2;
-    SMTool._updateAllPos();
+    // ★ forceSync=true：缩放变化必须同步更新 DOM
+    SMTool._updateAllPos(true);
     SMTool._syncZoomUI();
 };
 
 SMTool.resetView = function () {
     SMData.view = { x: 0, y: 0, zoom: 1 };
-    SMTool._updateAllPos();
+    // ★ forceSync=true：缩放变化必须同步更新 DOM
+    SMTool._updateAllPos(true);
     SMTool._syncZoomUI();
 };
 
