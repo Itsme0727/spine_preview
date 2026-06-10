@@ -1230,10 +1230,11 @@ SMTool.exportData = function () {
             if (!SMData._hasEverSaved) { SMData._hasEverSaved = true; SMTool._startAutoSave(); }
             SMTool._showSaveToast('已保存');
         }).catch(function (err) {
-            if (err.name === 'AbortError') return; // 用户取消了目录选择
-            // ★ file:// 协议下 showDirectoryPicker 会抛 SecurityError
-            if (err.name === 'SecurityError' || window.location.protocol === 'file:') {
-                alert('当前通过 file:// 协议打开，浏览器安全策略禁止弹出文件夹授权窗口。\n\n✅ 推荐：点击 📦导出ZIP 按钮保存完整工程（含图片），在任何电脑都能用。\n\n💡 提示：导入 ZIP 后直接按 Ctrl+S 会触发此弹窗，\n请改用工具栏的 📦导出ZIP 保存。');
+            if (err.name === 'AbortError') return;
+            // ★ SecurityError = file:// 协议被浏览器拦截 → 告知原因并自动导出 ZIP 兜底
+            if (err.name === 'SecurityError') {
+                SMTool._showSaveToast('file:// 协议无法授权保存文件夹，已自动导出 ZIP');
+                SMTool.exportAsZip();
                 return;
             }
             console.error('[Export] 保存失败:', err);
@@ -1244,10 +1245,8 @@ SMTool.exportData = function () {
         return;
     }
 
-    // 浏览器不支持 File System Access API → 降级为传统下载
-    SMTool._downloadFile('spine-state-machine.json');
-    if (!SMData._hasEverSaved) { SMData._hasEverSaved = true; SMTool._startAutoSave(); }
-    SMTool._showSaveToast('已保存（仅JSON）');
+    // 不支持 File System Access API → ZIP 下载
+    SMTool.exportAsZip();
 };
 
 // ---- 尝试加载伴随图片（★ 缺失时弹窗提示选择目录）----
