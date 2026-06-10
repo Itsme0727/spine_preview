@@ -1210,12 +1210,10 @@ SMTool.exportData = function () {
         return;
     }
 
-    // ★ 优先级 3：首次保存 → 目录选择器（JSON + _assets 图片）
+    // ★ 优先级 3：弹出浏览器目录选择器 → 授权后保存 JSON + _assets/ 到本地文件夹
     if (window.showDirectoryPicker) {
         window.showDirectoryPicker({ mode: 'readwrite' }).then(function (dirHandle) {
             SMData._assetsDirHandle = dirHandle;
-
-            // ★ 先保存伴随 JPG 图片（填充 _boneShotRefs），再写 JSON（只含路径引用）
             return SMTool._saveCompanionImages(dirHandle).then(function () {
                 return dirHandle.getFileHandle('spine-state-machine.json', { create: true }).then(function (fileHandle) {
                     SMData._saveFileHandle = fileHandle;
@@ -1229,47 +1227,27 @@ SMTool.exportData = function () {
                 });
             });
         }).then(function () {
-            if (!SMData._hasEverSaved) {
-                SMData._hasEverSaved = true;
-                SMTool._startAutoSave();
-            }
-            var shotCount = 0;
-            var nodesIter3 = SMData.nodes.values();
-            var r3 = nodesIter3.next();
-            while (!r3.done) {
-                var nd3 = r3.value;
-                if (nd3._boneShotRefs) {
-                    var refBones = Object.keys(nd3._boneShotRefs);
-                    for (var rbi = 0; rbi < refBones.length; rbi++) {
-                        var refList = nd3._boneShotRefs[refBones[rbi]];
-                        if (Array.isArray(refList)) shotCount += refList.length;
-                        else if (refList) shotCount++;
-                    }
-                }
-                r3 = nodesIter3.next();
-            }
-            SMTool._showSaveToast(shotCount > 0 ? '已保存（含 ' + shotCount + ' 张截图文件）' : '已保存');
+            if (!SMData._hasEverSaved) { SMData._hasEverSaved = true; SMTool._startAutoSave(); }
+            SMTool._showSaveToast('已保存');
         }).catch(function (err) {
-            if (err.name !== 'AbortError') {
-                console.error('[Export] 保存失败:', err);
-                // 降级：使用传统下载方式（仅 JSON，不含图片）
-                SMTool._downloadFile('spine-state-machine.json');
-                if (!SMData._hasEverSaved) {
-                    SMData._hasEverSaved = true;
-                    SMTool._startAutoSave();
-                }
-                SMTool._showSaveToast('已保存（仅JSON，图片保存失败）');
+            if (err.name === 'AbortError') return; // 用户取消了目录选择
+            // ★ file:// 协议下 showDirectoryPicker 会抛 SecurityError
+            if (err.name === 'SecurityError' || window.location.protocol === 'file:') {
+                alert('当前通过 file:// 协议打开，浏览器安全策略禁止弹出文件夹授权窗口。\n\n✅ 推荐：点击 📦导出ZIP 按钮保存完整工程（含图片），在任何电脑都能用。\n\n💡 提示：导入 ZIP 后直接按 Ctrl+S 会触发此弹窗，\n请改用工具栏的 📦导出ZIP 保存。');
+                return;
             }
+            console.error('[Export] 保存失败:', err);
+            SMTool._downloadFile('spine-state-machine.json');
+            if (!SMData._hasEverSaved) { SMData._hasEverSaved = true; SMTool._startAutoSave(); }
+            SMTool._showSaveToast('已保存（仅JSON）');
         });
-    } else {
-        // 浏览器不支持 File System Access API → 降级为传统下载（仅 JSON）
-        SMTool._downloadFile('spine-state-machine.json');
-        if (!SMData._hasEverSaved) {
-            SMData._hasEverSaved = true;
-            SMTool._startAutoSave();
-        }
-        SMTool._showSaveToast('已保存（仅JSON）');
+        return;
     }
+
+    // 浏览器不支持 File System Access API → 降级为传统下载
+    SMTool._downloadFile('spine-state-machine.json');
+    if (!SMData._hasEverSaved) { SMData._hasEverSaved = true; SMTool._startAutoSave(); }
+    SMTool._showSaveToast('已保存（仅JSON）');
 };
 
 // ---- 尝试加载伴随图片（★ 缺失时弹窗提示选择目录）----
