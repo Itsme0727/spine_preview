@@ -52,6 +52,24 @@
         <button id="btnToggleIndicators" class="vt-btn vt-yellow active" onclick="SMTool._toggleHideIndicators()" title="标记：显示/隐藏节点左上角标记图标">🏷️ 标记</button>
     </div>
 
+    <!-- ===== 全局搜索（左上角 viewToggles 下方） ===== -->
+    <div id="searchPanel">
+        <div class="sp-input-wrap">
+            <input type="text" id="searchInput" class="sp-input" placeholder="搜索节点/状态/条件..." autocomplete="off">
+            <button id="searchBtn" class="sp-search-btn" onclick="SMTool._doSearch()" title="搜索">🔍</button>
+            <button id="entryNavBtn" class="sp-entry-nav-btn" onclick="SMTool._toggleEntryNav()" title="入口节点导航">🚪</button>
+        </div>
+        <div id="entryNavList" class="sp-entry-list" style="display:none"></div>
+        <div id="searchResults" class="sp-results" style="display:none">
+            <div class="sp-results-header">
+                <span id="spResultCount" class="sp-result-count"></span>
+                <button id="spResultPrev" class="sp-nav-btn" onclick="SMTool._searchNav(-1)" title="上一个">◀</button>
+                <button id="spResultNext" class="sp-nav-btn" onclick="SMTool._searchNav(1)" title="下一个">▶</button>
+            </div>
+            <div id="spResultList" class="sp-result-list"></div>
+        </div>
+    </div>
+
     <!-- ===== 对齐排版工具栏（多选 ≥2 时显示）===== -->
     <div id="alignBar" style="display:none">
         <button title="横向-居上对齐" onclick="SMTool.alignTop()">⊤ 上</button>

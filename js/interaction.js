@@ -438,18 +438,16 @@ SMTool._onMM = function (e) {
         var sn = SMData.scalingNode;
         var node2 = SMData.nodes.get(sn.nodeId);
         if (node2) {
-            // 计算鼠标相对于节点中心的距离变化来等比缩放
             var dScreenX = e.clientX - sn.startMx;
             var dScreenY = e.clientY - sn.startMy;
-            // 使用对角线方向的距离：鼠标向右下移动放大，向左上移动缩小
             var dist = (dScreenX + dScreenY) * 0.5;
-            // 将屏幕距离转换为缩放比例变化
-            var scaleChange = dist / 200; // 200px 移动 ≈ 1x 缩放变化
+            var scaleChange = dist / 200;
             var newScale = sn.startScale + scaleChange;
-            // 限制缩放范围 0.2 ~ 5.0
             newScale = Math.max(0.2, Math.min(5.0, newScale));
             node2._customScale = newScale;
             SMTool._updatePos(node2);
+            // ★ 缩放时强制重绘连线，确保连线跟随节点大小变化
+            SMData._forceRedraw = true;
         }
         return;
     }

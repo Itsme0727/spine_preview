@@ -454,7 +454,7 @@ SMTool.init = function () {
 
     // 鼠标事件（数据面板内的操作不取消动画对象选中）
     document.addEventListener('mousedown', function (e) {
-        if (e.target.closest && e.target.closest('#toolbar, #ctxMenu, #conditionEditor, #zoomControl, #statusBar, #dataFloatPanel, #flowPanel, #flowModeToggle, #animPreviewPanel')) return;
+        if (e.target.closest && e.target.closest('#toolbar, #ctxMenu, #conditionEditor, #zoomControl, #statusBar, #dataFloatPanel, #flowPanel, #flowModeToggle, #animPreviewPanel, #searchPanel')) return;
         if (e.target.closest && e.target.closest('input, textarea, select, button')) return;
         if (e.shiftKey) e.preventDefault();
         SMTool._onMD(e);
@@ -466,7 +466,7 @@ SMTool.init = function () {
     window.addEventListener('wheel', function (e) {
         // ★ 调试模式：滚轮始终用于缩放动画层
         if (SMData._debugMode) { e.preventDefault(); SMTool._onWheel(e); return; }
-        if (!e.target.closest('.state-list') && !e.target.closest('.anim-bar') && !e.target.closest('.anim-select') && !e.target.closest('.ip-body') && !e.target.closest('#conditionEditor') && !e.target.closest('#dataFloatPanel') && !e.target.closest('#animPreviewPanel') && !e.target.closest('#screenshotOverlay')) {
+        if (!e.target.closest('.state-list') && !e.target.closest('.anim-bar') && !e.target.closest('.anim-select') && !e.target.closest('.ip-body') && !e.target.closest('#conditionEditor') && !e.target.closest('#dataFloatPanel') && !e.target.closest('#animPreviewPanel') && !e.target.closest('#screenshotOverlay') && !e.target.closest('#searchPanel')) {
             e.preventDefault();
             SMTool._onWheel(e);
         }
@@ -1876,6 +1876,482 @@ SMTool.init = function () {
         console.log('  拖拽 .zip 工程包 或 spine 文件到画布上');
         console.log('  Alt+拖拽=平移 | 滚轮=缩放 | 右键=平移');
     }
+
+    // ================================================================
+    // ★ 全局搜索功能
+    // ================================================================
+    SMData._searchResults = [];
+    SMData._searchActiveIdx = -1;
+    SMData._searchAnimId = 0;
+
+    // 执行搜索
+    SMTool._doSearch = function () {
+        var input = document.getElementById('searchInput');
+        var query = (input.value || '').trim();
+        if (!query) {
+            SMTool._clearSearch();
+            return;
+        }
+        var qLower = query.toLowerCase();
+        SMData._searchResults = [];
+        SMData._searchActiveIdx = -1;
+
+        var nodesIter = SMData.nodes.values();
+        var r = nodesIter.next();
+        while (!r.done) {
+            var node = r.value;
+            var nid = node.id;
+            var fields = [
+                { type: '节点名', text: node.name || '' },
+                { type: '源文件', text: node.sourceFile || '' },
+                { type: '当前动画', text: node.currentAnim || '' },
+                { type: '状态描述', text: node._stateDesc || '' },
+                { type: '文本内容', text: node._textContent || '' },
+                { type: '入口/出口', text: node._exitText || '' }
+            ];
+            for (var ci = 0; ci < SMData.connections.length; ci++) {
+                var conn = SMData.connections[ci];
+                if ((conn.fromNode === nid || conn.toNode === nid) && conn.condition) {
+                    fields.push({ type: '连线条件', text: conn.condition });
+                }
+            }
+            if (node._boneTags) {
+                var btKeys = Object.keys(node._boneTags);
+                for (var bti = 0; bti < btKeys.length; bti++) {
+                    var tags = node._boneTags[btKeys[bti]];
+                    if (Array.isArray(tags)) {
+                        for (var ti = 0; ti < tags.length; ti++) {
+                            fields.push({ type: '骨骼标签', text: btKeys[bti] + ': ' + tags[ti] });
+                        }
+                    }
+                }
+            }
+            if (node.skins) {
+                for (var ski = 0; ski < node.skins.length; ski++) {
+                    fields.push({ type: '皮肤', text: node.skins[ski] });
+                }
+            }
+
+            for (var fi = 0; fi < fields.length; fi++) {
+                var f = fields[fi];
+                if (!f.text) continue;
+                var idx = f.text.toLowerCase().indexOf(qLower);
+                if (idx >= 0) {
+                    SMData._searchResults.push({
+                        nodeId: nid,
+                        fieldType: f.type,
+                        fullText: f.text,
+                        matchStart: idx,
+                        matchLen: query.length
+                    });
+                }
+            }
+            r = nodesIter.next();
+        }
+
+        SMTool._updateSearchResults();
+        // ★ 高亮所有匹配节点上的匹配文本
+        SMTool._clearSearchHighlights();
+        var highlightedNodes = {};
+        for (var ri = 0; ri < SMData._searchResults.length; ri++) {
+            var nid2 = SMData._searchResults[ri].nodeId;
+            if (!highlightedNodes[nid2]) {
+                highlightedNodes[nid2] = true;
+                SMTool._highlightNodeMatches(nid2, query);
+            }
+        }
+        // ★ 搜索出结果时自动收起入口导航列表（互斥）
+        if (SMData._searchResults.length > 0) {
+            SMTool._closeEntryNav();
+            SMTool._searchFocusResult(0);
+        }
+    };
+
+    // 清除搜索
+    SMTool._clearSearch = function () {
+        SMData._searchResults = [];
+        SMData._searchActiveIdx = -1;
+        SMTool._clearSearchHighlights();
+        var resultsEl = document.getElementById('searchResults');
+        if (resultsEl) resultsEl.style.display = 'none';
+        var countEl = document.getElementById('spResultCount');
+        if (countEl) countEl.textContent = '';
+        // ★ 同时关闭入口导航列表
+        var entryList = document.getElementById('entryNavList');
+        var entryBtn = document.getElementById('entryNavBtn');
+        if (entryList) entryList.style.display = 'none';
+        if (entryBtn) entryBtn.classList.remove('active');
+        if (SMData._searchAnimId) {
+            cancelAnimationFrame(SMData._searchAnimId);
+            SMData._searchAnimId = 0;
+        }
+    };
+
+    // 清除所有节点的高亮
+    SMTool._clearSearchHighlights = function () {
+        var nodesIter = SMData.nodes.values();
+        var r = nodesIter.next();
+        while (!r.done) {
+            var el = SMTool._getEl(r.value.id);
+            if (el) {
+                var hls = el.querySelectorAll('.search-highlight');
+                for (var i = 0; i < hls.length; i++) {
+                    var parent = hls[i].parentNode;
+                    if (parent) {
+                        parent.replaceChild(document.createTextNode(hls[i].textContent), hls[i]);
+                        parent.normalize();
+                    }
+                }
+            }
+            r = nodesIter.next();
+        }
+    };
+
+    // 高亮节点中匹配的文本
+    SMTool._highlightNodeMatches = function (nodeId, query) {
+        if (!query) return;
+        var el = SMTool._getEl(nodeId);
+        if (!el) return;
+        var qLower = query.toLowerCase();
+        // ★ 覆盖所有可能包含匹配文本的 DOM 区域
+        var nameEls = el.querySelectorAll('.name, .source-file, .state-desc, .exit-text-input, .entry-text-input, .entry-title-input, .text-box-title, .text-box-area, .layer-box-text, .title-text, .skin-badge');
+        for (var ni = 0; ni < nameEls.length; ni++) {
+            SMTool._highlightTextInElement(nameEls[ni], qLower);
+        }
+    };
+
+    // 在 DOM 元素中高亮匹配文本
+    SMTool._highlightTextInElement = function (el, qLower) {
+        if (!el || !qLower) return;
+        var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null, false);
+        var textNodes = [];
+        while (walker.nextNode()) { textNodes.push(walker.currentNode); }
+        for (var i = 0; i < textNodes.length; i++) {
+            var node = textNodes[i];
+            var txt = node.textContent;
+            var idx = txt.toLowerCase().indexOf(qLower);
+            if (idx < 0) continue;
+            if (node.parentNode && node.parentNode.classList && node.parentNode.classList.contains('search-highlight')) continue;
+            var before = txt.substring(0, idx);
+            var match = txt.substring(idx, idx + qLower.length);
+            var after = txt.substring(idx + qLower.length);
+            var parent = node.parentNode;
+            if (!parent) continue;
+            var frag = document.createDocumentFragment();
+            if (before) frag.appendChild(document.createTextNode(before));
+            var mark = document.createElement('mark');
+            mark.className = 'search-highlight';
+            mark.textContent = match;
+            frag.appendChild(mark);
+            if (after) frag.appendChild(document.createTextNode(after));
+            parent.replaceChild(frag, node);
+        }
+    };
+
+    // 更新搜索结果列表 UI
+    SMTool._updateSearchResults = function () {
+        var resultsEl = document.getElementById('searchResults');
+        var listEl = document.getElementById('spResultList');
+        var countEl = document.getElementById('spResultCount');
+        if (!resultsEl || !listEl || !countEl) return;
+        var results = SMData._searchResults;
+        if (results.length === 0) {
+            listEl.innerHTML = '<div class="sp-no-results">无匹配结果</div>';
+            resultsEl.style.display = 'flex';
+            countEl.textContent = '0 个结果';
+            return;
+        }
+        resultsEl.style.display = 'flex';
+        countEl.textContent = (SMData._searchActiveIdx + 1) + ' / ' + results.length;
+        var html = '';
+        for (var i = 0; i < results.length; i++) {
+            var item = results[i];
+            var node2 = SMData.nodes.get(item.nodeId);
+            var nodeLabel = node2 ? (node2.sourceFile || node2.name || '节点#' + item.nodeId) : '节点#' + item.nodeId;
+            var activeClass = (i === SMData._searchActiveIdx) ? ' active' : '';
+            var start = Math.max(0, item.matchStart - 20);
+            var end = Math.min(item.fullText.length, item.matchStart + item.matchLen + 25);
+            var preview = (start > 0 ? '…' : '') + item.fullText.substring(start, end) + (end < item.fullText.length ? '…' : '');
+            var matchInPreview = item.matchStart - start;
+            html += '<div class="sp-result-item' + activeClass + '" onclick="SMTool._searchFocusResult(' + i + ')">' +
+                '<span class="sp-ri-type">' + SMTool._esc(item.fieldType) + ' · ' + SMTool._esc(nodeLabel) + '</span>' +
+                '<span class="sp-ri-text">' +
+                    SMTool._esc(preview.substring(0, matchInPreview)) +
+                    '<span class="sp-ri-match">' + SMTool._esc(preview.substring(matchInPreview, matchInPreview + item.matchLen)) + '</span>' +
+                    SMTool._esc(preview.substring(matchInPreview + item.matchLen)) +
+                '</span>' +
+            '</div>';
+        }
+        listEl.innerHTML = html;
+    };
+
+    // 导航搜索结果
+    SMTool._searchNav = function (dir) {
+        if (SMData._searchResults.length === 0) return;
+        var newIdx = SMData._searchActiveIdx + dir;
+        if (newIdx < 0) newIdx = SMData._searchResults.length - 1;
+        if (newIdx >= SMData._searchResults.length) newIdx = 0;
+        SMTool._searchFocusResult(newIdx);
+    };
+
+    // 聚焦到某个搜索结果（带动画过渡）
+    SMTool._searchFocusResult = function (index) {
+        if (index < 0 || index >= SMData._searchResults.length) return;
+        SMData._searchActiveIdx = index;
+        var result2 = SMData._searchResults[index];
+        var node3 = SMData.nodes.get(result2.nodeId);
+        if (!node3) return;
+
+        SMTool._updateSearchResults();
+
+        SMData.selectedNodes.clear();
+        SMData.selectedNodes.add(result2.nodeId);
+        SMData.selectedNode = result2.nodeId;
+        SMData.selectedConnection = null;
+        SMTool._updateSel();
+
+        // ★ 高亮已在上层统一处理，此处不再重复清/加
+        SMTool._animateToNode(node3);
+    };
+
+    // 动画过渡到目标节点（视口居中 + 缩放 40%）
+    SMTool._animateToNode = function (node) {
+        if (SMData._searchAnimId) {
+            cancelAnimationFrame(SMData._searchAnimId);
+            SMData._searchAnimId = 0;
+        }
+
+        var targetZoom = 0.3;
+        var targetX = -(node.x + (node.width || 300) / 2);
+        var targetY = -(node.y + ((node._canvasHeight || 200) + 100) / 2);
+
+        var startZoom = SMData.view.zoom;
+        var startX = SMData.view.x;
+        var startY = SMData.view.y;
+        var duration = 400;
+        var startTime = performance.now();
+
+        function easeInOutCubic(t) {
+            return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+        }
+
+        function step(now) {
+            var elapsed = now - startTime;
+            var progress = Math.min(1, elapsed / duration);
+            var t = easeInOutCubic(progress);
+
+            SMData.view.zoom = startZoom + (targetZoom - startZoom) * t;
+            SMData.view.x = startX + (targetX - startX) * t;
+            SMData.view.y = startY + (targetY - startY) * t;
+            SMData._forceRedraw = true;
+
+            SMTool._updateAllPos(true);
+            SMTool._syncZoomUI();
+
+            if (progress < 1) {
+                SMData._searchAnimId = requestAnimationFrame(step);
+            } else {
+                SMData._searchAnimId = 0;
+            }
+        }
+        SMData._searchAnimId = requestAnimationFrame(step);
+    };
+
+    // 搜索框键盘事件
+    var searchInput = document.getElementById('searchInput');
+    if (searchInput) {
+        searchInput.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                SMTool._doSearch();
+            }
+            if (e.key === 'Escape') {
+                SMTool._clearSearch();
+                searchInput.value = '';
+                searchInput.blur();
+            }
+        });
+        var _searchDebounce = 0;
+        searchInput.addEventListener('input', function () {
+            clearTimeout(_searchDebounce);
+            var val = searchInput.value.trim();
+            if (!val) {
+                SMTool._clearSearch();
+                return;
+            }
+            _searchDebounce = setTimeout(function () {
+                SMTool._doSearch();
+            }, 200);
+        });
+    }
+
+    // ================================================================
+    // ★ 入口节点导航
+    // ================================================================
+    SMData._entryActiveIdx = -1;  // 当前高亮的入口列表子项索引
+    SMData._entryNodeIds = [];    // 排序后的入口节点 ID 列表
+
+    SMTool._toggleEntryNav = function () {
+        var list = document.getElementById('entryNavList');
+        var btn = document.getElementById('entryNavBtn');
+        if (!list || !btn) return;
+        var isOpen = (list.style.display !== 'none');
+        if (isOpen) {
+            SMTool._closeEntryNav();
+        } else {
+            SMTool._buildEntryNavList();
+            list.style.display = 'block';
+            btn.classList.add('active');
+            var sr = document.getElementById('searchResults');
+            if (sr) sr.style.display = 'none';
+        }
+    };
+
+    SMTool._buildEntryNavList = function () {
+        var list = document.getElementById('entryNavList');
+        if (!list) return;
+        var entries = [];
+        var nodesIterE = SMData.nodes.values();
+        var rE = nodesIterE.next();
+        while (!rE.done) {
+            if (rE.value.nodeType === 'entry') entries.push(rE.value);
+            rE = nodesIterE.next();
+        }
+        if (entries.length === 0) {
+            list.innerHTML = '<div class="sp-no-results">无入口节点</div>';
+            SMData._entryNodeIds = [];
+            return;
+        }
+        // ★ Y 轴优先：越靠上越靠前；Y 相同则 X 越靠左越靠前
+        entries.sort(function (a, b) {
+            var dY = a.y - b.y;
+            if (Math.abs(dY) < 0.5) return a.x - b.x;
+            return dY;
+        });
+        SMData._entryNodeIds = [];
+        for (var ei = 0; ei < entries.length; ei++) {
+            SMData._entryNodeIds.push(entries[ei].id);
+        }
+        // 恢复上次选中或默认第一个
+        if (SMData._entryActiveIdx < 0 || SMData._entryActiveIdx >= entries.length) {
+            SMData._entryActiveIdx = 0;
+        }
+        var html = '';
+        // ★ 顶部导航栏
+        html += '<div class="sp-entry-nav-bar">' +
+            '<button class="sp-nav-btn" onclick="event.stopPropagation();SMTool._entryNavBy(-1)" title="上一个">◀</button>' +
+            '<span class="sp-entry-nav-info">' + (SMData._entryActiveIdx + 1) + ' / ' + entries.length + '</span>' +
+            '<button class="sp-nav-btn" onclick="event.stopPropagation();SMTool._entryNavBy(1)" title="下一个">▶</button>' +
+            '</div>';
+        // ★ 子项列表
+        for (var i = 0; i < entries.length; i++) {
+            var entry = entries[i];
+            var title = entry.name || '入口';
+            var activeClass = (i === SMData._entryActiveIdx) ? ' active' : '';
+            html += '<div class="sp-entry-item' + activeClass + '" onclick="SMTool._goToEntryNode(' + entry.id + ')">' +
+                '<span class="sp-entry-idx">' + (i + 1) + '</span>' +
+                '<span class="sp-entry-title">' + SMTool._esc(title) + '</span>' +
+            '</div>';
+        }
+        // ★ 底部收起按钮
+        html += '<div class="sp-entry-close" onclick="event.stopPropagation();SMTool._closeEntryNav()">' +
+            '<span>▲ 收起列表</span></div>';
+        list.innerHTML = html;
+        // ★ 键盘导航
+        SMTool._bindEntryNavKeys(list);
+    };
+
+    // 绑定入口列表键盘事件
+    SMTool._bindEntryNavKeys = function (list) {
+        if (list._keyBound) return;
+        list._keyBound = true;
+        list.setAttribute('tabindex', '0');
+        list.addEventListener('keydown', function (e) {
+            var ids = SMData._entryNodeIds;
+            if (!ids || ids.length === 0) return;
+            if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+                e.preventDefault();
+                e.stopPropagation();
+                SMTool._entryNavBy(-1);
+            } else if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+                e.preventDefault();
+                e.stopPropagation();
+                SMTool._entryNavBy(1);
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                e.stopPropagation();
+                if (SMData._entryActiveIdx >= 0 && SMData._entryActiveIdx < ids.length) {
+                    SMTool._goToEntryNode(ids[SMData._entryActiveIdx]);
+                }
+            } else if (e.key === 'Escape') {
+                SMTool._closeEntryNav();
+            }
+        });
+        // 展开时自动聚焦
+        setTimeout(function () { list.focus(); }, 50);
+    };
+
+    // 入口列表导航（dir: -1 上一个, 1 下一个）
+    SMTool._entryNavBy = function (dir) {
+        var ids = SMData._entryNodeIds;
+        if (!ids || ids.length === 0) return;
+        var newIdx = SMData._entryActiveIdx + dir;
+        if (newIdx < 0) newIdx = ids.length - 1;
+        if (newIdx >= ids.length) newIdx = 0;
+        SMData._entryActiveIdx = newIdx;
+        // 刷新列表高亮
+        var list = document.getElementById('entryNavList');
+        if (list) {
+            var items = list.querySelectorAll('.sp-entry-item');
+            for (var i = 0; i < items.length; i++) {
+                items[i].classList.toggle('active', i === newIdx);
+            }
+            var info = list.querySelector('.sp-entry-nav-info');
+            if (info) info.textContent = (newIdx + 1) + ' / ' + ids.length;
+        }
+        // 跳转到对应入口节点
+        SMTool._goToEntryNode(ids[newIdx]);
+    };
+
+    SMTool._goToEntryNode = function (nodeId) {
+        var node2 = SMData.nodes.get(nodeId);
+        if (!node2) return;
+        // ★ 更新选中索引
+        for (var i = 0; i < SMData._entryNodeIds.length; i++) {
+            if (SMData._entryNodeIds[i] === nodeId) {
+                SMData._entryActiveIdx = i;
+                break;
+            }
+        }
+        // 刷新列表高亮
+        var list = document.getElementById('entryNavList');
+        if (list && list.style.display !== 'none') {
+            var items = list.querySelectorAll('.sp-entry-item');
+            for (var j = 0; j < items.length; j++) {
+                items[j].classList.toggle('active', j === SMData._entryActiveIdx);
+            }
+            var info2 = list.querySelector('.sp-entry-nav-info');
+            if (info2) info2.textContent = (SMData._entryActiveIdx + 1) + ' / ' + SMData._entryNodeIds.length;
+        }
+        // ★ 不再自动关闭列表，保持展开便于连续切换
+        SMData.selectedNodes.clear();
+        SMData.selectedNodes.add(nodeId);
+        SMData.selectedNode = nodeId;
+        SMTool._updateSel();
+        SMTool._animateToNode(node2);
+    };
+
+    // 收起入口导航列表
+    SMTool._closeEntryNav = function () {
+        var list = document.getElementById('entryNavList');
+        var btn = document.getElementById('entryNavBtn');
+        if (list) {
+            list.style.display = 'none';
+            list._keyBound = false;
+        }
+        if (btn) btn.classList.remove('active');
+        SMData._entryActiveIdx = -1;
+    };
 
     // ================================================================
     // ★ 显示/隐藏切换按钮（左上角）

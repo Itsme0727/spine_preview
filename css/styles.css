@@ -2267,6 +2267,13 @@ body {
     gap: 4px;
     flex: 1;
     min-width: 0;
+    font-size: 18px;
+    color: #e0e0e0;
+}
+/* ★ 已标记的子项名称变红 */
+#dataFloatPanel .dfp-bone-row.expanded .dfp-bone-name {
+    color: #e53e3e;
+    font-weight: 600;
 }
 
 /* ★ 骨骼/插槽页签右上角红色小圆点（有内容时显示，循环缩放发光） */
@@ -3712,6 +3719,261 @@ body {
 .vt-purple { color: #a855f7; border-color: #a855f7; }
 .vt-pink   { color: #ec4899; border-color: #ec4899; }
 .vt-yellow { color: #f5c542; border-color: #f5c542; }
+
+/* ===== 全局搜索面板（viewToggles 下方） ===== */
+#searchPanel {
+    position: fixed;
+    top: 50px;
+    left: 8px;
+    z-index: 199;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+#searchPanel .sp-input-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+    width: 240px;
+}
+#searchPanel .sp-input {
+    flex: 1;
+    min-width: 0;
+    background: transparent;
+    border: none;
+    color: var(--text);
+    padding: 8px 12px;
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+}
+#searchPanel .sp-input::placeholder {
+    color: var(--text2);
+}
+#searchPanel .sp-search-btn {
+    flex-shrink: 0;
+    width: 36px;
+    height: 34px;
+    background: transparent;
+    border: none;
+    border-left: 1px solid var(--border);
+    color: var(--text2);
+    cursor: pointer;
+    font-size: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+#searchPanel .sp-search-btn:hover {
+    background: var(--accent);
+    color: #fff;
+}
+/* 入口导航按钮 */
+#searchPanel .sp-entry-nav-btn {
+    flex-shrink: 0;
+    width: 36px;
+    height: 34px;
+    background: transparent;
+    border: none;
+    border-left: 1px solid var(--border);
+    color: var(--text2);
+    cursor: pointer;
+    font-size: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+#searchPanel .sp-entry-nav-btn:hover,
+#searchPanel .sp-entry-nav-btn.active {
+    background: #e53e3e;
+    color: #fff;
+}
+/* 入口导航下拉列表 */
+#searchPanel .sp-entry-list {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    margin-top: 6px;
+    width: 240px;
+    max-height: 260px;
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    overflow-y: auto;
+}
+/* 入口列表顶部导航栏 */
+#searchPanel .sp-entry-nav-bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 6px 10px;
+    background: rgba(255,255,255,0.03);
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--text2);
+    flex-shrink: 0;
+}
+#searchPanel .sp-entry-nav-info {
+    min-width: 50px;
+    text-align: center;
+    color: var(--text);
+    font-weight: 500;
+}
+#searchPanel .sp-entry-item {
+    padding: 8px 12px;
+    cursor: pointer;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    transition: background 0.15s;
+    font-size: 12px;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+#searchPanel .sp-entry-item:hover {
+    background: rgba(229,62,62,0.15);
+}
+#searchPanel .sp-entry-item.active {
+    background: rgba(229,62,62,0.2);
+    border-left: 3px solid #e53e3e;
+}
+#searchPanel .sp-entry-item .sp-entry-idx {
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: #e53e3e;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+#searchPanel .sp-entry-item .sp-entry-title {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+/* 入口列表底部收起按钮 */
+#searchPanel .sp-entry-close {
+    padding: 8px 12px;
+    text-align: center;
+    cursor: pointer;
+    color: var(--text2);
+    font-size: 11px;
+    border-top: 1px solid var(--border);
+    transition: all 0.15s;
+    background: rgba(255,255,255,0.02);
+}
+#searchPanel .sp-entry-close:hover {
+    color: #fff;
+    background: rgba(255,255,255,0.08);
+}
+/* 搜索结果下拉列表 */
+#searchPanel .sp-results {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    margin-top: 6px;
+    width: 280px;
+    max-height: 340px;
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+#searchPanel .sp-results-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 10px;
+    background: rgba(255,255,255,0.03);
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--text2);
+}
+#searchPanel .sp-result-count {
+    flex: 1;
+}
+#searchPanel .sp-nav-btn {
+    background: var(--node-bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+    margin-left: 4px;
+}
+#searchPanel .sp-nav-btn:hover {
+    background: var(--accent);
+    color: #fff;
+}
+#searchPanel .sp-result-list {
+    overflow-y: auto;
+    max-height: 280px;
+}
+#searchPanel .sp-result-item {
+    padding: 8px 12px;
+    cursor: pointer;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    transition: background 0.15s;
+    font-size: 12px;
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+#searchPanel .sp-result-item:hover,
+#searchPanel .sp-result-item.active {
+    background: rgba(74,158,255,0.15);
+}
+#searchPanel .sp-result-item .sp-ri-type {
+    font-size: 10px;
+    color: var(--text2);
+}
+#searchPanel .sp-result-item .sp-ri-text {
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+#searchPanel .sp-result-item .sp-ri-match {
+    color: #f5c542;
+    font-weight: 600;
+}
+#searchPanel .sp-no-results {
+    padding: 16px;
+    text-align: center;
+    color: var(--text2);
+    font-size: 12px;
+}
+
+/* ===== 搜索高亮 ===== */
+.spine-node .search-highlight {
+    background: rgba(245, 197, 66, 0.3);
+    border-radius: 2px;
+    padding: 1px 2px;
+}
 
 /* 隐藏标题：仅隐藏节点外部浮动标签，不动节点内下拉框 */
 #app.hide-labels .float-label { display: none !important; }

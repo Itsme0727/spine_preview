@@ -640,7 +640,7 @@ SMTool._onWheel = function (e) {
         var dm = SMData._debugMode;
         var node = SMData.nodes.get(dm.nodeId);
         if (node) {
-            var factor = e.deltaY > 0 ? 0.95 : 1.05;
+            var factor = e.deltaY > 0 ? 0.935 : 1.065;
             var newScale = (node._customScale || 1.0) * factor;
             newScale = Math.max(0.2, Math.min(5.0, newScale));
             node._customScale = newScale;
@@ -651,7 +651,7 @@ SMTool._onWheel = function (e) {
     }
 
     var oz = SMData.view.zoom;
-    var factor = e.deltaY > 0 ? 0.95 : 1.05;
+    var factor = e.deltaY > 0 ? 0.935 : 1.065;
     SMData.view.zoom = Math.max(0.03, Math.min(5, SMData.view.zoom * factor));
     var mx = e.clientX - window.innerWidth / 2;
     var my = e.clientY - window.innerHeight / 2;
