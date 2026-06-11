@@ -118,6 +118,7 @@ SMTool.deleteNode = function (nid) {
         SMTool._hideAnimPreview();
     }
 
+    // 🔒 [LOCK-L] 并行播放面板刷新及时性 — 节点删除后刷新层级显示
     // ★ 立即刷新所有层级节点盒子文字
     if (typeof SMTool._refreshAllLayerBoxes === 'function') SMTool._refreshAllLayerBoxes();
     // ★ 若被删节点属于某层级，刷新对应浮窗
@@ -169,7 +170,7 @@ SMTool.copyNode = function (nid, offsetX, offsetY) {
     node._debugOffsetY = orig._debugOffsetY || 0;
     node._debugCanvasW = orig._debugCanvasW || 0;
     node._debugCanvasH = orig._debugCanvasH || 0;
-    node._boneTag = orig._boneTags ? JSON.parse(JSON.stringify(orig._boneTags)) : {};
+    node._boneTags = orig._boneTags ? JSON.parse(JSON.stringify(orig._boneTags)) : {};
     node._boneNotes = orig._boneNotes ? JSON.parse(JSON.stringify(orig._boneNotes)) : {};
     // ★ 性能优化：共享截图引用而非深拷贝 dataUrl。
     // 同一来源的节点复制时，_boneScreenshots 只存 shotId（数字），
@@ -444,7 +445,12 @@ SMTool.init = function () {
     SMTool._initMinimap();
 
     SMTool.resize();
-    window.addEventListener('resize', function () { SMTool.resize(); });
+    // ★ 优化：防抖 resize 事件，避免拖拽窗口边缘时频繁触发导致卡顿
+    var _resizeTimer = 0;
+    window.addEventListener('resize', function () {
+        clearTimeout(_resizeTimer);
+        _resizeTimer = setTimeout(function () { SMTool.resize(); }, 80);
+    });
 
     // 鼠标事件（数据面板内的操作不取消动画对象选中）
     document.addEventListener('mousedown', function (e) {
@@ -460,7 +466,7 @@ SMTool.init = function () {
     window.addEventListener('wheel', function (e) {
         // ★ 调试模式：滚轮始终用于缩放动画层
         if (SMData._debugMode) { e.preventDefault(); SMTool._onWheel(e); return; }
-        if (!e.target.closest('.state-list') && !e.target.closest('.anim-bar') && !e.target.closest('.anim-select') && !e.target.closest('.ip-body') && !e.target.closest('#conditionEditor') && !e.target.closest('#dataFloatPanel') && !e.target.closest('#animPreviewPanel')) {
+        if (!e.target.closest('.state-list') && !e.target.closest('.anim-bar') && !e.target.closest('.anim-select') && !e.target.closest('.ip-body') && !e.target.closest('#conditionEditor') && !e.target.closest('#dataFloatPanel') && !e.target.closest('#animPreviewPanel') && !e.target.closest('#screenshotOverlay')) {
             e.preventDefault();
             SMTool._onWheel(e);
         }
@@ -1220,7 +1226,8 @@ SMTool.init = function () {
                 cp1y: c.cp1y !== undefined ? c.cp1y : 0,
                 cp2x: c.cp2x !== undefined ? c.cp2x : -50,
                 cp2y: c.cp2y !== undefined ? c.cp2y : 0,
-                color: c.color || ''
+                color: c.color || '',
+                _layerNum: c._layerNum  // ★ 层级节点独占连线层号
             });
         }
 
@@ -1663,7 +1670,8 @@ SMTool.init = function () {
                 cp1y: c.cp1y,
                 cp2x: c.cp2x,
                 cp2y: c.cp2y,
-                color: c.color || ''
+                color: c.color || '',
+                _layerNum: c._layerNum  // ★ 层级节点独占连线层号
             };
         });
 
@@ -1699,6 +1707,8 @@ SMTool.init = function () {
         SMTool._refreshAllTranslations();
         SMTool._updateFlowPanel();
         SMTool._updateFloatPanel();
+        // 🔒 [LOCK-L] 并行播放面板刷新及时性 — undo/redo 后必须刷新层级节点显示
+        if (typeof SMTool._refreshAllLayerBoxes === 'function') SMTool._refreshAllLayerBoxes();
 
         // 同步模式按钮
         var elS2 = document.getElementById('modeStatic');
@@ -1860,9 +1870,12 @@ SMTool.init = function () {
 
     SMTool._updateSB();
 
-    console.log('🎬 Spine Animation State Machine ready!');
-    console.log('  拖拽 .zip 工程包 或 spine 文件到画布上');
-    console.log('  Alt+拖拽=平移 | 滚轮=缩放 | 右键=平移');
+    // ★ 启动日志（设置 SMData._debugLog = false 可静默）
+    if (SMData._debugLog !== false) {
+        console.log('🎬 Spine Animation State Machine ready!');
+        console.log('  拖拽 .zip 工程包 或 spine 文件到画布上');
+        console.log('  Alt+拖拽=平移 | 滚轮=缩放 | 右键=平移');
+    }
 
     // ================================================================
     // ★ 显示/隐藏切换按钮（左上角）

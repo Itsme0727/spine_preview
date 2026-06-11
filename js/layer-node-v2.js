@@ -4,6 +4,10 @@
    数越小越靠上。独占式右侧端点（每层一个），
    每个端点仅可连一根线，新连线替换旧连线。
    浮窗预览叠加渲染，动画流并行分支播放。
+
+   🔒 [LOCK-L] 本文件中所有标注 [LOCK-L] 的代码段涉及
+      并行播放面板的刷新及时性（DOM文字、连线重绘、浮窗预览）。
+      修改任何 [LOCK-L] 锁定的代码前必须询问用户同意解锁。
    ================================================================ */
 
 var SMTool = window.SMTool || {};
@@ -183,6 +187,7 @@ SMTool._layerCountStep = function (nid, dir) {
 };
 
 SMTool._layerCountSet = function (nid, count) {
+    // 🔒 [LOCK-L] 并行播放面板刷新及时性 — 层数变更后必须重建 DOM + 刷新盒子文字
     var node = SMData.nodes.get(nid);
     if (!node || node.nodeType !== 'layer') return;
     count = Math.max(2, Math.min(20, Math.round(count) || 2));
@@ -341,6 +346,7 @@ SMTool._tryConnectLayerDot = function (fromNid, fromState, toNid) {
 };
 
 /** 节点动画变更时同步层数据 */
+// 🔒 [LOCK-L] 并行播放面板刷新及时性 — 动画变更时自动同步层级节点显示
 SMTool._syncLayerAnim = function (nid) {
     var node = SMData.nodes.get(nid);
     if (!node) return;
@@ -365,6 +371,12 @@ SMTool._syncLayerAnim = function (nid) {
 };
 
 /** ★ 立即刷新所有层级节点的盒子文字（连线增/删后调用） */
+// ================================================================
+// 🔒🔒🔒 [LOCK-L] 并行播放面板刷新及时性 — 不可修改刷新时机/顺序
+// ⚠️ 此函数及其所有调用点被锁定。并行播放面板的 DOM 文字、
+//    连线重绘、浮窗预览的刷新逻辑与调用时机需保持一致。
+//    修改前必须询问用户同意"解锁 LOCK-L"。
+// ================================================================
 SMTool._refreshAllLayerBoxes = function () {
     // ★ 优化：先按 fromNode 建立连线索引，避免 O(N×C) 嵌套遍历
     var connIndex = {}; // { fromNodeId: { layerNum: { toNode, toNodeObj } } }
@@ -464,18 +476,28 @@ SMTool._initLayerDrag = function (el, node) {
     }
 
     function onUp(ev) {
+        // 🔒 [LOCK-L] 并行播放面板刷新及时性 — drop 位置检测（above/below）+ _layerSwap 调用链
         ev.stopPropagation();
         ev.preventDefault();
         var cur = document.getElementById('sn-' + dragNode.id);
         if (cur) {
             var rows = cur.querySelectorAll('.layer-box-row');
-            var target = null;
+            var target = null, before = true;
             for (var i = 0; i < rows.length; i++) {
                 var r = rows[i].getBoundingClientRect();
-                if (ev.clientY >= r.top && ev.clientY <= r.bottom) { target = rows[i]; break; }
+                if (ev.clientY >= r.top && ev.clientY <= r.bottom) {
+                    target = rows[i];
+                    before = (ev.clientY < r.top + r.height / 2);
+                    break;
+                }
             }
             if (target) {
                 var tgtNum = parseInt(target.getAttribute('data-layer'));
+                // ★ drop below → 插入到目标行之后
+                if (!before) tgtNum++;
+                var lc = dragNode._layerData ? dragNode._layerData.layerCount : 0;
+                if (tgtNum > lc) tgtNum = lc;
+                if (tgtNum < 1) tgtNum = 1;
                 if (tgtNum !== dragSrcLayer) SMTool._layerSwap(dragNode, dragSrcLayer, tgtNum);
             }
         }
@@ -522,6 +544,12 @@ SMTool._initLayerDrag = function (el, node) {
 };
 
 /** 插入式重排序：把 src 层拖到 tgt 层位置，中间层顺移 */
+// ================================================================
+// 🔒 [LOCK-L] 并行播放面板刷新及时性
+// ⚠️ 此函数包含层级数据交换、连线 _layerNum/fromState 更新、
+//    DOM 重建、盒子文字刷新、连线画布强制重绘等关键刷新逻辑。
+//    修改前必须询问用户同意"解锁 LOCK-L"。
+// ================================================================
 SMTool._layerSwap = function (layerNode, srcLayer, tgtLayer) {
     if (srcLayer === tgtLayer || srcLayer < 1 || tgtLayer < 1) return;
     SMTool.pushUndo();
@@ -548,7 +576,6 @@ SMTool._layerSwap = function (layerNode, srcLayer, tgtLayer) {
             }
         }
     }
-    console.log('[layerSwap] layerCount=', lc, 'layers=', JSON.stringify(ld.layers));
     if (srcLayer > lc || tgtLayer > lc) return;
 
     var orderedData = [];
@@ -568,7 +595,6 @@ SMTool._layerSwap = function (layerNode, srcLayer, tgtLayer) {
         }
         orderedConns.push(foundCid);
     }
-    console.log('[layerSwap] orderedData before:', JSON.stringify(orderedData), 'conns:', JSON.stringify(orderedConns));
 
     var movedData = orderedData[srcLayer - 1];
     var movedConn = orderedConns[srcLayer - 1];
@@ -579,7 +605,6 @@ SMTool._layerSwap = function (layerNode, srcLayer, tgtLayer) {
     if (insertIdx > orderedData.length) insertIdx = orderedData.length;
     orderedData.splice(insertIdx, 0, movedData);
     orderedConns.splice(insertIdx, 0, movedConn);
-    console.log('[layerSwap] orderedData after:', JSON.stringify(orderedData));
 
     ld.layers = {};
     for (var li = 0; li < orderedData.length; li++) {
@@ -604,9 +629,12 @@ SMTool._layerSwap = function (layerNode, srcLayer, tgtLayer) {
     SMTool._updateSB();
     SMTool._updateStateRowColors();
     SMTool._refreshLayerPreviewIfOpen(layerNode);
+    // ★ 强制重绘连线画布（连线 _layerNum/fromState 已变更）
+    SMData._forceRedraw = true;
 };
 
 /** ★ 若浮窗正在显示该层级节点，立即刷新 */
+// 🔒 [LOCK-L] 并行播放面板刷新及时性 — 此刷新调用时机不可随意变更
 SMTool._refreshLayerPreviewIfOpen = function (layerNode) {
     var pp = SMData._animPreview;
     if (pp && pp.visible && pp.nodeId === layerNode.id && pp._layerSkeletons && pp._layerSkeletons.length > 0) {
@@ -615,6 +643,7 @@ SMTool._refreshLayerPreviewIfOpen = function (layerNode) {
 };
 
 /** ▲▼ 按钮移动层：dir=-1 上移，dir=1 下移 */
+// 🔒 [LOCK-L] 并行播放面板刷新及时性 — 调用 _layerSwap 触发完整刷新链路
 SMTool._layerMoveBy = function (nid, layerNum, dir) {
     var node = SMData.nodes.get(nid);
     if (!node || node.nodeType !== 'layer') return;

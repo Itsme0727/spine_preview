@@ -264,7 +264,7 @@ SMTool._buildNodeIndicatorsHtml = function (node) {
         }
     }
     if (slotMarked > 0) {
-        html += '<button class="ndi-btn ndi-slot" title="插槽: ' + slotMarked + ' 个已标记" onclick="event.stopPropagation();SMTool._onIndicatorClick(' + node.id + ',\'slot\')" style="position:relative">�<span class="ndi-count">' + slotMarked + '</span></button>';
+        html += '<button class="ndi-btn ndi-slot" title="插槽: ' + slotMarked + ' 个已标记" onclick="event.stopPropagation();SMTool._onIndicatorClick(' + node.id + ',\'slot\')" style="position:relative">🔲<span class="ndi-count">' + slotMarked + '</span></button>';
     }
     html += '</div>';
     return html;
@@ -1877,7 +1877,7 @@ SMTool._refreshNodeImages = function (nid) {
         container.style.right = 'auto';
         container.style.top = 'auto';
     }
-    var thumbW = Math.round((node.width || 300) * 0.8);
+    var thumbW = Math.round((node.width || 300) * 0.56);
     var thumbH = Math.round(thumbW * 0.75);
     var html = '';
     for (var i = 0; i < node._nodeImages.length; i++) {
@@ -2027,7 +2027,13 @@ SMTool._openNodeImage = function (nid, index) {
     overlay.querySelector('.shot-nav-zoomin').onclick = function (e) { e.stopPropagation(); var s = parseFloat(img.style.transform.replace('scale(','').replace(')','')) || 1; s = Math.min(5, s + 0.25); img.style.transform = 'scale(' + s + ')'; overlay.querySelector('.shot-zoom-label').textContent = Math.round(s * 100) + '%'; };
     overlay.querySelector('.shot-nav-zoomout').onclick = function (e) { e.stopPropagation(); var s = parseFloat(img.style.transform.replace('scale(','').replace(')','')) || 1; s = Math.max(0.25, s - 0.25); img.style.transform = 'scale(' + s + ')'; overlay.querySelector('.shot-zoom-label').textContent = Math.round(s * 100) + '%'; };
     overlay.querySelector('.shot-nav-reset').onclick = function (e) { e.stopPropagation(); img.style.transform = 'scale(1)'; overlay.querySelector('.shot-zoom-label').textContent = '100%'; };
-    overlay.onclick = function (e) { if (e.target === overlay) SMTool._closeScreenshot(); };
+    overlay.onclick = function (e) {
+        // 点击 overlay 背景 或 shot-viewer 容器空白区域 → 关闭
+        // 但不关闭 img / 导航按钮上的点击
+        if (e.target === overlay || e.target.classList.contains('shot-viewer')) {
+            SMTool._closeScreenshot();
+        }
+    };
     overlay._keyHandler = function (e2) { if (e2.key === 'Escape') SMTool._closeScreenshot(); };
     document.addEventListener('keydown', overlay._keyHandler);
     overlay._wheelHandler = function (e2) { e2.preventDefault(); var s = parseFloat(img.style.transform.replace('scale(','').replace(')','')) || 1; s = Math.max(0.25, Math.min(5, s + (e2.deltaY > 0 ? -0.25 : 0.25))); img.style.transform = 'scale(' + s + ')'; overlay.querySelector('.shot-zoom-label').textContent = Math.round(s * 100) + '%'; };

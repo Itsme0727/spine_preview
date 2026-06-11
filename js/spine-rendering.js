@@ -342,6 +342,32 @@ SMTool._loop = function (now) {
     // ★ 优化：没有需要渲染的节点时跳过全清操作
     var hasVisibleNode = false;
 
+    // ★ 先遍历检查是否有可见节点，无则跳过整帧 WebGL 操作
+    var previewCheckIter = SMData.nodes.values();
+    var previewCheck = previewCheckIter.next();
+    while (!previewCheck.done) {
+        var pcNode = previewCheck.value;
+        if (pcNode.state && pcNode.skeleton && pcNode._canvasWidth) {
+            hasVisibleNode = true;
+            break;
+        }
+        previewCheck = previewCheckIter.next();
+    }
+
+    if (!hasVisibleNode) {
+        // 无任何可渲染节点 → 仅更新 2D 画布，跳过 WebGL 清屏
+        if (doStats) {
+            document.getElementById('sbFPS').textContent = 'FPS: --';
+            document.getElementById('sbBones').textContent = '骨骼: 0';
+            document.getElementById('sbDraws').textContent = 'Draw call: 0';
+            SMTool._fc = 0; SMTool._ft = now;
+        }
+        SMTool._renderSnapLines();
+        if ((SMTool._fc & 3) === 0) SMTool._renderMinimap();
+        return;
+    }
+    hasVisibleNode = false; // 重置，后续真正遍历时再标记
+
     // 每帧全清画布（仅当有节点需要渲染时）
     gl.disable(gl.SCISSOR_TEST);
     gl.viewport(0, 0, cwFull, chFull);
@@ -601,7 +627,8 @@ SMTool._loop = function (now) {
         SMTool._renderConnections();
     }
     SMTool._renderSnapLines();
-    SMTool._renderMinimap();
+    // ★ 优化：鸟瞰图每 4 帧渲染一次（约 15fps），减少 2D canvas 开销
+    if ((SMTool._fc & 3) === 0) SMTool._renderMinimap();
     SMTool._renderAnimPreview(now);
 };
 

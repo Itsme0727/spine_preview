@@ -41,6 +41,7 @@ body {
     z-index: 1;
     pointer-events: none;
     background: #000;
+    will-change: transform;  /* ★ GPU 加速网格重绘 */
 }
 #sharedSpineCanvas {
     position: absolute;
@@ -48,6 +49,7 @@ body {
     z-index: 3;
     pointer-events: none;
     background: transparent;
+    will-change: transform;  /* ★ GPU 加速 WebGL 合成 */
 }
 #boneOverlay {
     position: absolute;
@@ -60,6 +62,7 @@ body {
     top: 0; left: 0;
     z-index: 2;
     pointer-events: none;
+    contain: layout style;  /* ★ 隔离节点层，减少拖拽时的全局重绘 */
 }
 #nodesLayer > * {
     pointer-events: all;
@@ -378,6 +381,7 @@ body {
     transition: border-color 0.3s, box-shadow 0.3s;
     flex-shrink: 0;
     overflow: visible;
+    contain: layout style;  /* ★ 隔离重排/重绘，避免节点拖拽触发全画布重绘 */
 }
 
 /* ===== 动画进度条（覆盖 anim-select 下拉框） ===== */
@@ -2517,6 +2521,10 @@ body {
     display: none;
     z-index: 2;
 }
+/* ★ 骨骼页签：删除按钮下移 23px，避免遮挡截图内容 */
+#dataFloatPanel .dfp-tab-panel[data-panel="bone"] .dfp-shot-del {
+    top: 23px;
+}
 #dataFloatPanel .dfp-shot-item:hover .dfp-shot-del {
     display: block;
 }
@@ -2584,7 +2592,7 @@ body {
     position: fixed;
     inset: 0;
     z-index: 1000;
-    background: rgba(0, 0, 0, 0.94);
+    background: rgba(0, 0, 0, 0.74);
     display: none;
     align-items: center;
     justify-content: center;

@@ -783,7 +783,8 @@ SMTool._serializeData = function () {
             cp1y: c.cp1y,
             cp2x: c.cp2x,
             cp2y: c.cp2y,
-            color: c.color
+            color: c.color,
+            _layerNum: c._layerNum  // ★ 层级节点独占连线层号
         });
     }
 
@@ -842,7 +843,9 @@ SMTool._serializeData = function () {
             _imageDataUrl: n._imageDataUrl || '',
             // ★ 节点面板右上角图片附件
             _nodeImages: n._nodeImages ? n._nodeImages.slice() : [],
-            _nodeShotRefs: n._nodeShotRefs ? n._nodeShotRefs.slice() : []
+            _nodeShotRefs: n._nodeShotRefs ? n._nodeShotRefs.slice() : [],
+            // ★ 层级节点数据（并行播放层数及每层连线信息）
+            _layerData: n._layerData ? JSON.parse(JSON.stringify(n._layerData)) : null
         });
         result = nodesIter.next();
     }
@@ -1740,6 +1743,9 @@ SMTool._processImportJson = function (jsonText, fileHandle) {
             // ★ 节点面板右上角图片附件
             node._nodeImages = nd._nodeImages || [];
             node._nodeShotRefs = nd._nodeShotRefs || [];
+            // ★ 层级节点数据（并行播放层数及每层连线信息）
+            if (nd._layerData) node._layerData = JSON.parse(JSON.stringify(nd._layerData));
+            else if (nd.nodeType === 'layer') node._layerData = { layerCount: 2, layers: {} };
 
             SMData.nodes.set(nd.id, node);
             SMData.nextId = Math.max(SMData.nextId, nd.id + 1);
@@ -1795,6 +1801,18 @@ SMTool._processImportJson = function (jsonText, fileHandle) {
         SMTool._updateSB();
         SMTool._updateStateRowColors();
         SMTool._updateFloatPanel();
+        // 🔒 [LOCK-L] 并行播放面板刷新及时性 — 导入后必须刷新层级节点显示
+        // ★ 刷新所有层级节点盒子文字（连线/层数据已恢复）
+        if (typeof SMTool._refreshAllLayerBoxes === 'function') SMTool._refreshAllLayerBoxes();
+        // ★ 刷新层级节点浮窗预览
+        var layerIter = SMData.nodes.values();
+        var lr = layerIter.next();
+        while (!lr.done) {
+            if (lr.value.nodeType === 'layer' && typeof SMTool._refreshLayerPreviewIfOpen === 'function') {
+                SMTool._refreshLayerPreviewIfOpen(lr.value);
+            }
+            lr = layerIter.next();
+        }
 
         resolve();
     } catch (err) {
