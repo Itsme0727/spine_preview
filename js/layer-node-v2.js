@@ -657,6 +657,30 @@ SMTool._layerMoveBy = function (nid, layerNum, dir) {
 // 浮窗预览：多层叠加渲染
 // ================================================================
 
+// ★ 从指定节点出发，沿 outgoing 连线构建动画链（取第一条边，防环路）
+// 返回 [nodeId1, nodeId2, ...] 顺序数组
+SMTool._buildChainFromNode = function (startNodeId) {
+    var chain = [startNodeId];
+    var visited = {};
+    visited[startNodeId] = true;
+    var currentId = startNodeId;
+    while (true) {
+        var nextId = null;
+        for (var ci = 0; ci < SMData.connections.length; ci++) {
+            var c = SMData.connections[ci];
+            if (c.fromNode === currentId && !visited[c.toNode]) {
+                nextId = c.toNode;
+                break;
+            }
+        }
+        if (!nextId) break;
+        chain.push(nextId);
+        visited[nextId] = true;
+        currentId = nextId;
+    }
+    return chain;
+};
+
 /** 为层级节点设置浮窗预览 — 统一加载所有连线节点到预览 GL */
 SMTool._showLayerPreview = function (layerNode) {
     var pp = SMData._animPreview;
@@ -766,15 +790,44 @@ SMTool._showLayerPreview = function (layerNode) {
     var physParam = (useVer !== '3.8' && SP.Physics) ? SP.Physics.update : undefined;
     var WGL = useVer === '3.8' ? (window.spine38 && window.spine38.webgl) : null;
 
-    // ★ 统一加载所有层
+    // ★ 统一加载所有层（含动画链）
     var layerSkeletons = [];
     for (var lj = 0; lj < linkedNodes.length; lj++) {
         var item = linkedNodes[lj];
-        var ls = SMTool._loadOneSkeletonToGL(gl, SP, WGL, item.node, physParam, cw, ch, useVer);
-        if (ls) {
-            ls.layer = item.layer;
-            ls.nodeId = item.node.id;
-            layerSkeletons.push(ls);
+        // ★ 构建从直接连线节点出发的动画链
+        var chainIds = SMTool._buildChainFromNode(item.node.id);
+        var chainSkeletons = [];
+        for (var cni = 0; cni < chainIds.length; cni++) {
+            var chainNode = SMData.nodes.get(chainIds[cni]);
+            if (chainNode && chainNode._srcAtlasText && (chainNode._srcSkelJson || chainNode._srcSkelBinBase64) && chainNode._texImgs && chainNode._texImgs.length > 0) {
+                var cls = SMTool._loadOneSkeletonToGL(gl, SP, WGL, chainNode, physParam, cw, ch, useVer);
+                if (cls) {
+                    cls._chainNodeId = chainIds[cni];
+                    cls._chainAnimName = chainNode.currentAnim || '';
+                    chainSkeletons.push(cls);
+                }
+            }
+        }
+        if (chainSkeletons.length > 0) {
+            // 使用链首骨架作为主渲染骨架
+            var firstSk = chainSkeletons[0];
+            firstSk.layer = item.layer;
+            firstSk.nodeId = item.node.id;
+            // ★ 存储动画链数据
+            firstSk._chainNodeIds = chainIds;
+            firstSk._chainSkeletons = chainSkeletons;
+            firstSk._chainIdx = 0;
+            firstSk._chainElapsed = 0;
+            // 链上所有动画设置为非循环（由链层控制回环）
+            for (var cli = 0; cli < chainSkeletons.length; cli++) {
+                if (chainSkeletons[cli].state) {
+                    try {
+                        var ce = chainSkeletons[cli].state.getCurrent(0);
+                        if (ce) ce.loop = false;
+                    } catch (e) {}
+                }
+            }
+            layerSkeletons.push(firstSk);
         }
     }
 
@@ -800,14 +853,16 @@ SMTool._showLayerPreview = function (layerNode) {
         }
     }
     pp._contentZoom = savedZoom;
-    // ★ 用统一 zoom 直接覆写所有层的初始 MVP（不再依赖 _syncLayerPreviewViewport 二次修正）
+    // ★ 用统一 zoom 覆写所有层（含链上所有骨架）的 MVP
     for (var li2 = 0; li2 < layerSkeletons.length; li2++) {
         var lsi = layerSkeletons[li2];
-        if (lsi.mvp && lsi.aspectInfo) {
-            var ai2 = lsi.aspectInfo;
-            lsi.skeleton.x = cw / 2 - ai2.centerX;
-            lsi.skeleton.y = ch / 2 - ai2.centerY;
-            lsi.mvp.ortho2d(cw / 2 - cw / (2 * savedZoom), ch / 2 - ch / (2 * savedZoom), cw / savedZoom, ch / savedZoom);
+        // ★ 更新链上所有骨架的统一缩放位置
+        if (lsi._chainSkeletons) {
+            for (var csi = 0; csi < lsi._chainSkeletons.length; csi++) {
+                SMTool._applyUnifiedZoomToSkeleton(lsi._chainSkeletons[csi], cw, ch, savedZoom);
+            }
+        } else if (lsi.mvp && lsi.aspectInfo) {
+            SMTool._applyUnifiedZoomToSkeleton(lsi, cw, ch, savedZoom);
         }
     }
     SMTool._updateAnimPreviewZoomLabel(savedZoom);
@@ -1033,9 +1088,51 @@ SMTool._renderLayerPreview = function (layerNode, pp, now) {
 
     for (var i = list.length - 1; i >= 0; i--) {
         var ls = list[i];
+        // ★ 动画链播放：每次只更新链上当前活跃的骨架
+        if (ls._chainSkeletons && ls._chainSkeletons.length > 0) {
+            var chainLen = ls._chainSkeletons.length;
+            var curIdx = ls._chainIdx || 0;
+            var active = ls._chainSkeletons[curIdx];
+            if (active && active.state && !pp._flowFrozen) {
+                active.state.update(dt);
+                active.state.apply(active.skeleton);
+                active.skeleton.updateWorldTransform(active.physParam);
+                // 检测当前动画是否播完
+                var entry = active.state.getCurrent(0);
+                if (entry) {
+                    var anim = entry.animation || entry._animation;
+                    if (anim && entry.trackTime >= anim.duration - 0.001) {
+                        // 切换到链上下一个
+                        ls._chainIdx = (curIdx + 1) % chainLen;
+                        // 重置新激活骨架状态
+                        var next = ls._chainSkeletons[ls._chainIdx];
+                        if (next && next.state) {
+                            try { next.state.clearTracks(); } catch (e) {}
+                            var nextAnim = (next._chainAnimName || next.stateData.skeletonData.animations[0].name);
+                            next.state.setAnimation(0, nextAnim, false);
+                            next.state.update(0);
+                            next.state.apply(next.skeleton);
+                        }
+                    }
+                }
+            }
+            // ★ 将活跃骨架引用同步到 ls 以便下方渲染
+            ls.skeleton = active ? active.skeleton : null;
+            ls.state = active ? active.state : null;
+            ls.shader = active ? active.shader : null;
+            ls.batcher = active ? active.batcher : null;
+            ls.skeletonRenderer = active ? active.skeletonRenderer : null;
+            ls.physParam = active ? active.physParam : null;
+            ls.mvp = active ? active.mvp : null;
+            ls.premultipliedAlpha = active ? active.premultipliedAlpha : false;
+        }
+
         if (!ls.skeleton || !ls.state || !ls.shader || !ls.batcher || !ls.skeletonRenderer) continue;
-        if (!pp._flowFrozen) ls.state.update(dt);
-        ls.state.apply(ls.skeleton);
+        // 动画已在链逻辑中更新，此处不再重复调用 state.update
+        if (!ls._chainSkeletons && !pp._flowFrozen) {
+            ls.state.update(dt);
+            ls.state.apply(ls.skeleton);
+        }
         ls.skeleton.updateWorldTransform(ls.physParam);
         // 每层前清 stencil（Spine 裁剪依赖）
         gl.clear(gl.STENCIL_BUFFER_BIT);
@@ -1063,20 +1160,31 @@ SMTool._syncLayerPreviewViewport = function (pp, newW, newH) {
     pp._canvasHeight = ch;
     
     var zoom = pp._contentZoom || 1.0;
-    // ★ 重新居中每层骨架 + 更新 ortho
+    // ★ 重新居中每层骨架（含链上所有骨架）+ 更新 ortho
     for (var i = 0; i < pp._layerSkeletons.length; i++) {
         var ls = pp._layerSkeletons[i];
-        if (!ls.skeleton) continue;
-        var ai = ls.aspectInfo;
-        if (ai) {
-            ls.skeleton.x = cw / 2 - ai.centerX;
-            ls.skeleton.y = ch / 2 - ai.centerY;
-        }
-        if (ls.mvp) {
-            ls.mvp.ortho2d(cw / 2 - cw / (2 * zoom), ch / 2 - ch / (2 * zoom), cw / zoom, ch / zoom);
+        if (ls._chainSkeletons) {
+            for (var csi = 0; csi < ls._chainSkeletons.length; csi++) {
+                SMTool._applyUnifiedZoomToSkeleton(ls._chainSkeletons[csi], cw, ch, zoom);
+            }
+        } else {
+            SMTool._applyUnifiedZoomToSkeleton(ls, cw, ch, zoom);
         }
     }
     SMTool._updateAnimPreviewZoomLabel(zoom);
+};
+
+// ★ 对单个骨架应用统一缩放/居中
+SMTool._applyUnifiedZoomToSkeleton = function (skelEntry, cw, ch, zoom) {
+    if (!skelEntry) return;
+    var ai = skelEntry.aspectInfo;
+    if (ai && skelEntry.skeleton) {
+        skelEntry.skeleton.x = cw / 2 - ai.centerX;
+        skelEntry.skeleton.y = ch / 2 - ai.centerY;
+    }
+    if (skelEntry.mvp) {
+        skelEntry.mvp.ortho2d(cw / 2 - cw / (2 * zoom), ch / 2 - ch / (2 * zoom), cw / zoom, ch / zoom);
+    }
 };
 
 console.log('[LayerNode] 已加载');
