@@ -170,9 +170,9 @@ SMTool._renderConnections = function () {
         }
 
         // 条件标签（带换行/截断）—— 尺寸随画布缩放
-        // 入口/出口节点的连线不显示条件标签
-        var isEntryExitConn = (fn.nodeType === 'entry' || fn.nodeType === 'exit' || tn.nodeType === 'entry' || tn.nodeType === 'exit');
-        if (!isEntryExitConn) {
+        // 仅出口节点的连线不显示条件标签（出口是终点，无需条件）
+        var isExitConn = (fn.nodeType === 'exit' || tn.nodeType === 'exit');
+        if (!isExitConn) {
         if (!inFocus) ctx.globalAlpha = 0.25;
         var rawLabel = conn.condition || '条件';
         var maxCharsPerLine = 20;

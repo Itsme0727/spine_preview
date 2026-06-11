@@ -39,7 +39,7 @@ SMTool.addLayerNodeAt = function (wx, wy) {
     var id = SMData.nextId++;
     var node = new SpineNodeData(id);
     node.nodeType = 'layer';
-    node.name = '层级';
+    node.name = '并行播放';
     node.x = wx; node.y = wy;
     node.width = 340;
     node._layerData = { layerCount: 2, layers: {} };
@@ -110,7 +110,7 @@ SMTool._createLayerEl = function (node) {
 
     el.innerHTML =
         '<div class="header layer-header" onmousedown="event.stopPropagation();SMTool._onHD(event,' + node.id + ')">' +
-            '<span class="layer-title">📚 层级</span>' +
+            '<span class="layer-title">📚 并行播放</span>' +
             '<div class="layer-header-btns">' +
                 '<button onclick="event.stopPropagation();SMTool.deleteNode(' + node.id + ')" title="删除节点">✕</button>' +
             '</div>' +

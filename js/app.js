@@ -448,7 +448,7 @@ SMTool.init = function () {
 
     // 鼠标事件（数据面板内的操作不取消动画对象选中）
     document.addEventListener('mousedown', function (e) {
-        if (e.target.closest && e.target.closest('#toolbar, #ctxMenu, #conditionEditor, #zoomControl, #statusBar, #dataFloatPanel, #flowPanel, #flowModeToggle')) return;
+        if (e.target.closest && e.target.closest('#toolbar, #ctxMenu, #conditionEditor, #zoomControl, #statusBar, #dataFloatPanel, #flowPanel, #flowModeToggle, #animPreviewPanel')) return;
         if (e.target.closest && e.target.closest('input, textarea, select, button')) return;
         if (e.shiftKey) e.preventDefault();
         SMTool._onMD(e);
@@ -514,66 +514,85 @@ SMTool.init = function () {
 
         e.preventDefault();
         var node = SMData.selectedNode ? SMData.nodes.get(SMData.selectedNode) : null;
-        // 如果选中的是 spine 或 entry 节点 → 添加到节点图片附件
-        if (node && (node.nodeType === 'spine' || node.nodeType === 'entry')) {
-            // 仅 spine 节点支持骨骼截图粘贴
-            if (node.nodeType === 'spine') {
-                var targetBoneName = SMData._pasteTargetBone;
-                if (!targetBoneName || !node._boneTags || !node._boneTags[targetBoneName]) {
-                    if (node._boneTags) { var keys = Object.keys(node._boneTags); if (keys.length > 0) targetBoneName = keys[0]; }
-                }
-                if (targetBoneName) {
-                    var loaded = 0; var dataUrls = [];
-                    for (var j = 0; j < imageBlobs.length; j++) {
-                        (function (blob) {
-                            var reader = new FileReader();
-                            reader.onload = function () { dataUrls.push(reader.result); loaded++; if (loaded === imageBlobs.length) { SMTool._addBoneScreenshots(targetBoneName, dataUrls); document.getElementById('sbStatus').textContent = '✅ 已粘贴 ' + loaded + ' 张截图 → ' + targetBoneName; setTimeout(function () { document.getElementById('sbStatus').textContent = ''; }, 2000); } };
-                            reader.onerror = function () { loaded++; };
-                            reader.readAsDataURL(blob);
-                        })(imageBlobs[j]);
+
+        // ================================================================
+        // ★ 确定粘贴目标（name + type）
+        // ================================================================
+        var targetName = SMData._pasteTargetBone;
+        var targetType = SMData._pasteTargetType || 'bone';
+
+        // 方式 B：光标在数据面板展开的文本框内 → 自动识别所在行
+        if (!targetName) {
+            var focusedEl = document.activeElement;
+            if (focusedEl && focusedEl.closest && focusedEl.closest('#dataFloatPanel') && SMData._floatPanel && SMData._floatPanel.expanded) {
+                var noteArea = focusedEl.closest('[data-bone-note]');
+                if (noteArea && node && node.nodeType === 'spine') {
+                    targetName = noteArea.getAttribute('data-bone-note');
+                    if (targetName) {
+                        targetType = 'bone';
+                        if (node.skins && node.skins.indexOf(targetName) >= 0) targetType = 'skin';
+                        else if (node.slots && node.slots.indexOf(targetName) >= 0) targetType = 'slot';
+                        else if (node._eventScreenshots && Object.prototype.hasOwnProperty.call(node._eventScreenshots, targetName)) targetType = 'event';
                     }
-                    return;
                 }
             }
-            // ★ 粘贴到节点右上角/下方图片附件
+        }
+
+        // ================================================================
+        // ★ 执行粘贴
+        // ================================================================
+
+        // 路径 1：粘贴到数据面板子项（骨骼/皮肤/插槽/关键帧）
+        if (targetName && node && node.nodeType === 'spine') {
+            var loadedA = 0; var dataUrlsA = [];
+            for (var ja = 0; ja < imageBlobs.length; ja++) {
+                (function (blob) {
+                    var rdr = new FileReader();
+                    rdr.onload = function () {
+                        dataUrlsA.push(rdr.result); loadedA++;
+                        if (loadedA === imageBlobs.length) {
+                            SMTool._addScreenshots(targetName, dataUrlsA, targetType);
+                            document.getElementById('sbStatus').textContent = '✅ 已粘贴 ' + loadedA + ' 张截图 → ' + targetName;
+                            setTimeout(function () { document.getElementById('sbStatus').textContent = ''; }, 2000);
+                        }
+                    };
+                    rdr.onerror = function () { loadedA++; };
+                    rdr.readAsDataURL(blob);
+                })(imageBlobs[ja]);
+            }
+            return;
+        }
+
+        // 路径 2：粘贴到节点面板右上角图片附件（spine 或 entry 节点被选中）
+        if (node && (node.nodeType === 'spine' || node.nodeType === 'entry')) {
             for (var k = 0; k < imageBlobs.length; k++) {
                 (function (blob) {
-                    var reader2 = new FileReader();
-                    reader2.onload = function () {
-                        var sid3 = SMData._shotRegister(reader2.result);
-                        node._nodeImages.push(sid3);
-                        // ★ 同步更新 _nodeShotRefs
+                    var rdr2 = new FileReader();
+                    rdr2.onload = function () {
+                        var sid = SMData._shotRegister(rdr2.result);
+                        node._nodeImages.push(sid);
                         if (!node._nodeShotRefs) node._nodeShotRefs = [];
-                        var ent3 = SMData._shotStore[sid3];
-                        var ext4 = 'png';
-                        if (ent3 && ent3.dataUrl) {
-                            var m4 = ent3.dataUrl.match(/^data:(image\/\w+);/);
-                            if (m4) ext4 = m4[1].split('/')[1];
-                            if (ext4 === 'jpeg') ext4 = 'jpg';
+                        var ent = SMData._shotStore[sid];
+                        var ext = 'png';
+                        if (ent && ent.dataUrl) {
+                            var m = ent.dataUrl.match(/^data:(image\/\w+);/);
+                            if (m) ext = m[1].split('/')[1];
+                            if (ext === 'jpeg') ext = 'jpg';
                         }
-                        node._nodeShotRefs.push('_assets/img_' + sid3 + '.' + ext4);
+                        node._nodeShotRefs.push('_assets/img_' + sid + '.' + ext);
                         SMTool._refreshNodeImages(node.id);
                     };
-                    reader2.readAsDataURL(blob);
+                    rdr2.readAsDataURL(blob);
                 })(imageBlobs[k]);
             }
-            document.getElementById('sbStatus').textContent = '✅ 已粘贴 ' + imageBlobs.length + ' 张图片到节点';
+            document.getElementById('sbStatus').textContent = '✅ 已粘贴 ' + imageBlobs.length + ' 张图片到节点面板';
             setTimeout(function () { document.getElementById('sbStatus').textContent = ''; }, 2000);
             return;
         }
-        // ★ 无 spine 节点选中 → 创建独立图片节点
-        var wpImg = SMTool.canvasToWorld(window.innerWidth / 2, window.innerHeight / 2);
-        for (var k2 = 0; k2 < imageBlobs.length; k2++) {
-            (function (blob, idx) {
-                var reader3 = new FileReader();
-                reader3.onload = function () {
-                    SMTool._addImageNode(reader3.result, wpImg.x + idx * 50, wpImg.y + idx * 50);
-                };
-                reader3.readAsDataURL(blob);
-            })(imageBlobs[k2], k2);
-        }
-        document.getElementById('sbStatus').textContent = '✅ 已粘贴 ' + imageBlobs.length + ' 张图片到画布';
-        setTimeout(function () { document.getElementById('sbStatus').textContent = ''; }, 2000);
+
+        // 路径 3：无目标 → 提示
+        document.getElementById('sbStatus').textContent = '⚠️ 请先点击数据面板"📋 粘贴截图"或选中动画节点，再 Ctrl+V';
+        setTimeout(function () { document.getElementById('sbStatus').textContent = ''; }, 3000);
     });
 
     // 全局点击关闭右键菜单
@@ -2198,51 +2217,11 @@ SMTool._updateTitleText = function (nid, text) {
     if (node) { node._textContent = text; node.name = text; }
 };
 
-// ★ 右键菜单：插入图片
+// ★ 右键菜单：插入图片（已禁用——请使用数据面板的"📁 选取图片"添加截图）
 SMTool.ctxInsertImage = function () {
     document.getElementById('ctxMenu').style.display = 'none';
-    var inp = document.createElement('input');
-    inp.type = 'file';
-    inp.accept = 'image/*';
-    inp.multiple = true;
-    inp.onchange = function () {
-        var files = Array.from(inp.files);
-        if (!files.length) return;
-        var wp = SMTool.canvasToWorld(SMData._mx || window.innerWidth / 2, SMData._my || window.innerHeight / 2);
-        var offsetX = 0;
-        for (var i = 0; i < files.length; i++) {
-            var reader = new FileReader();
-            (function (file, ox) {
-                reader.onload = function () {
-                    SMTool._addImageNode(reader.result, wp.x + ox, wp.y + ox);
-                };
-                reader.readAsDataURL(file);
-            })(files[i], offsetX);
-            offsetX += 50;
-        }
-    };
-    inp.click();
-};
-
-// ★ 新增图片节点（支持粘贴/拖放/右键导入）
-SMTool._addImageNode = function (dataUrl, wx, wy) {
-    SMTool.pushUndo();
-    var id = SMData.nextId++;
-    var node = new SpineNodeData(id);
-    node.nodeType = 'image';
-    node.name = '图片';
-    node._imageDataUrl = dataUrl;
-    node.x = wx !== undefined ? wx : (Math.random() * 200 - 100 + window.innerWidth / 2);
-    node.y = wy !== undefined ? wy : (Math.random() * 200 - 100 + window.innerHeight / 2);
-    node.width = 300;
-    SMData.nodes.set(id, node);
-    SMTool._createEl(node);
-    SMTool._updatePos(node);
-    SMData.selectedNodes.clear();
-    SMData.selectedNodes.add(id);
-    SMData.selectedNode = id;
-    SMTool._updateSel();
-    SMTool._updateSB();
+    document.getElementById('sbStatus').textContent = '⚠️ 请使用数据面板中的"📁 选取图片"为骨骼/皮肤/插槽添加截图';
+    setTimeout(function () { document.getElementById('sbStatus').textContent = ''; }, 3000);
 };
 
 // ★ 更新入口节点名称

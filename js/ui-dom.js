@@ -701,7 +701,10 @@ SMTool._buildBoneRowHtml = function (node, boneName) {
             '<textarea placeholder="骨骼备注..." oninput="SMTool._updateBoneNote(\'' + SMTool._esc(boneName) + '\', this.value)" onclick="event.stopPropagation()">' + noteTextEsc + '</textarea>' +
             '<div class="dfp-bone-shot-area show">' +
                 '<div class="dfp-shot-list">' + shotsHtml + '</div>' +
-                '<button class="dfp-shot-add" onclick="event.stopPropagation();SMTool._pickScreenshot(\'' + SMTool._esc(boneName) + '\')" ondragover="event.preventDefault();event.stopPropagation()" ondrop="event.preventDefault();event.stopPropagation();SMTool._dropScreenshot(event,\'' + SMTool._esc(boneName) + '\')" title="选取图片 / 拖入图片">📁 选取图片</button>' +
+                '<div class="dfp-shot-actions">' +
+                    '<button class="dfp-shot-add" onclick="event.stopPropagation();SMTool._pickScreenshot(\'' + SMTool._esc(boneName) + '\')" ondragover="event.preventDefault();event.stopPropagation()" ondrop="event.preventDefault();event.stopPropagation();SMTool._dropScreenshot(event,\'' + SMTool._esc(boneName) + '\')" title="选取图片 / 拖入图片">📁 选取图片</button>' +
+                    '<button class="dfp-shot-add dfp-shot-btn-paste" onclick="event.stopPropagation();SMTool._pasteScreenshot(\'' + SMTool._esc(boneName) + '\',\'bone\')" title="先点此按钮，再按 Ctrl+V 粘贴剪贴板截图">📋 粘贴截图</button>' +
+                '</div>' +
             '</div>' +
         '</div>';
     }
@@ -779,7 +782,10 @@ SMTool._buildSkinRowHtml = function (node, skinName) {
             '<textarea placeholder="皮肤备注..." oninput="SMTool._updateSkinNote(\'' + SMTool._esc(skinName) + '\', this.value)" onclick="event.stopPropagation()">' + noteTextEsc + '</textarea>' +
             '<div class="dfp-bone-shot-area show">' +
                 '<div class="dfp-shot-list">' + shotsHtml + '</div>' +
-                '<button class="dfp-shot-add" onclick="event.stopPropagation();SMTool._pickSkinScreenshot(\'' + SMTool._esc(skinName) + '\')" ondragover="event.preventDefault();event.stopPropagation()" ondrop="event.preventDefault();event.stopPropagation();SMTool._dropSkinScreenshot(event,\'' + SMTool._esc(skinName) + '\')" title="选取图片 / 拖入图片">📁 选取图片</button>' +
+                '<div class="dfp-shot-actions">' +
+                    '<button class="dfp-shot-add" onclick="event.stopPropagation();SMTool._pickSkinScreenshot(\'' + SMTool._esc(skinName) + '\')" ondragover="event.preventDefault();event.stopPropagation()" ondrop="event.preventDefault();event.stopPropagation();SMTool._dropSkinScreenshot(event,\'' + SMTool._esc(skinName) + '\')" title="选取图片 / 拖入图片">📁 选取图片</button>' +
+                    '<button class="dfp-shot-add dfp-shot-btn-paste" onclick="event.stopPropagation();SMTool._pasteScreenshot(\'' + SMTool._esc(skinName) + '\',\'skin\')" title="先点此按钮，再按 Ctrl+V 粘贴剪贴板截图">📋 粘贴截图</button>' +
+                '</div>' +
             '</div>' +
         '</div>';
     }
@@ -852,7 +858,10 @@ SMTool._buildSlotRowHtml = function (node, slotName) {
             '<textarea placeholder="插槽备注..." oninput="SMTool._updateSlotNote(\'' + SMTool._esc(slotName) + '\', this.value)" onclick="event.stopPropagation()">' + noteTextEsc + '</textarea>' +
             '<div class="dfp-bone-shot-area show">' +
                 '<div class="dfp-shot-list">' + shotsHtml + '</div>' +
-                '<button class="dfp-shot-add" onclick="event.stopPropagation();SMTool._pickSlotScreenshot(\'' + SMTool._esc(slotName) + '\')" ondragover="event.preventDefault();event.stopPropagation()" ondrop="event.preventDefault();event.stopPropagation();SMTool._dropSlotScreenshot(event,\'' + SMTool._esc(slotName) + '\')" title="选取图片 / 拖入图片">📁 选取图片</button>' +
+                '<div class="dfp-shot-actions">' +
+                    '<button class="dfp-shot-add" onclick="event.stopPropagation();SMTool._pickSlotScreenshot(\'' + SMTool._esc(slotName) + '\')" ondragover="event.preventDefault();event.stopPropagation()" ondrop="event.preventDefault();event.stopPropagation();SMTool._dropSlotScreenshot(event,\'' + SMTool._esc(slotName) + '\')" title="选取图片 / 拖入图片">📁 选取图片</button>' +
+                    '<button class="dfp-shot-add dfp-shot-btn-paste" onclick="event.stopPropagation();SMTool._pasteScreenshot(\'' + SMTool._esc(slotName) + '\',\'slot\')" title="先点此按钮，再按 Ctrl+V 粘贴剪贴板截图">📋 粘贴截图</button>' +
+                '</div>' +
             '</div>' +
         '</div>';
     }
@@ -954,6 +963,7 @@ SMTool._updateEventNote = function (eventName, value) {
 
 SMTool._pickEventScreenshot = function (eventName) {
     SMData._pasteTargetBone = eventName;  // 复用粘贴目标
+    SMData._pasteTargetType = 'event';
     var input = document.createElement('input');
     input.type = 'file';
     input.accept = 'image/*';
@@ -999,36 +1009,7 @@ SMTool._dropEventScreenshot = function (e, eventName) {
 };
 
 SMTool._addEventScreenshots = function (eventName, dataUrls) {
-    var node = SMData.nodes.get(SMData.selectedNode);
-    if (!node || node.nodeType !== 'spine') return;
-    var sameSourceNodes = SMTool._getSameSourceNodes(node);
-    var newShotIds = [];
-    var thumbPromises = [];
-    for (var i = 0; i < dataUrls.length; i++) {
-        var shotId = SMData._shotRegister(dataUrls[i]);
-        newShotIds.push(shotId);
-        for (var ni = 0; ni < sameSourceNodes.length; ni++) {
-            var sn = sameSourceNodes[ni];
-            if (!sn._eventScreenshots) sn._eventScreenshots = {};
-            if (!sn._eventScreenshots[eventName]) sn._eventScreenshots[eventName] = [];
-            sn._eventScreenshots[eventName].push(shotId);
-        }
-        var entry = SMData._shotStore[shotId];
-        if (entry && !entry.thumbDataUrl) {
-            thumbPromises.push(
-                SMTool._generateThumbnail(entry.dataUrl).then(function (thumb) { entry.thumbDataUrl = thumb; })
-            );
-        }
-    }
-    var refreshPanel = function () {
-        SMData._lastPanelNodeId = -1;
-        SMTool._updateFloatPanel();
-    };
-    if (thumbPromises.length > 0) {
-        Promise.all(thumbPromises).then(refreshPanel);
-    } else {
-        refreshPanel();
-    }
+    SMTool._addScreenshots(eventName, dataUrls, 'event');
 };
 
 SMTool._removeEventScreenshot = function (eventName, index) {
@@ -1075,6 +1056,11 @@ SMTool._toggleBoneTag = function (boneName, type) {
     type = type || 'bone';  // 'bone' 或 'slot'
     var tagKey = type === 'slot' ? '_slotTags' : '_boneTags';
     var newState = !(node[tagKey] && node[tagKey][boneName]);
+    // ★ 标记从灰变红时自动设为粘贴目标
+    if (newState) {
+        SMData._pasteTargetBone = boneName;
+        SMData._pasteTargetType = type;
+    }
     for (var si = 0; si < sameSourceNodes.length; si++) {
         var n = sameSourceNodes[si];
         if (!n[tagKey]) n[tagKey] = {};
@@ -1266,6 +1252,7 @@ SMTool._toggleSkinTag = function (skinName) {
     var node = SMData.nodes.get(SMData.selectedNode);
     if (!node || node.nodeType !== 'spine') return;
     var sameSourceNodes = SMTool._getSameSourceNodes(node);
+    var wasMarked = !!(node._skinTags && node._skinTags[skinName]);
     for (var si = 0; si < sameSourceNodes.length; si++) {
         var n = sameSourceNodes[si];
         if (!n._skinTags) n._skinTags = {};
@@ -1274,6 +1261,11 @@ SMTool._toggleSkinTag = function (skinName) {
         } else {
             n._skinTags[skinName] = true;
         }
+    }
+    // ★ 标记从灰变红时自动设为粘贴目标
+    if (!wasMarked) {
+        SMData._pasteTargetBone = skinName;
+        SMData._pasteTargetType = 'skin';
     }
     SMData._lastPanelNodeId = -1;
     SMTool._updateFloatPanel();
@@ -1292,6 +1284,7 @@ SMTool._toggleSlotTag = function (slotName) {
     var node = SMData.nodes.get(SMData.selectedNode);
     if (!node || node.nodeType !== 'spine') return;
     var sameSourceNodes = SMTool._getSameSourceNodes(node);
+    var wasMarked = !!(node._slotTags && node._slotTags[slotName]);
     for (var si = 0; si < sameSourceNodes.length; si++) {
         var n = sameSourceNodes[si];
         if (!n._slotTags) n._slotTags = {};
@@ -1300,6 +1293,11 @@ SMTool._toggleSlotTag = function (slotName) {
         } else {
             n._slotTags[slotName] = true;
         }
+    }
+    // ★ 标记从灰变红时自动设为粘贴目标
+    if (!wasMarked) {
+        SMData._pasteTargetBone = slotName;
+        SMData._pasteTargetType = 'slot';
     }
     SMData._lastPanelNodeId = -1;
     SMTool._updateFloatPanel();
@@ -1400,6 +1398,8 @@ SMTool._setSlotFadeDur = function (slotName, value) {
 
 // ---- 皮肤截图（文件选取 + 拖拽 + 添加 + 删除 + 查看） ----
 SMTool._pickSkinScreenshot = function (skinName) {
+    SMData._pasteTargetBone = skinName;
+    SMData._pasteTargetType = 'skin';
     var input = document.createElement('input');
     input.type = 'file';
     input.accept = 'image/*';
@@ -1449,27 +1449,7 @@ SMTool._dropSkinScreenshot = function (e, skinName) {
 };
 
 SMTool._addSkinScreenshots = function (skinName, dataUrls, fileNames) {
-    var node = SMData.nodes.get(SMData.selectedNode);
-    if (!node || node.nodeType !== 'spine') return;
-    var sameSourceNodes = SMTool._getSameSourceNodes(node);
-
-    for (var i = 0; i < dataUrls.length; i++) {
-        var shotId = SMData._shotRegister(dataUrls[i]);
-        var entry = SMData._shotStore[shotId];
-        if (entry && fileNames && fileNames[i] && !entry._fileName) {
-            entry._fileName = fileNames[i];
-        }
-        for (var ni = 0; ni < sameSourceNodes.length; ni++) {
-            var sn = sameSourceNodes[ni];
-            if (!sn._skinScreenshots) sn._skinScreenshots = {};
-            if (!sn._skinScreenshots[skinName]) sn._skinScreenshots[skinName] = [];
-            if (!Array.isArray(sn._skinScreenshots[skinName])) sn._skinScreenshots[skinName] = [sn._skinScreenshots[skinName]];
-            sn._skinScreenshots[skinName].push(shotId);
-        }
-    }
-
-    SMData._lastPanelNodeId = -1;
-    SMTool._updateFloatPanel();
+    SMTool._addScreenshots(skinName, dataUrls, 'skin', fileNames);
 };
 
 SMTool._removeSkinScreenshot = function (skinName, index) {
@@ -1507,6 +1487,8 @@ SMTool._openSkinScreenshot = function (skinName, index) {
 
 // ---- 插槽截图（文件选取 + 拖拽 + 添加 + 删除 + 查看） ----
 SMTool._pickSlotScreenshot = function (slotName) {
+    SMData._pasteTargetBone = slotName;
+    SMData._pasteTargetType = 'slot';
     var input = document.createElement('input');
     input.type = 'file';
     input.accept = 'image/*';
@@ -1556,27 +1538,7 @@ SMTool._dropSlotScreenshot = function (e, slotName) {
 };
 
 SMTool._addSlotScreenshots = function (slotName, dataUrls, fileNames) {
-    var node = SMData.nodes.get(SMData.selectedNode);
-    if (!node || node.nodeType !== 'spine') return;
-    var sameSourceNodes = SMTool._getSameSourceNodes(node);
-
-    for (var i = 0; i < dataUrls.length; i++) {
-        var shotId = SMData._shotRegister(dataUrls[i]);
-        var entry = SMData._shotStore[shotId];
-        if (entry && fileNames && fileNames[i] && !entry._fileName) {
-            entry._fileName = fileNames[i];
-        }
-        for (var ni = 0; ni < sameSourceNodes.length; ni++) {
-            var sn = sameSourceNodes[ni];
-            if (!sn._slotScreenshots) sn._slotScreenshots = {};
-            if (!sn._slotScreenshots[slotName]) sn._slotScreenshots[slotName] = [];
-            if (!Array.isArray(sn._slotScreenshots[slotName])) sn._slotScreenshots[slotName] = [sn._slotScreenshots[slotName]];
-            sn._slotScreenshots[slotName].push(shotId);
-        }
-    }
-
-    SMData._lastPanelNodeId = -1;
-    SMTool._updateFloatPanel();
+    SMTool._addScreenshots(slotName, dataUrls, 'slot', fileNames);
 };
 
 SMTool._removeSlotScreenshot = function (slotName, index) {
@@ -1637,40 +1599,42 @@ SMTool._generateThumbnail = function (dataUrl) {
     });
 };
 
-// ---- 添加截图到骨骼（统一入口，使用全局注册表去重）----
-SMTool._addBoneScreenshots = function (boneName, dataUrls, fileNames) {
+// ---- 添加截图（统一入口，支持骨骼/皮肤/插槽/关键帧）----
+SMTool._addScreenshots = function (name, dataUrls, type, fileNames) {
     var node = SMData.nodes.get(SMData.selectedNode);
     if (!node || node.nodeType !== 'spine') return;
     var sameSourceNodes = SMTool._getSameSourceNodes(node);
+    type = type || 'bone';
+
+    // ★ 根据类型确定存储字段
+    var storageKey;
+    if (type === 'skin') storageKey = '_skinScreenshots';
+    else if (type === 'slot') storageKey = '_slotScreenshots';
+    else if (type === 'event') storageKey = '_eventScreenshots';
+    else storageKey = '_boneScreenshots';
 
     var newShotIds = [];
-    var thumbPromises = [];
     for (var i = 0; i < dataUrls.length; i++) {
         var shotId = SMData._shotRegister(dataUrls[i]);
-        // ★ 保存原始文件名到 shot 条目
         var entry = SMData._shotStore[shotId];
         if (entry && fileNames && fileNames[i] && !entry._fileName) {
             entry._fileName = fileNames[i];
         }
         newShotIds.push(shotId);
-        // 为所有同源节点添加此 shotId 引用
         for (var ni = 0; ni < sameSourceNodes.length; ni++) {
             var sn = sameSourceNodes[ni];
-            if (!sn._boneScreenshots) sn._boneScreenshots = {};
-            if (!sn._boneScreenshots[boneName]) sn._boneScreenshots[boneName] = [];
-            if (!Array.isArray(sn._boneScreenshots[boneName])) sn._boneScreenshots[boneName] = sn._boneScreenshots[boneName] ? [sn._boneScreenshots[boneName]] : [];
-            sn._boneScreenshots[boneName].push(shotId);
-            // ★ shotId 引用计数已在 _shotRegister 中 +1，这里记录为共享引用
+            if (!sn[storageKey]) sn[storageKey] = {};
+            if (!sn[storageKey][name]) sn[storageKey][name] = [];
+            if (!Array.isArray(sn[storageKey][name])) sn[storageKey][name] = sn[storageKey][name] ? [sn[storageKey][name]] : [];
+            sn[storageKey][name].push(shotId);
         }
     }
 
-    // 清除面板缓存，等缩略图全部就绪后统一刷新（保证首次渲染就是真实缩略图）
     var refreshPanel = function () {
         SMData._lastPanelNodeId = -1;
         SMTool._updateFloatPanel();
     };
 
-    // ★ 预生成缩略图，就绪后刷新面板
     if (newShotIds.length > 0) {
         var _genThumb = SMTool._generateThumbnail;
         var _thumbPromises = [];
@@ -1692,6 +1656,20 @@ SMTool._addBoneScreenshots = function (boneName, dataUrls, fileNames) {
     } else {
         refreshPanel();
     }
+};
+
+// ---- 向后兼容：旧函数委托到统一入口 ----
+SMTool._addBoneScreenshots = function (boneName, dataUrls, fileNames) {
+    SMTool._addScreenshots(boneName, dataUrls, 'bone', fileNames);
+};
+SMTool._addSkinScreenshots = function (skinName, dataUrls, fileNames) {
+    SMTool._addScreenshots(skinName, dataUrls, 'skin', fileNames);
+};
+SMTool._addSlotScreenshots = function (slotName, dataUrls, fileNames) {
+    SMTool._addScreenshots(slotName, dataUrls, 'slot', fileNames);
+};
+SMTool._addEventScreenshots = function (eventName, dataUrls) {
+    SMTool._addScreenshots(eventName, dataUrls, 'event', []);
 };
 
 // ★ 切换骨骼截图的挂载状态（同步到所有多选同源节点）
@@ -2091,16 +2069,15 @@ SMTool._removeBoneScreenshot = function (boneName, index) {
 };
 
 // ---- 粘贴截图按钮（引导用户 Ctrl+V，无需剪贴板权限）----
-SMTool._pasteScreenshot = function (boneName) {
-    // 设置粘贴目标骨骼，全局 paste 事件会使用它
-    SMData._pasteTargetBone = boneName;
-    // 视觉反馈：高亮粘贴按钮
+SMTool._pasteScreenshot = function (itemName, type) {
+    SMData._pasteTargetBone = itemName;
+    SMData._pasteTargetType = type || 'bone';
     var btns = document.querySelectorAll('.dfp-shot-btn-paste');
     for (var i = 0; i < btns.length; i++) {
         btns[i].classList.add('active');
         setTimeout((function (btn) { return function () { btn.classList.remove('active'); }; })(btns[i]), 1500);
     }
-    document.getElementById('sbStatus').textContent = '📋 请按 Ctrl+V 粘贴截图 → ' + boneName;
+    document.getElementById('sbStatus').textContent = '📋 请按 Ctrl+V 粘贴截图 → ' + itemName;
     setTimeout(function () { document.getElementById('sbStatus').textContent = ''; }, 3000);
 };
 SMTool._closeScreenshot = function () {
@@ -2232,15 +2209,14 @@ SMTool._openScreenshot = function (boneName, index, storageKey) {
     zoomOutBtn.onclick = function (e) { e.stopPropagation(); curZoom = Math.max(minZoom, curZoom / 1.3); updateImage(); };
     resetBtn.onclick = function (e) { e.stopPropagation(); curZoom = 1.0; updateImage(); };
 
-    // 点击图片不关闭（阻止冒泡到 overlay）
+    // 点击图片不关闭
     img.onclick = function (e) { e.stopPropagation(); };
     // 点击导航栏不关闭
     navBar.onclick = function (e) { e.stopPropagation(); };
-    // 点击 overlay 任意空白处 → 关闭
+    // 点击空白处 → 关闭
     overlay.onclick = function () { SMTool._closeScreenshot(); };
-    // 阻止鼠标事件穿透到下层画布（但不阻止图片上的滚轮，以保留缩放功能）
-    overlay.addEventListener('mousedown', function (e) { e.stopPropagation(); e.preventDefault(); });
-    overlay.addEventListener('mouseup', function (e) { e.stopPropagation(); });
+    // 阻止面板下层的画布事件
+    overlay.onmousedown = function (e) { e.stopPropagation(); };
     overlay.addEventListener('wheel', function (e) {
         // 仅在非图片区域拦截滚轮，图片上的滚轮留给 _wheelHandler 处理缩放
         if (e.target !== img) e.stopPropagation();
@@ -2912,43 +2888,46 @@ SMTool._initAnimPreviewPanel = function () {
     var resizeHandle = panel.querySelector('.app-resize-handle');
     var pp = SMData._animPreview;
 
-    // 标题栏拖拽
-    if (header) {
-        header.addEventListener('mousedown', function (e) {
-            if (e.target.closest('.app-close')) return; // 关闭按钮不触发拖拽
-            e.preventDefault();
-            var rect = panel.getBoundingClientRect();
-            var startX = e.clientX;
-            var startY = e.clientY;
-            var startLeft = rect.left;
-            var startTop = rect.top;
+    // 整个面板可拖拽（排除关闭按钮和缩放手柄；canvas 区域也可拖拽，滚轮仍用于缩放）
+    panel.addEventListener('mousedown', function (e) {
+        if (e.target.closest('.app-close')) return;
+        if (e.target.closest('.app-resize-handle')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        var rect = panel.getBoundingClientRect();
+        var startX = e.clientX;
+        var startY = e.clientY;
+        var startLeft = rect.left;
+        var startTop = rect.top;
 
-            function onMove(ev) {
-                var dx = ev.clientX - startX;
-                var dy = ev.clientY - startY;
-                var newLeft = startLeft + dx;
-                var newTop = startTop + dy;
-                // 限制不超出屏幕
-                newLeft = Math.max(0, Math.min(window.innerWidth - rect.width, newLeft));
-                newTop = Math.max(0, Math.min(window.innerHeight - 30, newTop));
-                panel.style.left = newLeft + 'px';
-                panel.style.top = newTop + 'px';
-                panel.style.right = 'auto';
-                pp.panelX = newLeft;
-                pp.panelY = newTop;
-            }
+        function onMove(ev) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            var dx = ev.clientX - startX;
+            var dy = ev.clientY - startY;
+            var newLeft = startLeft + dx;
+            var newTop = startTop + dy;
+            newLeft = Math.max(0, Math.min(window.innerWidth - rect.width, newLeft));
+            newTop = Math.max(0, Math.min(window.innerHeight - 30, newTop));
+            panel.style.left = newLeft + 'px';
+            panel.style.top = newTop + 'px';
+            panel.style.right = 'auto';
+            pp.panelX = newLeft;
+            pp.panelY = newTop;
+        }
 
-            function onUp() {
-                document.removeEventListener('mousemove', onMove);
-                document.removeEventListener('mouseup', onUp);
-                panel.style.cursor = '';
-            }
+        function onUp(ev) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            panel.style.cursor = '';
+        }
 
-            document.addEventListener('mousemove', onMove);
-            document.addEventListener('mouseup', onUp);
-            panel.style.cursor = 'move';
-        });
-    }
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+        panel.style.cursor = 'move';
+    });
 
     // 右下角缩放手柄
     if (resizeHandle) {
@@ -3385,7 +3364,10 @@ SMTool._buildEventFramesHtml = function (node) {
                 '<textarea placeholder="事件备注..." oninput="SMTool._updateEventNote(\'' + SMTool._esc(evtName) + '\', this.value)" onclick="event.stopPropagation()">' + noteTextEsc + '</textarea>' +
                 '<div class="dfp-bone-shot-area show">' +
                     '<div class="dfp-shot-list">' + shotsHtml + '</div>' +
-                    '<button class="dfp-shot-add" onclick="event.stopPropagation();SMTool._pickEventScreenshot(\'' + SMTool._esc(evtName) + '\')" ondragover="event.preventDefault();event.stopPropagation()" ondrop="event.preventDefault();event.stopPropagation();SMTool._dropEventScreenshot(event,\'' + SMTool._esc(evtName) + '\')" title="选取图片 / 拖入图片">📁 选取图片</button>' +
+                    '<div class="dfp-shot-actions">' +
+                        '<button class="dfp-shot-add" onclick="event.stopPropagation();SMTool._pickEventScreenshot(\'' + SMTool._esc(evtName) + '\')" ondragover="event.preventDefault();event.stopPropagation()" ondrop="event.preventDefault();event.stopPropagation();SMTool._dropEventScreenshot(event,\'' + SMTool._esc(evtName) + '\')" title="选取图片 / 拖入图片">📁 选取图片</button>' +
+                        '<button class="dfp-shot-add dfp-shot-btn-paste" onclick="event.stopPropagation();SMTool._pasteScreenshot(\'' + SMTool._esc(evtName) + '\',\'event\')" title="先点此按钮，再按 Ctrl+V 粘贴剪贴板截图">📋 粘贴截图</button>' +
+                    '</div>' +
                 '</div>' +
             '</div>';
         }

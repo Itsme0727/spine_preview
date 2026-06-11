@@ -805,6 +805,7 @@ SMTool._serializeData = function () {
             bones: n.bones,
             version: n.version,
             currentAnim: n.currentAnim,
+            currentSkin: n.currentSkin || '',
             premultipliedAlpha: n.premultipliedAlpha,
             loop: n.loop,
             tracks: n.tracks,
@@ -1632,6 +1633,7 @@ SMTool._processImportJson = function (jsonText, fileHandle) {
             node.bones = nd.bones || [];
             node.version = nd.version || '';
             node.currentAnim = nd.currentAnim || '';
+            node.currentSkin = nd.currentSkin || '';
             node.premultipliedAlpha = nd.premultipliedAlpha || false;
             node._srcSkelJson = nd._srcSkelJson || null;
             node._srcSkelBinBase64 = nd._srcSkelBinBase64 || null;

@@ -107,7 +107,10 @@ var SMData = {
     _panelCache: {},         // 数据面板 HTML 缓存 { nodeId: htmlString }
     _lastPanelNodeId: -1,    // 上次渲染面板的节点 ID
     _activePanelTab: 'skin', // 当前激活的数据面板页签（skin/bone/slot/info）
-    _pasteTargetBone: null,  // 粘贴截图按钮设置的目标骨骼名
+    _pasteTargetBone: null,  // 粘贴截图按钮设置的目标骨骼/皮肤/插槽名
+    _pasteTargetType: 'bone', // 'bone' | 'skin' | 'slot' | 'event'
+    _lastPanelFocusName: null, // 数据面板内最后聚焦的文本框所属的骨骼/皮肤/插槽名
+    _lastPanelFocusType: 'bone',
 
     // ---- 全局截图注册表（极致去重） ----
     // 所有骨骼截图统一存储在此，节点只存 shotId 引用。

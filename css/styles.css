@@ -2311,8 +2311,8 @@ body {
 
 /* 骨骼备注文本框 */
 #dataFloatPanel .dfp-bone-note-area {
-    margin-top: 6px;
-    padding: 8px;
+    margin-top: 3px;
+    padding: 4px;
     background: var(--input-bg);
     border: 1px solid var(--border);
     border-radius: 8px;
@@ -2329,7 +2329,7 @@ body {
     font-size: 12px;
     font-family: inherit;
     resize: vertical;
-    min-height: 120px;
+    min-height: 60px;
     outline: none;
     line-height: 1.5;
     padding: 4px;
@@ -2546,8 +2546,7 @@ body {
 }
 /* 选取截图按钮（占满宽度） */
 #dataFloatPanel .dfp-shot-add {
-    width: 100%;
-    height: 44px;
+    height: 38px;
     border: 2px dashed var(--border);
     border-radius: 8px;
     background: var(--input-bg);
@@ -2560,7 +2559,17 @@ body {
     justify-content: center;
     gap: 6px;
     font-family: inherit;
+    flex: 1;
+}
+#dataFloatPanel .dfp-shot-actions {
+    display: flex;
+    gap: 6px;
     margin-top: 6px;
+}
+#dataFloatPanel .dfp-shot-btn-paste.active {
+    border-color: #7c5ce7 !important;
+    background: rgba(124, 92, 231, 0.15) !important;
+    color: #a78bfa !important;
 }
 #dataFloatPanel .dfp-shot-add:hover {
     border-color: var(--accent2);
@@ -2749,7 +2758,7 @@ body {
 /* 骨骼标签内联输入框 */
 #dataFloatPanel .dfp-bone-input {
     width: 100%;
-    padding: 3px 6px;
+    padding: 2px 4px;
     font-size: 11px;
     background: var(--input-bg);
     border: 1px solid var(--accent2);

@@ -408,26 +408,7 @@ SMTool._onDropSpineFiles = function (files, dropX, dropY) {
         }
     }
 
-    // Handle pure image file groups
-    for (var k3 = 0; k3 < keys.length; k3++) {
-        var base3 = keys[k3];
-        var group3 = groups[base3];
-        if (group3._merged) { continue; }
-        if (!group3.json && !group3.skel && !group3.atlas && group3._pngs) {
-            var pngs = group3._pngs;
-            var wpImg = SMTool.canvasToWorld(dropX + accumulatedOffset, dropY);
-            for (var pi2 = 0; pi2 < pngs.length; pi2++) {
-                var reader2 = new FileReader();
-                (function (file, ox) {
-                    reader2.onload = function () {
-                        SMTool._addImageNode(reader2.result, wpImg.x + ox, wpImg.y + ox);
-                    };
-                    reader2.readAsDataURL(file);
-                })(pngs[pi2], pi2 * 50 + accumulatedOffset);
-            }
-            accumulatedOffset += H_SPACING;
-        }
-    }
+    // ★ 纯图片文件忽略（已禁用独立图片节点，请使用数据面板添加截图）
 };
 
 // ================================================================
@@ -824,6 +805,15 @@ SMTool._replaceSpineData = function (existingIds, fileGroup, baseName) {
                     }
                 } else if (!skinFound && node.skeletonData && node.skeletonData.defaultSkin) {
                     node.currentSkin = node.skeletonData.defaultSkin.name || '';
+                    // ★ 皮肤≥2个时默认选第二个，避免默认皮肤通常是白色/灰色占位
+                    if (node.skins.length >= 2 && node.skeletonData.skins.length >= 2) {
+                        var altSkin2 = node.skeletonData.skins[1];
+                        if (altSkin2) {
+                            node.skeleton.setSkin(altSkin2);
+                            node.skeleton.setSlotsToSetupPose();
+                            node.currentSkin = altSkin2.name;
+                        }
+                    }
                 }
 
                 // 刷新 DOM
@@ -838,6 +828,21 @@ SMTool._replaceSpineData = function (existingIds, fileGroup, baseName) {
             SMTool._checkMissingStates();
             SMTool._refreshAllTranslations();
             SMData._forceRedraw = true;
+
+            // ★ 替换动画后临时切换到动态模式 1 秒，强制刷新所有节点画面
+            // 静态/性能模式下非选中节点不更新动画，替换后骨架可能停在 setup pose
+            // 1 秒后自动恢复到之前的模式
+            if (SMData.renderMode !== 'dyn') {
+                var prevMode = SMData.renderMode;
+                SMTool.setRenderMode('dyn');
+                console.log('[Replace] 临时切换到动态模式刷新画面，1秒后恢复为 ' + prevMode);
+                setTimeout(function () {
+                    if (SMData.renderMode === 'dyn') {
+                        SMTool.setRenderMode(prevMode);
+                        console.log('[Replace] 已恢复为 ' + prevMode + ' 模式');
+                    }
+                }, 1000);
+            }
 
             // ★ 替换文件后，浮窗预览面板持有旧 skeleton/state/纹理，
             // 但 _showAnimPreview 的 sameSource 检测只看文件名（替换后不变），
@@ -1554,8 +1559,29 @@ SMTool._parseSpineData = function (node, SP, WGL, atlasText, pageDataUrls, skelJ
 
             // 创建 Skeleton 实例
             var sk = new SP.Skeleton(sd);
+            // ★ 保存用户之前选择的皮肤名（导入/手动设置），供后续还原
+            var userSkin = node.currentSkin;
             if (sd.defaultSkin) sk.setSkin(sd.defaultSkin);
             node.currentSkin = (sd.defaultSkin && sd.defaultSkin.name) || '';
+            // ★ 优先还原用户选择的皮肤；无记录且皮肤≥2个时默认选第二个
+            var savedSkinFound = false;
+            if (userSkin) {
+                for (var ssi = 0; ssi < sd.skins.length; ssi++) {
+                    if (sd.skins[ssi].name === userSkin) {
+                        sk.setSkin(sd.skins[ssi]);
+                        node.currentSkin = userSkin;
+                        savedSkinFound = true;
+                        break;
+                    }
+                }
+            }
+            if (!savedSkinFound && node.skins.length >= 2 && sd.skins.length >= 2) {
+                var altSkin = sd.skins[1];
+                if (altSkin) {
+                    sk.setSkin(altSkin);
+                    node.currentSkin = altSkin.name;
+                }
+            }
             sk.setToSetupPose();
             if (atlas.pages.length > 0 && (atlas.pages[0].pma || atlas.pages[0].premultipliedAlpha)) {
                 node.premultipliedAlpha = true;
@@ -1981,8 +2007,29 @@ SMTool._loadFromSourceData = function (node) {
                 for (var sli = 0; sli < sd.slots.length; sli++) node.slots.push(sd.slots[sli].name);
 
                 var sk = new SP.Skeleton(sd);
+                // ★ 保存用户之前选择的皮肤名（导入/手动设置），供后续还原
+                var userSkin3 = node.currentSkin;
                 if (sd.defaultSkin) sk.setSkin(sd.defaultSkin);
                 node.currentSkin = (sd.defaultSkin && sd.defaultSkin.name) || '';
+                // ★ 优先还原用户选择的皮肤；无记录且皮肤≥2个时默认选第二个
+                var savedSkinFound3 = false;
+                if (userSkin3) {
+                    for (var ssi3 = 0; ssi3 < sd.skins.length; ssi3++) {
+                        if (sd.skins[ssi3].name === userSkin3) {
+                            sk.setSkin(sd.skins[ssi3]);
+                            node.currentSkin = userSkin3;
+                            savedSkinFound3 = true;
+                            break;
+                        }
+                    }
+                }
+                if (!savedSkinFound3 && node.skins.length >= 2 && sd.skins.length >= 2) {
+                    var altSkin3 = sd.skins[1];
+                    if (altSkin3) {
+                        sk.setSkin(altSkin3);
+                        node.currentSkin = altSkin3.name;
+                    }
+                }
                 sk.setToSetupPose();
                 if (atlas.pages.length > 0 && atlas.pages[0].pma) node.premultipliedAlpha = true;
                 node.skeleton = sk;

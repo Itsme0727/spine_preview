@@ -1733,6 +1733,35 @@ SMTool._initFloatPanel = function () {
         }
     });
 
+    // ★ 点击数据面板内任意子项或聚焦文本框 → 自动设为粘贴目标，无需先点「📋 粘贴截图」
+    function _setPasteTargetFromEl(el) {
+        var noteArea = el.closest && el.closest('[data-bone-note]');
+        if (!noteArea) return;
+        var name = noteArea.getAttribute('data-bone-note');
+        if (!name) return;
+        var selNode = SMData.nodes.get(SMData.selectedNode);
+        var type = 'bone';
+        if (selNode && selNode.nodeType === 'spine') {
+            if (selNode.skins && selNode.skins.indexOf(name) >= 0) type = 'skin';
+            else if (selNode.slots && selNode.slots.indexOf(name) >= 0) type = 'slot';
+            else if (selNode._eventScreenshots && selNode._eventScreenshots.hasOwnProperty(name)) type = 'event';
+        }
+        SMData._pasteTargetBone = name;
+        SMData._pasteTargetType = type;
+    }
+
+    // focusin：聚焦到备注框时自动记录
+    panel.addEventListener('focusin', function (e) {
+        _setPasteTargetFromEl(e.target);
+    });
+
+    // click：点击子项行头/截图区等非文本框区域时也自动记录
+    panel.addEventListener('click', function (e) {
+        // 不拦截按钮点击（选取图片、粘贴截图等已有自己的逻辑）
+        if (e.target.closest && e.target.closest('button, .dfp-shot-del')) return;
+        _setPasteTargetFromEl(e.target);
+    });
+
     // 全局鼠标移动 — 检测靠近左边缘
     document.addEventListener('mousemove', function (e) {
         if (SMData._floatPanel.pinned || SMData._floatPanel.expanded) return;
@@ -1774,6 +1803,10 @@ SMTool._collapseFloatPanel = function () {
     SMData._floatPanel.expanded = false;
     var panel = document.getElementById('dataFloatPanel');
     if (panel) panel.classList.remove('expanded');
+    // ★ 面板收起时清除所有粘贴目标，后续 Ctrl+V 走节点面板路径
+    SMData._pasteTargetBone = null;
+    SMData._pasteTargetType = 'bone';
+    SMData._lastPanelFocusName = null;
 };
 
 // 延迟收起（鼠标离开面板时使用，留一点缓冲）
