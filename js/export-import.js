@@ -845,7 +845,9 @@ SMTool._serializeData = function () {
             _nodeImages: n._nodeImages ? n._nodeImages.slice() : [],
             _nodeShotRefs: n._nodeShotRefs ? n._nodeShotRefs.slice() : [],
             // ★ 层级节点数据（并行播放层数及每层连线信息）
-            _layerData: n._layerData ? JSON.parse(JSON.stringify(n._layerData)) : null
+            _layerData: n._layerData ? JSON.parse(JSON.stringify(n._layerData)) : null,
+            // ★ 延时器节点数据
+            _delayValue: n._delayValue
         });
         result = nodesIter.next();
     }
@@ -1746,6 +1748,8 @@ SMTool._processImportJson = function (jsonText, fileHandle) {
             // ★ 层级节点数据（并行播放层数及每层连线信息）
             if (nd._layerData) node._layerData = JSON.parse(JSON.stringify(nd._layerData));
             else if (nd.nodeType === 'layer') node._layerData = { layerCount: 2, layers: {} };
+            // ★ 延时器节点数据
+            node._delayValue = (nd._delayValue !== undefined ? nd._delayValue : 1.0);
 
             SMData.nodes.set(nd.id, node);
             SMData.nextId = Math.max(SMData.nextId, nd.id + 1);

@@ -1622,6 +1622,11 @@ SMTool._showCtxMenu = function (e) {
         item0c.textContent = '📚 添加层级节点';
         item0c.onclick = function () { SMTool.addLayerNodeAt(wp.x, wp.y); menu3.style.display = 'none'; };
         menu3.appendChild(item0c);
+        var item0d = document.createElement('div');
+        item0d.className = 'ctx-item ctx-text-node';
+        item0d.textContent = '⏱ 添加延时器节点';
+        item0d.onclick = function () { SMTool.addDelayerNodeAt(wp.x, wp.y); menu3.style.display = 'none'; };
+        menu3.appendChild(item0d);
         var sep0 = document.createElement('div');
         sep0.className = 'ctx-sep';
         sep0.style.cssText = 'height:1px;background:var(--border);margin:4px 8px';

@@ -1182,6 +1182,39 @@ SMTool.init = function () {
         SMTool._updateSB();
     };
 
+    // ★ 延时器节点创建
+    SMTool.addDelayerNode = function () {
+        SMTool.addDelayerNodeAt(
+            Math.random() * 200 - 100 + window.innerWidth / 2,
+            Math.random() * 200 - 100 + window.innerHeight / 2
+        );
+    };
+
+    SMTool.addDelayerNodeAt = function (wx, wy) {
+        SMTool.pushUndo();
+        var id = SMData.nextId++;
+        var node = new SpineNodeData(id);
+        node.nodeType = 'delayer';
+        node.name = '延时器';
+        node.x = wx; node.y = wy;
+        node.width = 280;
+        node._delayValue = 1.0;
+        SMData.nodes.set(id, node);
+        SMTool._createEl(node);
+        SMTool._updatePos(node);
+        SMData.selectedNodes.clear();
+        SMData.selectedNodes.add(id);
+        SMData.selectedNode = id;
+        SMTool._updateSel();
+        SMTool._updateSB();
+    };
+
+    SMTool.ctxAddDelayer = function () {
+        var wp = SMTool.canvasToWorld(window.innerWidth / 2, window.innerHeight / 2);
+        SMTool.addDelayerNodeAt(wp.x, wp.y);
+        document.getElementById('ctxMenu').style.display = 'none';
+    };
+
     // 右键菜单：添加入口/出口
     SMTool.ctxAddEntry = function () {
         var wp = SMTool.canvasToWorld(window.innerWidth / 2, window.innerHeight / 2);

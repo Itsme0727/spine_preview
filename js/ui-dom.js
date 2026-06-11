@@ -145,6 +145,35 @@ SMTool._createEl = function (node) {
                 '<img src="' + imgSrc + '" style="width:100%;display:block;border-radius:6px" draggable="false">' +
             '</div>' +
             '<span class="scale-handle" onmousedown="event.stopPropagation();SMTool._onScaleStart(event,' + node.id + ')" title="拖拽缩放"><i class="scale-handle-icon"></i></span>';
+    } else if (node.nodeType === 'delayer') {
+        el.classList.add('delayer-node');
+        if (node._delayValue === undefined) node._delayValue = 1.0;
+        var delayVal = node._delayValue;
+        el.innerHTML =
+            '<div class="header delayer-header" onmousedown="event.stopPropagation();SMTool._onHD(event,' + node.id + ')">' +
+                '<span class="delayer-title">⏱ 延时器</span>' +
+                '<div class="btns">' +
+                    '<button onclick="event.stopPropagation();SMTool.deleteNode(' + node.id + ')" title="删除节点">✕</button>' +
+                '</div>' +
+            '</div>' +
+            '<div class="delayer-body">' +
+                '<div class="delayer-set-row">' +
+                    '<button class="delayer-step-btn" onclick="event.stopPropagation();SMTool._delayerStep(' + node.id + ',-0.1)">◀</button>' +
+                    '<input type="number" class="delayer-input" value="' + delayVal + '" step="0.001" min="0.001" ' +
+                        'onchange="event.stopPropagation();SMTool._delayerSet(' + node.id + ',parseFloat(this.value)||1.0)" ' +
+                        'onclick="event.stopPropagation()" onkeydown="event.stopPropagation()">' +
+                    '<button class="delayer-step-btn" onclick="event.stopPropagation();SMTool._delayerStep(' + node.id + ',0.1)">▶</button>' +
+                    '<span class="delayer-unit">秒</span>' +
+                '</div>' +
+                '<div class="delayer-progress-wrap">' +
+                    '<div class="delayer-progress-bar" id="delayerBar-' + node.id + '"></div>' +
+                '</div>' +
+            '</div>' +
+            '<div class="anim-bar" style="display:flex;justify-content:space-between">' +
+                '<div class="conn-dot input" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'delayer\',\'input\')" title="连线输入"></div>' +
+                '<div class="conn-dot output" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'delayer\',\'output\')" title="连线输出"></div>' +
+            '</div>' +
+            '<span class="scale-handle" onmousedown="event.stopPropagation();SMTool._onScaleStart(event,' + node.id + ')" title="拖拽缩放"><i class="scale-handle-icon"></i></span>';
     } else {
     el.innerHTML =
         SMTool._buildNodeIndicatorsHtml(node) +
@@ -564,6 +593,32 @@ SMTool._updateTextNodeName = function (nid, value) {
 SMTool._updateExitText = function (nid, value) {
     var node = SMData.nodes.get(nid);
     if (node) node._exitText = value;
+};
+
+// ---- 延时器数值操作 ----
+SMTool._delayerStep = function (nid, delta) {
+    var node = SMData.nodes.get(nid);
+    if (!node || node.nodeType !== 'delayer') return;
+    var val = (node._delayValue || 1.0) + delta;
+    if (val < 0.001) val = 0.001;
+    node._delayValue = Math.round(val * 1000) / 1000;
+    var el = SMTool._getEl(nid);
+    if (el) {
+        var inp = el.querySelector('.delayer-input');
+        if (inp) inp.value = node._delayValue;
+    }
+};
+
+SMTool._delayerSet = function (nid, val) {
+    var node = SMData.nodes.get(nid);
+    if (!node || node.nodeType !== 'delayer') return;
+    if (isNaN(val) || val < 0.001) val = 0.001;
+    node._delayValue = Math.round(val * 1000) / 1000;
+    var el = SMTool._getEl(nid);
+    if (el) {
+        var inp = el.querySelector('.delayer-input');
+        if (inp) inp.value = node._delayValue;
+    }
 };
 
 // ---- 循环/单次切换 ----
@@ -4524,6 +4579,10 @@ SMTool._applyStepToMainNode = function (stepNode) {
     SMTool._pauseAllNodesExcept(stepNode.id);
 
     var spineNode = SMData.nodes.get(stepNode.id);
+    // ★ 延时器节点：无骨架，直接返回节点引用
+    if (spineNode && spineNode.nodeType === 'delayer') {
+        return spineNode;
+    }
     if (spineNode && spineNode.state && spineNode.skeleton) {
         // ★ 彻底清除旧状态：清轨道 + 解冻 + 重置骨架
         try { spineNode.state.clearTracks(); } catch (e) {}
@@ -4694,7 +4753,17 @@ SMTool._playFullStep = function () {
 
     // 获取动画时长来自动推进
     var duration = 1000; // 默认1秒
-    if (spineNode && spineNode.skeletonData) {
+    if (spineNode && spineNode.nodeType === 'delayer') {
+        duration = (spineNode._delayValue || 1.0) * 1000;
+        var delayerBar = document.getElementById('delayerBar-' + stepNode.id);
+        if (delayerBar) {
+            delayerBar.style.transition = 'none';
+            delayerBar.style.width = '0%';
+            void delayerBar.offsetWidth;
+            delayerBar.style.transition = 'width ' + duration + 'ms linear';
+            delayerBar.style.width = '100%';
+        }
+    } else if (spineNode && spineNode.skeletonData) {
         for (var di = 0; di < spineNode.skeletonData.animations.length; di++) {
             if (spineNode.skeletonData.animations[di].name === stepNode.anim) {
                 duration = spineNode.skeletonData.animations[di].duration * 1000;

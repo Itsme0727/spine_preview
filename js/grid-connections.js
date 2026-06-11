@@ -376,6 +376,16 @@ SMTool._getStateConnectorPos = function (node, stateName, type) {
         return null;
     }
 
+    // ★ 延时器节点：左右端点均可连接
+    if (node.nodeType === 'delayer') {
+        var dotD = el.querySelector('.anim-bar .conn-dot.' + (type === 'output' ? 'output' : 'input'));
+        if (dotD) {
+            var rD = dotD.getBoundingClientRect();
+            return SMTool.canvasToWorld(rD.left + rD.width / 2, rD.top + rD.height / 2);
+        }
+        return null;
+    }
+
     // 在新布局中，连接点在 anim-bar 上
     var bar = el.querySelector('.anim-bar');
     var dot = bar ? bar.querySelector('.conn-dot.' + (type === 'output' ? 'output' : 'input')) : null;

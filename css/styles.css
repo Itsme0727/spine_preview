@@ -1452,6 +1452,93 @@ body {
     pointer-events: none;
 }
 
+/* ===== 延时器节点 ===== */
+.spine-node.delayer-node {
+    width: 320px;
+    min-width: 280px;
+}
+.spine-node.delayer-node .delayer-header {
+    background: #2a2040;
+    border-radius: 14px 14px 0 0;
+    border-bottom: 1px solid #4a3a70;
+}
+.spine-node.delayer-node .delayer-title {
+    font-size: 52px;
+    font-weight: 700;
+    color: #c0a0ff;
+}
+.spine-node.delayer-node .delayer-body {
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.spine-node.delayer-node .delayer-set-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.spine-node.delayer-node .delayer-step-btn {
+    width: 52px;
+    height: 52px;
+    border-radius: 10px;
+    border: 2px solid var(--border);
+    background: var(--input-bg);
+    color: var(--text);
+    font-size: 28px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+    flex-shrink: 0;
+}
+.spine-node.delayer-node .delayer-step-btn:hover {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+}
+.spine-node.delayer-node .delayer-input {
+    width: 120px;
+    height: 52px;
+    background: var(--input-bg);
+    border: 2px solid var(--border);
+    border-radius: 10px;
+    color: #fff;
+    font-size: 28px;
+    font-weight: 600;
+    text-align: center;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.15s;
+    -moz-appearance: textfield;
+}
+.spine-node.delayer-node .delayer-input::-webkit-outer-spin-button,
+.spine-node.delayer-node .delayer-input::-webkit-inner-spin-button {
+    -webkit-appearance: none; margin: 0;
+}
+.spine-node.delayer-node .delayer-input:focus {
+    border-color: #c0a0ff;
+}
+.spine-node.delayer-node .delayer-unit {
+    font-size: 24px;
+    color: var(--text2);
+    flex-shrink: 0;
+}
+.spine-node.delayer-node .delayer-progress-wrap {
+    height: 18px;
+    background: #333;
+    border-radius: 9px;
+    overflow: hidden;
+}
+.spine-node.delayer-node .delayer-progress-bar {
+    height: 100%;
+    width: 0%;
+    background: #c0a0ff;
+    border-radius: 9px;
+    transition: width linear;
+}
+
 /* ===== 入口节点 ===== */
 .spine-node.entry-node {
     width: 640px;

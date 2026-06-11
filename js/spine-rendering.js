@@ -1077,6 +1077,8 @@ SMTool._renderAnimPreview = function (now) {
     if (pp && pp.visible && pp._layerSkeletons && pp._layerSkeletons.length > 0) {
         if (!pp._readyToRender || !pp.gl) return;
         SMTool._renderLayerPreview(null, pp, now);
+        // ★ 渲染所有层的骨骼挂点图片
+        SMTool._renderLayerPreviewBoneImages(pp);
         return;
     }
     // ================================================================
@@ -1841,6 +1843,154 @@ SMTool._renderNodeBoneImages = function (node, gl, nodeW, nodeH, sx, glY, sw, sh
     }
 
     // 恢复 GL 状态
+    SMTool._restoreGL(gl, saved);
+};
+
+// ================================================================
+// 渲染层级预览浮窗骨骼挂图（所有层的所有链骨架）
+// ================================================================
+SMTool._renderLayerPreviewBoneImages = function (pp) {
+    if (!pp || !pp.visible || !pp.gl) return;
+    var list = pp._layerSkeletons;
+    if (!list || list.length === 0) return;
+
+    var gl = pp.gl;
+    var cw = pp._canvasWidth || (pp.canvas ? pp.canvas.width : 320);
+    var ch = pp._canvasHeight || (pp.canvas ? pp.canvas.height : 500);
+
+    // 懒初始化四边形渲染器（与单节点预览共用缓存的渲染器）
+    if (!pp._boneQR) {
+        pp._boneQR = SMTool._createBoneQuadRenderer(gl);
+        pp._boneTexCache = {};
+    }
+    var qr = pp._boneQR;
+    if (!qr) return;
+
+    var saved = SMTool._saveGL(gl);
+    gl.useProgram(qr.prog);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.viewport(0, 0, cw, ch);
+
+    var zoom = pp._contentZoom || 1.0;
+    var halfW = cw / (2 * zoom);
+    var halfH = ch / (2 * zoom);
+    var ortho = new Float32Array(16);
+    SMTool._orthoM4(ortho, cw / 2 - halfW, cw / 2 + halfW, ch / 2 - halfH, ch / 2 + halfH, -1, 1);
+    gl.uniform1i(qr.uTex, 0);
+
+    var defSize = Math.max(Math.min(ch * 0.2, 250), 80);
+
+    function _ensureLayerTex(shotId) {
+        if (pp._boneTexCache[shotId]) return pp._boneTexCache[shotId].texture;
+        var dataUrl = SMData._shotGetDataUrl ? SMData._shotGetDataUrl(shotId) : null;
+        if (!dataUrl) return null;
+        var img = new Image();
+        img.src = dataUrl;
+        var tex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 0]));
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        var entry = { texture: tex, img: img, uploaded: false };
+        pp._boneTexCache[shotId] = entry;
+        img.onload = function () { entry.uploaded = false; };
+        return tex;
+    }
+
+    function _uploadLayerTex(shotId) {
+        var entry = pp._boneTexCache[shotId];
+        if (!entry || entry.uploaded || !entry.img || !entry.img.complete || !entry.img.width) return;
+        try {
+            gl.bindTexture(gl.TEXTURE_2D, entry.texture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, entry.img);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            entry.uploaded = true;
+        } catch (e) {}
+    }
+
+    // ★ 遍历所有层的所有链骨架
+    for (var li = 0; li < list.length; li++) {
+        var ls = list[li];
+        var skeletons = ls._chainSkeletons || [ls];
+        for (var ski = 0; ski < skeletons.length; ski++) {
+            var skEntry = skeletons[ski];
+            if (!skEntry || !skEntry.skeleton) continue;
+            var srcNode = SMData.nodes.get(skEntry._chainNodeId || skEntry.nodeId);
+            if (!srcNode || !srcNode._boneScreenshots) continue;
+            var boneNames = Object.keys(srcNode._boneScreenshots);
+            if (boneNames.length === 0) continue;
+
+            var bones = skEntry.skeleton.bones;
+            if (!bones || bones.length === 0) continue;
+            var boneMap = {};
+            for (var bi = 0; bi < bones.length; bi++) {
+                var b = bones[bi];
+                var nm = (b.data && b.data.name) ? b.data.name : (typeof b.getName === 'function' ? b.getName() : '');
+                if (nm) boneMap[nm] = b;
+            }
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, qr.vbo);
+            gl.enableVertexAttribArray(qr.aPos);
+            gl.vertexAttribPointer(qr.aPos, 2, gl.FLOAT, false, 16, 0);
+            gl.enableVertexAttribArray(qr.aUV);
+            gl.vertexAttribPointer(qr.aUV, 2, gl.FLOAT, false, 16, 8);
+
+            for (var bni = 0; bni < boneNames.length; bni++) {
+                var boneName = boneNames[bni];
+                var bone = boneMap[boneName];
+                if (!bone) continue;
+
+                var shotIds = srcNode._boneScreenshots[boneName];
+                if (!Array.isArray(shotIds)) shotIds = shotIds != null ? [shotIds] : [];
+                if (shotIds.length === 0) continue;
+
+                var bx, by, angle, scaleX, scaleY;
+                if (typeof bone.getWorldX === 'function') {
+                    bx = bone.getWorldX(); by = bone.getWorldY();
+                    angle = (typeof bone.getWorldRotationX === 'function') ? bone.getWorldRotationX() : 0;
+                    scaleX = (typeof bone.getWorldScaleX === 'function') ? bone.getWorldScaleX() : 1;
+                    scaleY = (typeof bone.getWorldScaleY === 'function') ? bone.getWorldScaleY() : 1;
+                } else {
+                    bx = bone.worldX; by = bone.worldY;
+                    angle = Math.atan2(bone.b, bone.a);
+                    scaleX = Math.sqrt(bone.a * bone.a + bone.c * bone.c);
+                    scaleY = Math.sqrt(bone.b * bone.b + bone.d * bone.d);
+                }
+
+                for (var si = 0; si < shotIds.length; si++) {
+                    var shotId = shotIds[si];
+                    if (typeof shotId !== 'number') continue;
+                    var tex = _ensureLayerTex(shotId);
+                    if (!tex) continue;
+                    _uploadLayerTex(shotId);
+
+                    var drawW = defSize, drawH = defSize;
+                    var entry = pp._boneTexCache[shotId];
+                    if (entry && entry.img && entry.img.width && entry.img.height) {
+                        drawW = entry.img.width; drawH = entry.img.height;
+                    }
+                    var offX = si * 5, offY = si * 5;
+
+                    var model = new Float32Array(16);
+                    SMTool._modelM4(model, bx + offX, by + offY, angle, drawW * scaleX, drawH * scaleY);
+
+                    var mvp = new Float32Array(16);
+                    SMTool._mulM4(mvp, ortho, model);
+                    gl.uniformMatrix4fv(qr.uMVP, false, mvp);
+                    gl.uniform1f(qr.uAlpha, 0.9);
+
+                    gl.activeTexture(gl.TEXTURE0);
+                    gl.bindTexture(gl.TEXTURE_2D, tex);
+                    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+                }
+            }
+        }
+    }
+
     SMTool._restoreGL(gl, saved);
 };
 
