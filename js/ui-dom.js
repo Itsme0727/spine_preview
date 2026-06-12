@@ -206,6 +206,15 @@ SMTool._createEl = function (node) {
                 '<button class="loop-toggle' + (node.loop !== false ? ' active' : '') + '" onclick="event.stopPropagation();SMTool._toggleLoop(' + node.id + ')">' + (node.loop !== false ? '🔄 循环播放' : '▶ 单次播放') + '</button>' +
                 '<label class="pma-toggle" title="预乘 Alpha"><input type="checkbox" onchange="SMTool._togglePMA(' + node.id + ',this.checked)"' + (node.premultipliedAlpha ? ' checked' : '') + '>预乘Alpha</label>' +
             '</div>' +
+            '<div class="speed-row">' +
+                '<span class="speed-label">⏱</span>' +
+                '<input type="range" class="speed-slider" min="0" max="1000" value="' + Math.round(((node._playbackSpeed || 1) + 5) * 100) + '" step="1" ' +
+                    'oninput="event.stopPropagation();SMTool._onSpeedSlider(' + node.id + ',this.value)" title="播放倍速">' +
+                '<input type="number" class="speed-input" id="speedInput-' + node.id + '" value="' + ((node._playbackSpeed || 1).toFixed(2)) + '" step="0.01" ' +
+                    'onchange="event.stopPropagation();SMTool._onSpeedInput(' + node.id + ',this.value)" ' +
+                    'onclick="event.stopPropagation()" onkeydown="event.stopPropagation()" title="倍速数值（-5.00~+5.00）">' +
+                '<span class="speed-unit">x</span>' +
+            '</div>' +
             '<div class="footer-skins"><span class="skin-label">皮肤</span>' + skinsHtml + '</div>' +
         '</div>' +
         '<div class="node-extras">' +
@@ -2415,6 +2424,15 @@ SMTool._updateEl = function (node) {
                 '<button class="loop-toggle' + (node.loop !== false ? ' active' : '') + '" onclick="event.stopPropagation();SMTool._toggleLoop(' + node.id + ')">' + (node.loop !== false ? '🔄 循环播放' : '▶ 单次播放') + '</button>' +
                 '<label class="pma-toggle" title="预乘 Alpha"><input type="checkbox" onchange="SMTool._togglePMA(' + node.id + ',this.checked)"' + (node.premultipliedAlpha ? ' checked' : '') + '>预乘Alpha</label>' +
             '</div>' +
+            '<div class="speed-row">' +
+                '<span class="speed-label">⏱</span>' +
+                '<input type="range" class="speed-slider" min="0" max="1000" value="' + Math.round(((node._playbackSpeed || 1) + 5) * 100) + '" step="1" ' +
+                    'oninput="event.stopPropagation();SMTool._onSpeedSlider(' + node.id + ',this.value)" title="播放倍速">' +
+                '<input type="number" class="speed-input" id="speedInput-' + node.id + '" value="' + ((node._playbackSpeed || 1).toFixed(2)) + '" step="0.01" ' +
+                    'onchange="event.stopPropagation();SMTool._onSpeedInput(' + node.id + ',this.value)" ' +
+                    'onclick="event.stopPropagation()" onkeydown="event.stopPropagation()" title="倍速数值（-5.00~+5.00）">' +
+                '<span class="speed-unit">x</span>' +
+            '</div>' +
             '<div class="footer-skins"><span class="skin-label">皮肤</span>' + (skinsHtml || '<span class="badge">无皮肤</span>') + '</div>';
         // 版本号
         var vb = el.querySelector('.version-badge');
@@ -3437,7 +3455,7 @@ SMTool._buildEventFramesHtml = function (node) {
     return html;
 };
 
-// ---- 更新底部 PMA 按钮（不重建整个面板，保持当前页签） ----
+// ---- 更新底部 PMA 按钮 + 倍速控制（不重建整个面板，保持当前页签） ----
 SMTool._updateBottomBar = function () {
     var footer = document.getElementById('dfpFooter');
     if (!footer) return;
@@ -3447,6 +3465,37 @@ SMTool._updateBottomBar = function () {
     // 构建循环播放按钮
     var loopBtnHtml = '<button class="dfp-bottom-loop-btn' + (node.loop !== false ? ' active' : '') + '" onclick="event.stopPropagation();SMTool._toggleLoop(' + node.id + ')" title="切换循环/单次播放">' +
         (node.loop !== false ? '🔄 循环' : '▶ 单次') + '</button>';
+
+    // ----- 倍速控制（单选/多选通用） -----
+    var speedVal, speedAllSame;
+    if (SMData.selectedNodes.size > 1) {
+        // 多选：检测所有选中节点倍速是否一致
+        speedAllSame = true;
+        var firstSpeed = null;
+        SMData.selectedNodes.forEach(function (nid) {
+            var n = SMData.nodes.get(nid);
+            if (!n || n.nodeType !== 'spine') return;
+            var sp = (typeof n._playbackSpeed === 'number') ? n._playbackSpeed : 1.0;
+            if (firstSpeed === null) firstSpeed = sp;
+            else if (Math.abs(firstSpeed - sp) > 0.001) speedAllSame = false;
+        });
+        speedVal = (firstSpeed !== null) ? firstSpeed : 1.0;
+    } else {
+        speedAllSame = true;
+        speedVal = (typeof node._playbackSpeed === 'number') ? node._playbackSpeed : 1.0;
+    }
+    var speedSliderVal = Math.round((speedVal + 5) * 100);
+    var speedDisplay = speedAllSame ? speedVal.toFixed(2) : '---';
+    var speedTitle = speedAllSame ? '' : '（选中节点倍速不一致）';
+    var speedRowHtml = '<div class="dfp-speed-row">' +
+        '<span class="dfp-speed-label">⏱ 倍速</span>' +
+        '<input type="range" class="dfp-speed-slider" min="0" max="1000" value="' + speedSliderVal + '" step="1" ' +
+            'oninput="event.stopPropagation();SMTool._onPanelSpeedSlider(this.value)" title="' + speedTitle + '">' +
+        '<input type="number" class="dfp-speed-input" id="dfpSpeedInput" value="' + speedDisplay + '" step="0.01" ' +
+            'onchange="event.stopPropagation();SMTool._onPanelSpeedInput(this.value)" ' +
+            'onclick="event.stopPropagation()" onkeydown="event.stopPropagation()" title="倍速数值（-5.00~+5.00）' + speedTitle + '">' +
+        '<span class="dfp-speed-unit">x</span>' +
+    '</div>';
 
     // 多选时
     if (SMData.selectedNodes.size > 1) {
@@ -3460,14 +3509,14 @@ SMTool._updateBottomBar = function () {
         var checkedStr = (allPma === true) ? ' active' : '';
         var pmaBtnHtml = '<button class="dfp-bottom-pma-btn' + checkedStr + '" onclick="SMTool._toggleMultiPMA(' + (allPma === true ? false : true) + ')" title="预乘 Alpha">' +
             (allPma === true ? '🔴 Alpha' : (allPma === 'mixed' ? '🟡 Alpha' : '⚪ Alpha')) + '</button>';
-        footer.innerHTML = loopBtnHtml + pmaBtnHtml;
+        footer.innerHTML = loopBtnHtml + pmaBtnHtml + speedRowHtml;
         return;
     }
 
     // 单选
     var pmaBtnHtml = '<button class="dfp-bottom-pma-btn' + (node.premultipliedAlpha ? ' active' : '') + '" onclick="SMTool._togglePMA(' + node.id + ',' + !node.premultipliedAlpha + ')" title="预乘 Alpha">' +
         (node.premultipliedAlpha ? '🔴 Alpha' : '⚪ Alpha') + '</button>';
-    footer.innerHTML = loopBtnHtml + pmaBtnHtml;
+    footer.innerHTML = loopBtnHtml + pmaBtnHtml + speedRowHtml;
 };
 
 // ---- 更新状态栏 ----

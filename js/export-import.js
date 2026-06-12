@@ -821,6 +821,7 @@ SMTool._serializeData = function () {
             _exitText: n._exitText,
             _stateDesc: n._stateDesc,
             _customScale: n._customScale,
+            _playbackSpeed: n._playbackSpeed,
             _debugOffsetX: n._debugOffsetX || 0,
             _debugOffsetY: n._debugOffsetY || 0,
             _debugCanvasW: n._debugCanvasW || 0,
@@ -1653,6 +1654,7 @@ SMTool._processImportJson = function (jsonText, fileHandle) {
             node.loop = (nd.loop !== undefined ? nd.loop : true);
             node.tracks = nd.tracks || [];
             node._customScale = (nd._customScale !== undefined ? nd._customScale : 1.0);
+            node._playbackSpeed = (nd._playbackSpeed !== undefined ? nd._playbackSpeed : 1.0);
             node._debugOffsetX = (nd._debugOffsetX !== undefined ? nd._debugOffsetX : 0);
             node._debugOffsetY = (nd._debugOffsetY !== undefined ? nd._debugOffsetY : 0);
             node._debugCanvasW = (nd._debugCanvasW !== undefined ? nd._debugCanvasW : 0);

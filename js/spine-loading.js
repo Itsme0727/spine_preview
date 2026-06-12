@@ -638,8 +638,9 @@ SMTool._replaceSpineData = function (existingIds, fileGroup, baseName) {
                 // === 清理旧 WebGL 资源 ===
                 if (node.state) node.state.clearTracks();
                 SMTool._releaseNodeTextures(node);
-                if (node.batcher) { try { node.batcher.dispose(); } catch (e) {} }
-                if (node.shader) { try { node.shader.dispose(); } catch (e) {} }
+                if (node.batcher) { try { node.batcher.dispose(); } catch (e) {} node.batcher = null; }
+                if (node.shader) { try { node.shader.dispose(); } catch (e) {} node.shader = null; }
+                if (node.skeletonRenderer) { try { node.skeletonRenderer.dispose(); } catch (e) {} node.skeletonRenderer = null; }
                 if (node.sceneRenderer) { try { node.sceneRenderer.dispose(); } catch (e) {} node.sceneRenderer = null; }
                 node._managedContext = null;
                 node.glTextures = [];
@@ -828,6 +829,38 @@ SMTool._replaceSpineData = function (existingIds, fileGroup, baseName) {
             SMTool._checkMissingStates();
             SMTool._refreshAllTranslations();
             SMData._forceRedraw = true;
+
+            // ★ 替换后强制基于新 bounds 重新居中所有被替换节点的骨架，
+            // 防止 _centerSkeletonAfterAnim 在边界条件下（如默认皮肤无可见附件时
+            // bounds.size.x=0）跳过居中，导致骨架定位在左上角 (0,0) 无法自行恢复
+            for (var rci = 0; rci < existingIds.length; rci++) {
+                var rcNode = SMData.nodes.get(existingIds[rci]);
+                if (rcNode && rcNode.skeleton && rcNode.bounds) {
+                    var rcb = rcNode.bounds;
+                    var rcCw = rcNode._canvasWidth || 400;
+                    var rcCh = rcNode._canvasHeight || 400;
+                    rcNode.skeleton.x = rcCw / 2 - (rcb.offset.x + rcb.size.x / 2);
+                    rcNode.skeleton.y = rcCh / 2 - (rcb.offset.y + rcb.size.y / 2);
+                    if (isNaN(rcNode.skeleton.x)) rcNode.skeleton.x = rcCw / 2;
+                    if (isNaN(rcNode.skeleton.y)) rcNode.skeleton.y = rcCh / 2;
+                    try { rcNode.skeleton.updateWorldTransform(rcNode._physParam); } catch (e) {}
+                }
+                // ★ 兜底：若替换后 shader/batcher 为空（WebGL 设置静默失败），用节点自身数据强制重建
+                if (rcNode && !rcNode.shader && rcNode.skeleton && rcNode.atlasData && SMTool._sharedGL) {
+                    console.warn('[Replace] 节点#' + rcNode.id + ' WebGL 资源缺失，强制重建...');
+                    rcNode._needsWebGLRetry = false;
+                    rcNode.gl = SMTool._sharedGL;
+                    rcNode.canvas = SMTool._sharedCanvas;
+                    var retrySP = rcNode._SP || window.spine38;
+                    var retryWGL = (rcNode._spineVer === '3.8' || !rcNode._spineVer) ? (window.spine38 && window.spine38.webgl) : null;
+                    var retryImgs = (rcNode._texImgs && rcNode._texImgs.length > 0) ? rcNode._texImgs : [rcNode.textureImg];
+                    try {
+                        SMTool._setupWebGLRenderer(rcNode, retrySP, retryWGL, rcNode.atlasData, retryImgs, rcNode._spineVer || '3.8');
+                    } catch (e) {
+                        console.error('[Replace] 强制重建 WebGL 失败:', e);
+                    }
+                }
+            }
 
             // ★ 替换动画后临时切换到动态模式 1 秒，强制刷新所有节点画面
             // 静态/性能模式下非选中节点不更新动画，替换后骨架可能停在 setup pose

@@ -39,8 +39,9 @@ SMTool.deleteNode = function (nid) {
         if (node.state) node.state.clearTracks();
         // 通过缓存释放纹理（引用计数归零才真正 dispose）
         SMTool._releaseNodeTextures(node);
-        if (node.batcher) { try { node.batcher.dispose(); } catch (e) {} }
-        if (node.shader) { try { node.shader.dispose(); } catch (e) {} }
+        if (node.batcher) { try { node.batcher.dispose(); } catch (e) {} node.batcher = null; }
+        if (node.shader) { try { node.shader.dispose(); } catch (e) {} node.shader = null; }
+        if (node.skeletonRenderer) { try { node.skeletonRenderer.dispose(); } catch (e) {} node.skeletonRenderer = null; }
         // SceneRenderer 可以 dispose（每个节点独立的 shader/program），
         // 但共享的 ManagedWebGLRenderingContext 不要 dispose
         if (node.sceneRenderer) { try { node.sceneRenderer.dispose(); } catch (e) {} node.sceneRenderer = null; }
@@ -166,6 +167,7 @@ SMTool.copyNode = function (nid, offsetX, offsetY) {
     node.bones = orig.bones.slice();
     node.version = orig.version;
     node._customScale = orig._customScale;
+    node._playbackSpeed = (typeof orig._playbackSpeed === 'number') ? orig._playbackSpeed : 1.0;
     node._debugOffsetX = orig._debugOffsetX || 0;
     node._debugOffsetY = orig._debugOffsetY || 0;
     node._debugCanvasW = orig._debugCanvasW || 0;
@@ -1313,6 +1315,7 @@ SMTool.init = function () {
                 _exitText: n._exitText || '',
                 _textContent: n._textContent || '',
                 _customScale: n._customScale !== undefined ? n._customScale : 1.0,
+                _playbackSpeed: n._playbackSpeed !== undefined ? n._playbackSpeed : 1.0,
                 _debugOffsetX: n._debugOffsetX || 0,
                 _debugOffsetY: n._debugOffsetY || 0,
                 _debugCanvasW: n._debugCanvasW || 0,
@@ -1368,9 +1371,10 @@ SMTool.init = function () {
             if (delNode) {
                 if (delNode.state) { try { delNode.state.clearTracks(); } catch (e) {} }
                 SMTool._releaseNodeTextures(delNode);
-                if (delNode.batcher) { try { delNode.batcher.dispose(); } catch (e) {} }
-                if (delNode.shader) { try { delNode.shader.dispose(); } catch (e) {} }
-                if (delNode.sceneRenderer) { try { delNode.sceneRenderer.dispose(); } catch (e) {} }
+                if (delNode.batcher) { try { delNode.batcher.dispose(); } catch (e) {} delNode.batcher = null; }
+                if (delNode.shader) { try { delNode.shader.dispose(); } catch (e) {} delNode.shader = null; }
+                if (delNode.skeletonRenderer) { try { delNode.skeletonRenderer.dispose(); } catch (e) {} delNode.skeletonRenderer = null; }
+                if (delNode.sceneRenderer) { try { delNode.sceneRenderer.dispose(); } catch (e) {} delNode.sceneRenderer = null; }
             }
             var el = SMTool._getEl(nid);
             if (el) el.remove();
@@ -1482,6 +1486,7 @@ SMTool.init = function () {
                 existing._exitText = nd._exitText || '';
                 existing._textContent = nd._textContent || '';
                 existing._customScale = nd._customScale !== undefined ? nd._customScale : 1.0;
+                existing._playbackSpeed = nd._playbackSpeed !== undefined ? nd._playbackSpeed : 1.0;
                 existing._debugOffsetX = nd._debugOffsetX || 0;
                 existing._debugOffsetY = nd._debugOffsetY || 0;
                 existing._debugCanvasW = nd._debugCanvasW || 0;
@@ -1651,6 +1656,7 @@ SMTool.init = function () {
                 node._exitText = nd._exitText || '';
                 node._textContent = nd._textContent || '';
                 node._customScale = nd._customScale !== undefined ? nd._customScale : 1.0;
+                node._playbackSpeed = nd._playbackSpeed !== undefined ? nd._playbackSpeed : 1.0;
                 node._debugOffsetX = nd._debugOffsetX || 0;
                 node._debugOffsetY = nd._debugOffsetY || 0;
                 node._debugCanvasW = nd._debugCanvasW || 0;
@@ -2737,6 +2743,123 @@ SMTool.ctxAddTitle = function () {
 SMTool._updateTitleText = function (nid, text) {
     var node = SMData.nodes.get(nid);
     if (node) { node._textContent = text; node.name = text; }
+};
+
+// ★ 播放倍速：滑块拖动（实时更新）
+// sliderVal: 0~1000，映射到 -5.00 ~ +5.00
+SMTool._onSpeedSlider = function (nid, sliderVal) {
+    var node = SMData.nodes.get(nid);
+    if (!node) return;
+    var speed = Math.round((parseInt(sliderVal) / 100 - 5) * 100) / 100;
+    if (speed < -5) speed = -5;
+    if (speed > 5) speed = 5;
+    node._playbackSpeed = speed;
+    // 同步更新数字输入框
+    var input = document.getElementById('speedInput-' + nid);
+    if (input) input.value = speed.toFixed(2);
+    // ★ 同步刷新浮窗预览
+    SMTool._syncPreviewSpeed(nid, speed);
+};
+
+// ★ 播放倍速：数字输入框变更
+SMTool._onSpeedInput = function (nid, val) {
+    var node = SMData.nodes.get(nid);
+    if (!node) return;
+    var speed = parseFloat(val);
+    if (isNaN(speed)) speed = 1.0;
+    if (speed < -5) speed = -5;
+    if (speed > 5) speed = 5;
+    speed = Math.round(speed * 100) / 100;
+    node._playbackSpeed = speed;
+    // 同步更新滑块
+    var input = document.getElementById('speedInput-' + nid);
+    if (input) input.value = speed.toFixed(2);
+    var el = SMTool._getEl(nid);
+    if (el) {
+        var slider = el.querySelector('.speed-slider');
+        if (slider) slider.value = Math.round((speed + 5) * 100);
+    }
+    // ★ 同步刷新浮窗预览
+    SMTool._syncPreviewSpeed(nid, speed);
+};
+
+// ★ 同步倍速到预览浮窗（单节点预览 & 层级预览均需即时生效）
+SMTool._syncPreviewSpeed = function (nid, speed) {
+    var pp = SMData._animPreview;
+    if (!pp || !pp.visible) return;
+    // 单节点预览：源节点匹配时，预览的 TrackEntry timeScale 即时更新
+    if (pp.nodeId === nid && pp.state && !pp._layerSkeletons) {
+        try {
+            var te = pp.state.getCurrent(0);
+            if (te) te.timeScale = speed;
+        } catch (e) {}
+    }
+    // 层级预览：遍历所有层的所有链骨架，匹配源节点并更新 timeScale
+    if (pp._layerSkeletons) {
+        for (var li = 0; li < pp._layerSkeletons.length; li++) {
+            var ls = pp._layerSkeletons[li];
+            var skeletons = ls._chainSkeletons || [ls];
+            for (var si = 0; si < skeletons.length; si++) {
+                var sk = skeletons[si];
+                if (sk._chainNodeId === nid && sk.state) {
+                    try {
+                        var te2 = sk.state.getCurrent(0);
+                        if (te2) te2.timeScale = speed;
+                    } catch (e) {}
+                }
+            }
+        }
+    }
+};
+
+// ★ 数据浮窗面板倍速滑块（应用于所有选中节点）
+SMTool._onPanelSpeedSlider = function (sliderVal) {
+    var speed = Math.round((parseInt(sliderVal) / 100 - 5) * 100) / 100;
+    if (speed < -5) speed = -5;
+    if (speed > 5) speed = 5;
+    // 更新数字框
+    var input = document.getElementById('dfpSpeedInput');
+    if (input) input.value = speed.toFixed(2);
+    // 应用到所有选中的 spine 节点
+    SMTool._applySpeedToSelected(speed);
+};
+
+// ★ 数据浮窗面板倍速输入框
+SMTool._onPanelSpeedInput = function (val) {
+    var speed = parseFloat(val);
+    if (isNaN(speed)) speed = 1.0;
+    if (speed < -5) speed = -5;
+    if (speed > 5) speed = 5;
+    speed = Math.round(speed * 100) / 100;
+    var input = document.getElementById('dfpSpeedInput');
+    if (input) input.value = speed.toFixed(2);
+    // 更新滑块
+    var footer = document.getElementById('dfpFooter');
+    if (footer) {
+        var slider = footer.querySelector('.dfp-speed-slider');
+        if (slider) slider.value = Math.round((speed + 5) * 100);
+    }
+    // 应用到所有选中的 spine 节点
+    SMTool._applySpeedToSelected(speed);
+};
+
+// ★ 将倍速应用到所有选中节点并同步 UI
+SMTool._applySpeedToSelected = function (speed) {
+    SMData.selectedNodes.forEach(function (nid) {
+        var n = SMData.nodes.get(nid);
+        if (!n || n.nodeType !== 'spine') return;
+        n._playbackSpeed = speed;
+        // 更新该节点面板上的倍速 UI
+        var input = document.getElementById('speedInput-' + nid);
+        if (input) input.value = speed.toFixed(2);
+        var el = SMTool._getEl(nid);
+        if (el) {
+            var slider = el.querySelector('.speed-slider');
+            if (slider) slider.value = Math.round((speed + 5) * 100);
+        }
+        // 同步浮窗预览
+        SMTool._syncPreviewSpeed(nid, speed);
+    });
 };
 
 // ★ 右键菜单：插入图片（已禁用——请使用数据面板的"📁 选取图片"添加截图）

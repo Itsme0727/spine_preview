@@ -425,8 +425,13 @@ body {
 }
 /* 完整动画组播放中：当前状态对应的节点 — 粉色发光（不改变 border-width 避免内容区重排） */
 .spine-node.playing-current {
-    border-color: #ff44aa;
-    box-shadow: 0 0 40px rgba(255, 68, 170, 0.6), 0 0 16px rgba(255, 68, 170, 0.35), 0 0 4px rgba(255, 68, 170, 0.5), inset 0 0 0 3px rgba(255, 68, 170, 0.7);
+    border-color: #ff2299;
+    border-width: 3px;
+    box-shadow:
+        0 0 50px rgba(255, 34, 153, 0.7),
+        0 0 20px rgba(255, 34, 153, 0.45),
+        0 0 6px rgba(255, 68, 170, 0.6),
+        inset 0 0 0 3px rgba(255, 34, 153, 0.7);
 }
 /* 未直接连线节点置灰（JS 动态插入遮罩 div） */
 .spine-node .dim-overlay {
@@ -786,6 +791,76 @@ body {
     display: flex;
     align-items: center;
     justify-content: space-between;
+}
+/* ===== 播放倍速控件 ===== */
+.spine-node .speed-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 0;
+    border-top: 1px solid var(--border);
+    margin-top: 4px;
+}
+.spine-node .speed-label {
+    font-size: 24px;
+    color: var(--text2);
+    flex-shrink: 0;
+}
+.spine-node .speed-slider {
+    flex: 1;
+    min-width: 60px;
+    height: 12px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--border);
+    border-radius: 6px;
+    outline: none;
+    cursor: pointer;
+}
+.spine-node .speed-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+    border: 2px solid #fff;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+}
+.spine-node .speed-slider::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+    border: 2px solid #fff;
+}
+.spine-node .speed-input {
+    width: 56px;
+    height: 28px;
+    text-align: center;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--input-bg);
+    color: var(--text);
+    font-size: 20px;
+    font-family: inherit;
+    outline: none;
+    -moz-appearance: textfield;
+}
+.spine-node .speed-input::-webkit-outer-spin-button,
+.spine-node .speed-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+.spine-node .speed-input:focus {
+    border-color: var(--accent);
+}
+.spine-node .speed-unit {
+    font-size: 22px;
+    color: var(--text2);
+    flex-shrink: 0;
 }
 .spine-node .footer .loop-toggle {
     border: none;
@@ -2440,6 +2515,7 @@ body {
 /* 底部固定栏：循环播放 + 预乘Alpha */
 #dfpFooter {
     display: flex;
+    flex-wrap: wrap;
     gap: 8px;
     padding: 8px 10px;
     border-top: 1px solid var(--border);
@@ -2466,6 +2542,77 @@ body {
 #dfpFooter .dfp-bottom-pma-btn.active {
     color: #ec4899;
     border-color: #ec4899;
+}
+/* 数据浮窗面板底部的倍速控件 */
+#dfpFooter .dfp-speed-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 0 0 100%;
+    width: 100%;
+    padding: 4px 0;
+    margin-top: 2px;
+}
+#dfpFooter .dfp-speed-label {
+    font-size: 13px;
+    color: var(--text2);
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+#dfpFooter .dfp-speed-slider {
+    flex: 1;
+    min-width: 60px;
+    height: 10px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--border);
+    border-radius: 5px;
+    outline: none;
+    cursor: pointer;
+}
+#dfpFooter .dfp-speed-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+    border: 2px solid #fff;
+}
+#dfpFooter .dfp-speed-slider::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+    border: 2px solid #fff;
+}
+#dfpFooter .dfp-speed-input {
+    width: 50px;
+    height: 24px;
+    text-align: center;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--input-bg);
+    color: var(--text);
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+    -moz-appearance: textfield;
+}
+#dfpFooter .dfp-speed-input::-webkit-outer-spin-button,
+#dfpFooter .dfp-speed-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+#dfpFooter .dfp-speed-input:focus {
+    border-color: var(--accent);
+}
+#dfpFooter .dfp-speed-unit {
+    font-size: 13px;
+    color: var(--text2);
+    flex-shrink: 0;
 }
 
 /* 淡入淡出控件 */
@@ -2990,7 +3137,7 @@ body {
     border: none;
     background: transparent;
     padding: 4px 8px;
-    white-space: nowrap;
+    white-space: pre-wrap;
     min-width: 40px;
     cursor: move;
     line-height: 1.2;

@@ -410,6 +410,7 @@ var SpineNodeData = (function () {
         this._nodeShotRefs = [];
 
         this._customScale = 1.0;    // 用户自定义缩放比例（拖拽缩放图标调整）
+        this._playbackSpeed = 1.0;  // 播放倍速（-5.00 ~ +5.00，默认1.00）
         this._debugOffsetX = 0;     // 调试模式：动画层水平偏移（世界单位）
         this._debugOffsetY = 0;     // 调试模式：动画层垂直偏移（世界单位）
         this._debugCanvasW = 0;     // 调试模式：裁剪区域宽度（0=使用默认 _canvasWidth）
