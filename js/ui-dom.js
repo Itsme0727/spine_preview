@@ -2954,6 +2954,9 @@ SMTool._hideAnimPreview = function () {
     var panel = document.getElementById('animPreviewPanel');
     if (panel) panel.style.display = 'none';
 
+    // ★ 关闭预览时清除所有层级高亮、置灰和进度条
+    SMTool._clearAllLayerHighlights();
+
     SMTool._destroyAnimPreview();
     SMData._animPreview.visible = false;
 };
@@ -2968,9 +2971,11 @@ SMTool._initAnimPreviewPanel = function () {
     var pp = SMData._animPreview;
 
     // 整个面板可拖拽（排除关闭按钮和缩放手柄；canvas 区域也可拖拽，滚轮仍用于缩放）
+    // ★ 层级位置拖拽激活时屏蔽面板拖拽，让鼠标事件用于移动骨架位置
     panel.addEventListener('mousedown', function (e) {
         if (e.target.closest('.app-close')) return;
         if (e.target.closest('.app-resize-handle')) return;
+        if (SMData._animPreview && SMData._animPreview._layerDragTargetIdx >= 0) return;
         e.preventDefault();
         e.stopPropagation();
         var rect = panel.getBoundingClientRect();
@@ -4800,10 +4805,26 @@ SMTool._playFullStep = function () {
     SMTool._updateStateRowColors();
     // 不再调用 _updateEl — 避免每步切换时重建节点 DOM 导致卡顿
 
-    // 获取动画时长来自动推进
+    // 获取动画时长来自动推进（先取原始时长，再按倍速调整）
     var duration = 1000; // 默认1秒
     if (spineNode && spineNode.nodeType === 'delayer') {
         duration = (spineNode._delayValue || 1.0) * 1000;
+    } else if (spineNode && spineNode.skeletonData) {
+        for (var di = 0; di < spineNode.skeletonData.animations.length; di++) {
+            if (spineNode.skeletonData.animations[di].name === stepNode.anim) {
+                duration = spineNode.skeletonData.animations[di].duration * 1000;
+                break;
+            }
+        }
+    }
+    // ★ 根据播放倍速调整实际时长（速度快 → 实际耗时短，速度慢 → 实际耗时长）
+    if (spineNode) {
+        var flowSpeed = (typeof spineNode._playbackSpeed === 'number' && spineNode._playbackSpeed !== 0) ? Math.abs(spineNode._playbackSpeed) : 1.0;
+        duration = duration / flowSpeed;
+    }
+
+    // 延时器进度条（使用已调整的 duration）
+    if (spineNode && spineNode.nodeType === 'delayer') {
         var delayerBar = document.getElementById('delayerBar-' + stepNode.id);
         if (delayerBar) {
             delayerBar.style.transition = 'none';
@@ -4811,13 +4832,6 @@ SMTool._playFullStep = function () {
             void delayerBar.offsetWidth;
             delayerBar.style.transition = 'width ' + duration + 'ms linear';
             delayerBar.style.width = '100%';
-        }
-    } else if (spineNode && spineNode.skeletonData) {
-        for (var di = 0; di < spineNode.skeletonData.animations.length; di++) {
-            if (spineNode.skeletonData.animations[di].name === stepNode.anim) {
-                duration = spineNode.skeletonData.animations[di].duration * 1000;
-                break;
-            }
         }
     }
 
@@ -4831,7 +4845,6 @@ SMTool._playFullStep = function () {
         progressBar.classList.add('playing');
     }
 
-    // ★ 单节点流加 100ms 余量，确保动画完整播完最后一帧
     var timerDelay = duration + (path.nodes.length <= 1 ? 100 : 0);
 
     pb._timer = setTimeout(function () {

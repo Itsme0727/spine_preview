@@ -476,18 +476,14 @@ SMTool._loop = function (now) {
             SMData._fullPaths[SMData._fullPlayback.activePathIdx].nodes[SMData._fullPlayback.currentStep].id === node.id;
         var isSelectedNode = SMData.selectedNodes.has(node.id);
         var isLayerActive = SMData._layerPlayingNodes && SMData._layerPlayingNodes.has(node.id);
-        // ★ 层级预览中非活跃的链节点强制暂停（置灰 = 冻结）
-        var isLayerDimmed = !isLayerActive && SMData._layerAllChainNodes && SMData._layerAllChainNodes.has(node.id);
         var shouldAnimate = false;
         if (SMData.renderMode === 'static') {
             shouldAnimate = isSelectedNode || isPlayingNode || isLayerActive;
         } else {
             shouldAnimate = (SMData.renderMode === 'dyn' || z >= 0.20 || isPlayingNode || isLayerActive);
         }
-        // ★ 置灰节点强制暂停动画（高亮播，暗的停）
-        if (isLayerDimmed) shouldAnimate = false;
         if (shouldAnimate) {
-            var spd = (typeof node._playbackSpeed === 'number') ? node._playbackSpeed : 1.0;
+            var spd = (typeof node._playbackSpeed === 'number' && node._playbackSpeed !== 1.0) ? node._playbackSpeed : 1.0;
             node.state.update(dt * spd);
             node.state.apply(node.skeleton);
 
@@ -1085,28 +1081,20 @@ SMTool._renderAnimPreview = function (now) {
         SMTool._renderLayerPreview(null, pp, now);
         // ★ 渲染所有层的骨骼挂点图片
         SMTool._renderLayerPreviewBoneImages(pp);
-        // ★ 栅栏同步标记：所有层都播完一轮 → 走与点击节点相同的完整初始化路径
+        // ★ 栅栏同步：所有层播完一轮 → 重建并同步渲染新周期首帧
         if (pp._needsLayerReinit) {
             pp._needsLayerReinit = false;
             var layerNode = SMData.nodes.get(pp.nodeId);
-            if (layerNode) SMTool._showLayerPreview(layerNode);
+            if (layerNode) {
+                SMTool._showLayerPreview(layerNode);
+                SMTool._renderLayerPreview(null, pp, performance.now());
+                SMTool._renderLayerPreviewBoneImages(pp);
+            }
+            if (document.getElementById('appLayerList') && document.getElementById('appLayerList').style.display !== 'none') {
+                SMTool._buildLayerList();
+            }
         }
         return;
-    }
-    // ★ 层级预览不在活跃状态时，清除所有层高亮和置灰
-    if (SMData._layerPlayingNodes && SMData._layerPlayingNodes.size > 0) {
-        SMData._layerPlayingNodes.forEach(function (nid) {
-            var el = SMTool._getEl(nid);
-            if (el) { el.classList.remove('playing-current'); var d = el.querySelector('.dim-overlay'); if (d) d.remove(); }
-        });
-        SMData._layerPlayingNodes = null;
-    }
-    if (SMData._layerAllChainNodes && SMData._layerAllChainNodes.size > 0) {
-        SMData._layerAllChainNodes.forEach(function (nid) {
-            var el = SMTool._getEl(nid);
-            if (el) { var d = el.querySelector('.dim-overlay'); if (d) d.remove(); }
-        });
-        SMData._layerAllChainNodes = null;
     }
     // ================================================================
     // 🔒🔒🔒 [LOCK-E] _readyToRender 守卫检查
@@ -1955,6 +1943,8 @@ SMTool._renderLayerPreviewBoneImages = function (pp) {
         for (var ski = 0; ski < skeletons.length; ski++) {
             var skEntry = skeletons[ski];
             if (!skEntry || !skEntry.skeleton) continue;
+            // ★ 确保骨骼世界变换是最新的（防御链切换/屏障同步后位置已更新但 transform 未刷新的时序问题）
+            skEntry.skeleton.updateWorldTransform(skEntry.physParam);
             var srcNode = SMData.nodes.get(skEntry._chainNodeId || skEntry.nodeId);
             if (!srcNode || !srcNode._boneScreenshots) continue;
             var boneNames = Object.keys(srcNode._boneScreenshots);

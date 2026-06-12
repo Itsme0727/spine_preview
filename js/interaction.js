@@ -344,6 +344,9 @@ SMTool._onMD = function (e) {
 
 // ---- 鼠标移动 ----
 SMTool._onMM = function (e) {
+    // ★ 层级预览位置拖拽
+    SMTool._onLayerPosMouseMove(e);
+    if (SMData._animPreview && SMData._animPreview._layerDragActive) return;
     // ★ 层拖拽排序激活时，禁止画布级操作
     if (SMData._layerReorderActive) return;
     SMData._mx = e.clientX;
@@ -711,6 +714,8 @@ SMTool._applySnapToDrag = function (draggedNodesM, isMulti) {
 
 // ---- 鼠标释放 ----
 SMTool._onMU = function (e) {
+    // ★ 层级预览位置拖拽结束
+    SMTool._onLayerPosMouseUp();
     // ★ 层拖拽排序激活时：仅阻塞画布操作，由 _initLayerDrag 内的 onReorderUp 处理
     if (SMData._layerReorderActive) return;
     // ★ 调试模式：停止拖拽/缩放

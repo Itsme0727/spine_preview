@@ -198,6 +198,14 @@
 
     <!-- ===== 右上角动画预览浮窗面板 ===== -->
     <div id="animPreviewPanel" style="display:none">
+        <button class="app-layer-list-trigger" id="appLayerListTrigger" onclick="SMTool._toggleLayerList()" title="层级列表">📋</button>
+        <div class="app-layer-list" id="appLayerList" style="display:none">
+            <div class="all-header">
+                <span class="all-title">📋 层级列表</span>
+                <span class="all-close" onclick="SMTool._toggleLayerList()" title="收起">◀</span>
+            </div>
+            <div class="all-list" id="allListContent"></div>
+        </div>
         <div class="app-header">
             <span class="app-title" id="appTitle">🎬 动画预览</span>
             <span class="app-close" title="关闭预览" onclick="SMTool._hideAnimPreview()">✕</span>

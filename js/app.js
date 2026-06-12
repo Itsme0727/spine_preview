@@ -456,6 +456,13 @@ SMTool.init = function () {
 
     // 鼠标事件（数据面板内的操作不取消动画对象选中）
     document.addEventListener('mousedown', function (e) {
+        // ★ 层级位置拖拽激活时：预览面板内的点击穿透到画布，用于移动骨架位置
+        if (e.button === 0 && SMData._animPreview && SMData._animPreview._layerDragTargetIdx >= 0) {
+            if (e.target && (e.target.id === 'appCanvas' || (e.target.closest && e.target.closest('#appCanvas')))) {
+                SMTool._onLayerPosMouseDown(e);
+            }
+            return;
+        }
         if (e.target.closest && e.target.closest('#toolbar, #ctxMenu, #conditionEditor, #zoomControl, #statusBar, #dataFloatPanel, #flowPanel, #flowModeToggle, #animPreviewPanel, #searchPanel')) return;
         if (e.target.closest && e.target.closest('input, textarea, select, button')) return;
         if (e.shiftKey) e.preventDefault();

@@ -746,6 +746,10 @@ SMTool._showLayerPreview = function (layerNode) {
     }
 
     // 销毁旧预览
+    // ★ 保存当前层的位置拖拽激活状态（barrier 重新初始化后恢复）
+    var savedDragIdx = pp._layerDragTargetIdx;
+    var savedDragLayer = (savedDragIdx >= 0 && pp._layerSkeletons && savedDragIdx < pp._layerSkeletons.length)
+        ? pp._layerSkeletons[savedDragIdx].layer : -1;
     SMTool._destroyAnimPreview();
     panel.style.display = 'flex';
     pp.visible = true;
@@ -777,8 +781,11 @@ SMTool._showLayerPreview = function (layerNode) {
     var ch = (wrap && wrap.clientHeight > 10) ? wrap.clientHeight : savedH;
     if (cw < 10) cw = savedW;
     if (ch < 10) ch = savedH;
-    canvas.width = cw;
-    canvas.height = ch;
+    // ★ 仅在尺寸变化时才设置 canvas.width/height，避免触发 WebGL 缓冲区清空
+    if (canvas.width !== cw || canvas.height !== ch) {
+        canvas.width = cw;
+        canvas.height = ch;
+    }
     pp.canvas = canvas;
     pp.panelW = savedW;
     pp.panelH = savedH;
@@ -904,6 +911,14 @@ SMTool._showLayerPreview = function (layerNode) {
 
     // ★ 按层号排序，保证渲染顺序 = 层级顺序
     layerSkeletons.sort(function (a, b) { return (a.layer || 0) - (b.layer || 0); });
+    // ★ 保存每层的默认骨架位置（用于位置拖拽的"恢复默认"）
+    for (var lk = 0; lk < layerSkeletons.length; lk++) {
+        var lsk = layerSkeletons[lk];
+        if (lsk.skeleton) {
+            lsk._defaultSkX = lsk.skeleton.x;
+            lsk._defaultSkY = lsk.skeleton.y;
+        }
+    }
     var savedZoom = SMData._previewZooms && SMData._previewZooms['_layer_' + layerNode.id];
     if (!savedZoom || savedZoom <= 0.1 || savedZoom >= 10) {
         savedZoom = 1.0;
@@ -916,21 +931,64 @@ SMTool._showLayerPreview = function (layerNode) {
         }
     }
     pp._contentZoom = savedZoom;
-    // ★ 用统一 zoom 覆写所有层（含链上所有骨架）的 MVP
+    // ★ 用统一 zoom 覆写所有层（含链上所有骨架）的 MVP + 同时恢复已保存位置偏移
+    // 重要：在同一个循环中一步到位算出最终位置，避免中间闪过默认居中位置
     for (var li2 = 0; li2 < layerSkeletons.length; li2++) {
         var lsi = layerSkeletons[li2];
-        // ★ 更新链上所有骨架的统一缩放位置
+        var savedData = (lsi.layer && layerNode._layerData && layerNode._layerData.layers[lsi.layer]) ? layerNode._layerData.layers[lsi.layer] : null;
+        var chainPositions = savedData && savedData._chainPositions;
+
         if (lsi._chainSkeletons) {
             for (var csi = 0; csi < lsi._chainSkeletons.length; csi++) {
-                SMTool._applyUnifiedZoomToSkeleton(lsi._chainSkeletons[csi], cw, ch, savedZoom);
+                var csk = lsi._chainSkeletons[csi];
+                // 先更新 MVP（居中和 ortho 分开处理，位置由我们精确控制）
+                if (csk.mvp) {
+                    csk.mvp.ortho2d(cw / 2 - cw / (2 * savedZoom), ch / 2 - ch / (2 * savedZoom), cw / savedZoom, ch / savedZoom);
+                }
+                if (csk.skeleton && csk.aspectInfo) {
+                    // ★ 计算默认居中位置
+                    var defX = cw / 2 - csk.aspectInfo.centerX;
+                    var defY = ch / 2 - csk.aspectInfo.centerY;
+                    csk._defaultSkX = defX;
+                    csk._defaultSkY = defY;
+                    // ★ 一步到位：若已保存偏移 → 居中 + 偏移，否则 → 居中
+                    var cp = (chainPositions && csk._chainNodeId != null) ? chainPositions[csk._chainNodeId] : null;
+                    csk.skeleton.x = defX + (cp ? (cp.offX || 0) : 0);
+                    csk.skeleton.y = defY + (cp ? (cp.offY || 0) : 0);
+                }
             }
         } else if (lsi.mvp && lsi.aspectInfo) {
-            SMTool._applyUnifiedZoomToSkeleton(lsi, cw, ch, savedZoom);
+            lsi.mvp.ortho2d(cw / 2 - cw / (2 * savedZoom), ch / 2 - ch / (2 * savedZoom), cw / savedZoom, ch / savedZoom);
+            if (lsi.skeleton) {
+                var defX2 = cw / 2 - lsi.aspectInfo.centerX;
+                var defY2 = ch / 2 - lsi.aspectInfo.centerY;
+                lsi._defaultSkX = defX2;
+                lsi._defaultSkY = defY2;
+                // ★ 兼容旧格式：单骨架位置偏移
+                var offX2 = (savedData && savedData.posOffX) ? savedData.posOffX : 0;
+                var offY2 = (savedData && savedData.posOffY) ? savedData.posOffY : 0;
+                lsi.skeleton.x = defX2 + offX2;
+                lsi.skeleton.y = defY2 + offY2;
+            }
         }
     }
     SMTool._updateAnimPreviewZoomLabel(savedZoom);
 
     pp._layerSkeletons = layerSkeletons;
+    // ★ 恢复之前激活的位置拖拽模式（barrier 重新初始化后保持激活状态）
+    if (savedDragLayer >= 0) {
+        for (var sdi = 0; sdi < layerSkeletons.length; sdi++) {
+            if (layerSkeletons[sdi].layer === savedDragLayer) {
+                pp._layerDragTargetIdx = sdi;
+                layerSkeletons[sdi]._positionDragActive = true;
+                if (layerSkeletons[sdi].skeleton) {
+                    layerSkeletons[sdi]._savedSkX = layerSkeletons[sdi].skeleton.x;
+                    layerSkeletons[sdi]._savedSkY = layerSkeletons[sdi].skeleton.y;
+                }
+                break;
+            }
+        }
+    }
     pp.skeleton = null;
     pp.state = null;
     pp._readyToRender = true;
@@ -1142,9 +1200,10 @@ SMTool._renderLayerPreview = function (layerNode, pp, now) {
     var gl = pp.gl, canvas = pp.canvas; if (!gl || !canvas) return;
     var WGL = window.spine38 && window.spine38.webgl; if (!WGL || !WGL.Shader) return;
 
-    // ★ 收集本帧正在播放 + 全部参与的动画节点 ID
+    // ★ 收集本帧正在播放 + 全部参与的动画节点 ID，及播放进度
     var activeNodeIds = new Set();
     var allChainNodeIds = new Set();
+    var activeNodeProgress = {};  // { nodeId: 0.0~1.0 } 播放进度比例
 
     gl.viewport(0, 0, canvas.width, canvas.height);
     gl.clearColor(0, 0, 0, 0); gl.clearStencil(0);
@@ -1155,6 +1214,8 @@ SMTool._renderLayerPreview = function (layerNode, pp, now) {
 
     for (var i = list.length - 1; i >= 0; i--) {
         var ls = list[i];
+        // ★ 跳过隐藏的层
+        if (ls._hidden) continue;
         // ★ 动画链播放：每次只更新链上当前活跃的骨架
         if (ls._chainSkeletons && ls._chainSkeletons.length > 0) {
             var chainLen = ls._chainSkeletons.length;
@@ -1213,6 +1274,8 @@ SMTool._renderLayerPreview = function (layerNode, pp, now) {
                             next.state.update(0);
                             next.state.apply(next.skeleton);
                         }
+                        // ★ 立即刷新新骨架的世界变换（否则本帧骨图渲染会读到居中默认位置）
+                        next.skeleton.updateWorldTransform(next.physParam);
                     }
                 }
             }
@@ -1253,6 +1316,19 @@ SMTool._renderLayerPreview = function (layerNode, pp, now) {
         var activeEntry = ls._chainSkeletons ? ls._chainSkeletons[ls._chainIdx || 0] : ls;
         var nid = activeEntry._chainNodeId || activeEntry.nodeId;
         if (nid != null) activeNodeIds.add(nid);
+        // ★ 计算播放进度比例（延时器用已等待时间/总延迟，动画用 trackTime/duration）
+        if (nid != null && !ls._chainDone) {
+            if (activeEntry._isDelayer) {
+                var delProg = (ls._delayElapsed || 0) / Math.max((activeEntry._delayValue || 1), 0.001);
+                activeNodeProgress[nid] = Math.min(1, delProg);
+            } else if (activeEntry.state) {
+                var te = activeEntry.state.getCurrent(0);
+                if (te) {
+                    var animDur = (te.animation || te._animation || {}).duration || 1;
+                    activeNodeProgress[nid] = Math.min(1, te.trackTime / Math.max(animDur, 0.001));
+                }
+            }
+        }
         // ★ 收集该层所有链骨架的节点 ID（用于非活跃节点置灰）
         if (ls._chainSkeletons) {
             for (var csi = 0; csi < ls._chainSkeletons.length; csi++) {
@@ -1264,8 +1340,8 @@ SMTool._renderLayerPreview = function (layerNode, pp, now) {
         }
     }
 
-    // ★ 同步主画布节点高亮：活跃节点粉色发光，非活跃链节点置灰
-    SMTool._updateLayerPlayingHighlights(activeNodeIds, allChainNodeIds);
+    // ★ 同步主画布节点高亮 + 进度条：活跃节点粉色发光+进度条，非活跃链节点置灰
+    SMTool._updateLayerPlayingHighlights(activeNodeIds, allChainNodeIds, activeNodeProgress);
 
     // ★★★ 栅栏同步：检查所有层是否都已完成 ★★★
     // 当所有层都播完各自的动画链后，标记需要重新初始化。
@@ -1289,8 +1365,8 @@ SMTool._renderLayerPreview = function (layerNode, pp, now) {
     }
 };
 
-// ★ 同步主画布节点高亮：活跃节点粉色发光，非活跃链节点叠加暗色遮罩置灰
-SMTool._updateLayerPlayingHighlights = function (activeNodeIds, allChainNodeIds) {
+// ★ 同步主画布节点高亮 + 进度条：活跃节点粉色发光+进度条，非活跃链节点叠加暗色遮罩置灰
+SMTool._updateLayerPlayingHighlights = function (activeNodeIds, allChainNodeIds, activeNodeProgress) {
     // 合并本帧所有涉及的节点 ID
     var allIds = new Set();
     if (SMData._layerPlayingNodes) SMData._layerPlayingNodes.forEach(function (id) { allIds.add(id); });
@@ -1303,6 +1379,7 @@ SMTool._updateLayerPlayingHighlights = function (activeNodeIds, allChainNodeIds)
         if (!el) return;
         var isActive = activeNodeIds.has(nid);
         var isInChain = allChainNodeIds.has(nid);
+        var progress = activeNodeProgress[nid];
 
         // 高亮：正在播放的节点
         if (isActive) {
@@ -1322,6 +1399,31 @@ SMTool._updateLayerPlayingHighlights = function (activeNodeIds, allChainNodeIds)
         } else {
             if (existingOverlay) existingOverlay.remove();
         }
+
+        // ★ 进度条：活跃且有进度的节点显示 CSS 动画进度条（与动画流样式一致）
+        var bar = el.querySelector('.anim-progress-bar');
+        if (bar) {
+            if (isActive && progress !== undefined && progress >= 0) {
+                // 用 transform 直接设置进度（不用 CSS animation，每帧实时更新）
+                bar.classList.remove('playing', 'paused');
+                bar.style.animation = 'none';
+                bar.style.opacity = '1';
+                bar.style.transform = 'scaleX(' + Math.max(0, Math.min(1, progress)) + ')';
+            } else if (!isActive && !isInChain) {
+                // 不在链中的节点清除进度条
+                bar.classList.remove('playing', 'paused');
+                bar.style.animation = '';
+                bar.style.opacity = '0';
+                bar.style.transform = 'scaleX(0)';
+            }
+            // 置灰但非活跃的节点：保持进度条不可见（链推进时会重新激活）
+            if (isInChain && !isActive) {
+                bar.classList.remove('playing', 'paused');
+                bar.style.animation = '';
+                bar.style.opacity = '0';
+                bar.style.transform = 'scaleX(0)';
+            }
+        }
     });
 
     // 保存供下一帧比对
@@ -1336,20 +1438,82 @@ SMTool._syncLayerPreviewViewport = function (pp, newW, newH) {
     var wrap = canvas ? canvas.parentElement : null;
     var cw = (wrap && wrap.clientWidth > 10) ? wrap.clientWidth : (newW || pp._canvasWidth || pp.panelW || 320);
     var ch = (wrap && wrap.clientHeight > 10) ? wrap.clientHeight : (newH || pp._canvasHeight || pp.panelH || 500);
+
+    // ★ 检测画布尺寸是否变化（缩放 vs 拖拽面板边缘改变尺寸）
+    var oldCw = pp._canvasWidth || cw;
+    var oldCh = pp._canvasHeight || ch;
+    var sizeChanged = (Math.abs(cw - oldCw) > 1 || Math.abs(ch - oldCh) > 1);
+    
+    var zoom = pp._contentZoom || 1.0;
+    var layerNode = SMData.nodes.get(pp.nodeId);
+
+    // ★ 纯缩放（尺寸未变）：只更新 MVP ortho 矩阵，不重置骨架位置，不 touch canvas 尺寸
+    if (!sizeChanged) {
+        for (var i = 0; i < pp._layerSkeletons.length; i++) {
+            var ls = pp._layerSkeletons[i];
+            if (ls._chainSkeletons) {
+                for (var csi = 0; csi < ls._chainSkeletons.length; csi++) {
+                    var csk = ls._chainSkeletons[csi];
+                    if (csk.mvp) {
+                        csk.mvp.ortho2d(cw / 2 - cw / (2 * zoom), ch / 2 - ch / (2 * zoom), cw / zoom, ch / zoom);
+                    }
+                }
+            } else if (ls.mvp) {
+                ls.mvp.ortho2d(cw / 2 - cw / (2 * zoom), ch / 2 - ch / (2 * zoom), cw / zoom, ch / zoom);
+            }
+        }
+        SMTool._updateAnimPreviewZoomLabel(zoom);
+        return;
+    }
+
+    // ★ 尺寸变化：重新设置画布大小 + 重新居中 + 更新 MVP + 恢复已保存的位置偏移
     if (canvas) { canvas.width = cw; canvas.height = ch; }
     pp._canvasWidth = cw;
     pp._canvasHeight = ch;
-    
-    var zoom = pp._contentZoom || 1.0;
-    // ★ 重新居中每层骨架（含链上所有骨架）+ 更新 ortho
-    for (var i = 0; i < pp._layerSkeletons.length; i++) {
-        var ls = pp._layerSkeletons[i];
-        if (ls._chainSkeletons) {
-            for (var csi = 0; csi < ls._chainSkeletons.length; csi++) {
-                SMTool._applyUnifiedZoomToSkeleton(ls._chainSkeletons[csi], cw, ch, zoom);
+
+    for (var i2 = 0; i2 < pp._layerSkeletons.length; i2++) {
+        var ls2 = pp._layerSkeletons[i2];
+        if (ls2._chainSkeletons) {
+            for (var csi2 = 0; csi2 < ls2._chainSkeletons.length; csi2++) {
+                SMTool._applyUnifiedZoomToSkeleton(ls2._chainSkeletons[csi2], cw, ch, zoom);
+                var csk2 = ls2._chainSkeletons[csi2];
+                if (csk2.skeleton) {
+                    csk2._defaultSkX = csk2.skeleton.x;
+                    csk2._defaultSkY = csk2.skeleton.y;
+                }
             }
         } else {
-            SMTool._applyUnifiedZoomToSkeleton(ls, cw, ch, zoom);
+            SMTool._applyUnifiedZoomToSkeleton(ls2, cw, ch, zoom);
+            if (ls2.skeleton) {
+                ls2._defaultSkX = ls2.skeleton.x;
+                ls2._defaultSkY = ls2.skeleton.y;
+            }
+        }
+    }
+    // ★ 尺寸变化后重新应用已保存的位置偏移
+    for (var li = 0; li < pp._layerSkeletons.length; li++) {
+        var lsk = pp._layerSkeletons[li];
+        if (lsk.layer && layerNode && layerNode._layerData && layerNode._layerData.layers[lsk.layer]) {
+            var savedData = layerNode._layerData.layers[lsk.layer];
+            var chainPositions = savedData._chainPositions;
+            if (chainPositions) {
+                var chain = lsk._chainSkeletons || [lsk];
+                for (var cpi = 0; cpi < chain.length; cpi++) {
+                    var csk3 = chain[cpi];
+                    if (csk3.skeleton && csk3._chainNodeId != null) {
+                        var cp = chainPositions[csk3._chainNodeId];
+                        if (cp) {
+                            csk3.skeleton.x = csk3._defaultSkX + (cp.offX || 0);
+                            csk3.skeleton.y = csk3._defaultSkY + (cp.offY || 0);
+                        }
+                    }
+                }
+            }
+            // ★ 兼容旧格式：单骨架位置偏移（posOffX/posOffY）
+            if ((savedData.posOffX || savedData.posOffY) && lsk.skeleton && lsk._defaultSkX !== undefined) {
+                lsk.skeleton.x = lsk._defaultSkX + (savedData.posOffX || 0);
+                lsk.skeleton.y = lsk._defaultSkY + (savedData.posOffY || 0);
+            }
         }
     }
     SMTool._updateAnimPreviewZoomLabel(zoom);
@@ -1488,6 +1652,248 @@ SMTool._testLayerPreviewDirect = function () {
     if (title) title.textContent = '🧪 L1(上):' + (nodeA.sourceFile || 'A') + ' + L2(下):' + (nodeB.sourceFile || 'B');
 
     alert('✅ 测试就绪！\n\nL1 上层: ' + (nodeA.sourceFile || '节点A') + '\nL2 下层: ' + (nodeB.sourceFile || '节点B') + '\n\n浮窗里应该看到两个不同的动画叠加。');
+};
+
+// ================================================================
+// 层级列表面板（预览浮窗左侧）
+// ================================================================
+
+// ★ 切换层级列表显隐
+SMTool._toggleLayerList = function () {
+    var list = document.getElementById('appLayerList');
+    if (!list) return;
+    var showing = list.style.display !== 'none';
+    if (showing) {
+        list.style.display = 'none';
+    } else {
+        SMTool._buildLayerList();
+        list.style.display = 'flex';
+    }
+};
+
+// ★ 构建层级列表内容
+SMTool._buildLayerList = function () {
+    var content = document.getElementById('allListContent');
+    if (!content) return;
+    var pp = SMData._animPreview;
+    if (!pp || !pp._layerSkeletons) { content.innerHTML = '<div style="padding:12px;color:var(--text2);font-size:12px">无层级数据</div>'; return; }
+
+    var html = '';
+    for (var i = 0; i < pp._layerSkeletons.length; i++) {
+        var ls = pp._layerSkeletons[i];
+        var layerNum = ls.layer || (i + 1);
+        var fileName = '';
+        // 从链首骨架获取源文件名
+        if (ls._chainSkeletons && ls._chainSkeletons.length > 0) {
+            var first = ls._chainSkeletons[0];
+            var srcNode = SMData.nodes.get(first._chainNodeId || ls.nodeId);
+            if (srcNode && srcNode.sourceFile) fileName = srcNode.sourceFile;
+        }
+        if (!fileName && ls.nodeId != null) {
+            var sn = SMData.nodes.get(ls.nodeId);
+            if (sn && sn.sourceFile) fileName = sn.sourceFile;
+        }
+        fileName = fileName || ('层' + layerNum);
+
+        var isHidden = ls._hidden;
+        var isPosActive = ls._positionDragActive;
+        html += '<div class="all-item' + (isHidden ? ' hidden-layer' : '') + '">' +
+            '<div class="all-item-row1">' +
+                '<span class="all-item-layer">L' + layerNum + '</span>' +
+                '<span class="all-item-file" title="' + SMTool._esc(fileName) + '">' + SMTool._esc(fileName) + '</span>' +
+            '</div>' +
+            '<div class="all-item-row2">' +
+                '<button class="all-btn' + (isHidden ? '' : ' active') + '" onclick="SMTool._toggleLayerVisibility(' + i + ')" title="' + (isHidden ? '显示' : '隐藏') + '层级">👁</button>' +
+                '<button class="all-btn' + (isPosActive ? ' active' : '') + '" id="allPosBtn-' + i + '" onclick="SMTool._toggleLayerPositionDrag(' + i + ')" title="拖拽移动层级位置">📍</button>' +
+            '</div>' +
+            '<div class="all-pos-actions' + (isPosActive ? ' show' : '') + '" id="allPosActions-' + i + '">' +
+                '<button class="pos-ok" onclick="SMTool._confirmLayerPosition(' + i + ')">✓ 确定</button>' +
+                '<button class="pos-cancel" onclick="SMTool._cancelLayerPosition(' + i + ')">✗ 取消</button>' +
+                '<button class="pos-reset" onclick="SMTool._resetLayerPosition(' + i + ')">↺ 默认</button>' +
+            '</div>' +
+        '</div>';
+    }
+    content.innerHTML = html;
+};
+
+// ★ 切换层级显隐
+SMTool._toggleLayerVisibility = function (idx) {
+    var pp = SMData._animPreview;
+    if (!pp || !pp._layerSkeletons || idx >= pp._layerSkeletons.length) return;
+    var ls = pp._layerSkeletons[idx];
+    ls._hidden = !ls._hidden;
+    SMTool._buildLayerList();
+};
+
+// ★ 切换层级位置拖拽模式
+SMTool._toggleLayerPositionDrag = function (idx) {
+    var pp = SMData._animPreview;
+    if (!pp || !pp._layerSkeletons || idx >= pp._layerSkeletons.length) return;
+    var ls = pp._layerSkeletons[idx];
+    // 关闭其他层的拖拽模式
+    for (var i = 0; i < pp._layerSkeletons.length; i++) {
+        if (i !== idx) pp._layerSkeletons[i]._positionDragActive = false;
+    }
+    ls._positionDragActive = !ls._positionDragActive;
+    if (ls._positionDragActive) {
+        // 进入拖拽模式：保存当前位置
+        if (ls.skeleton) {
+            ls._savedSkX = ls.skeleton.x;
+            ls._savedSkY = ls.skeleton.y;
+        }
+        pp._layerDragTargetIdx = idx;
+    } else {
+        pp._layerDragTargetIdx = -1;
+    }
+    SMTool._buildLayerList();
+};
+
+// ★ 确定位置（保存该层所有链骨架的偏移量）
+SMTool._confirmLayerPosition = function (idx) {
+    var pp = SMData._animPreview;
+    if (!pp || !pp._layerSkeletons || idx >= pp._layerSkeletons.length) return;
+    var ls = pp._layerSkeletons[idx];
+
+    // ★ 为该层每个链骨架保存相对于默认居中位置的偏移量
+    var layerNode = SMData.nodes.get(pp.nodeId);
+    if (layerNode && layerNode._layerData && ls.layer) {
+        var ld = layerNode._layerData;
+        if (!ld.layers[ls.layer]) ld.layers[ls.layer] = {};
+        // 清空旧偏移数据
+        ld.layers[ls.layer]._chainPositions = {};
+        var chain = ls._chainSkeletons || [ls];
+        for (var ci = 0; ci < chain.length; ci++) {
+            var csk = chain[ci];
+            if (csk.skeleton && csk._chainNodeId != null) {
+                var defX = csk._defaultSkX !== undefined ? csk._defaultSkX : csk.skeleton.x;
+                var defY = csk._defaultSkY !== undefined ? csk._defaultSkY : csk.skeleton.y;
+                ld.layers[ls.layer]._chainPositions[csk._chainNodeId] = {
+                    offX: csk.skeleton.x - defX,
+                    offY: csk.skeleton.y - defY
+                };
+            }
+        }
+    }
+    ls._positionDragActive = false;
+    pp._layerDragTargetIdx = -1;
+    SMTool._buildLayerList();
+};
+
+// ★ 取消位置（恢复该层所有链骨架到拖拽前的位置）
+SMTool._cancelLayerPosition = function (idx) {
+    var pp = SMData._animPreview;
+    if (!pp || !pp._layerSkeletons || idx >= pp._layerSkeletons.length) return;
+    var ls = pp._layerSkeletons[idx];
+    var positions = pp._layerDragStartPositions;
+    if (positions) {
+        for (var pi = 0; pi < positions.length; pi++) {
+            positions[pi].sk.x = positions[pi].x;
+            positions[pi].sk.y = positions[pi].y;
+        }
+    }
+    ls._positionDragActive = false;
+    pp._layerDragTargetIdx = -1;
+    SMTool._buildLayerList();
+};
+
+// ★ 恢复默认位置（清除该层所有链骨架的偏移）
+SMTool._resetLayerPosition = function (idx) {
+    var pp = SMData._animPreview;
+    if (!pp || !pp._layerSkeletons || idx >= pp._layerSkeletons.length) return;
+    var ls = pp._layerSkeletons[idx];
+    // 恢复所有链骨架到默认居中位置
+    var chain = ls._chainSkeletons || [ls];
+    for (var ci = 0; ci < chain.length; ci++) {
+        var csk = chain[ci];
+        if (csk.skeleton && csk._defaultSkX !== undefined) {
+            csk.skeleton.x = csk._defaultSkX;
+            csk.skeleton.y = csk._defaultSkY;
+        }
+    }
+    // ★ 清除工程中保存的偏移
+    var layerNode = SMData.nodes.get(pp.nodeId);
+    if (layerNode && layerNode._layerData && ls.layer) {
+        var ld = layerNode._layerData;
+        if (ld.layers[ls.layer]) {
+            delete ld.layers[ls.layer]._chainPositions;
+            delete ld.layers[ls.layer].posOffX;
+            delete ld.layers[ls.layer].posOffY;
+            delete ld.layers[ls.layer].posX;
+            delete ld.layers[ls.layer].posY;
+        }
+    }
+    SMTool._buildLayerList();
+};
+
+// ★ 鼠标按下：开始拖拽层级位置（保存该层所有链骨架的起始位置）
+SMTool._onLayerPosMouseDown = function (e) {
+    var pp = SMData._animPreview;
+    if (!pp || pp._layerDragTargetIdx < 0 || !pp._layerSkeletons) return;
+    var ls = pp._layerSkeletons[pp._layerDragTargetIdx];
+    if (!ls || !ls._positionDragActive || !ls.skeleton) return;
+
+    var canvas = pp.canvas || document.getElementById('appCanvas');
+    if (!canvas) return;
+    var rect = canvas.getBoundingClientRect();
+    if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) return;
+
+    e.preventDefault();
+    pp._layerDragActive = true;
+    pp._layerDragStartX = e.clientX;
+    pp._layerDragStartY = e.clientY;
+    // ★ 保存该层所有链骨架的起始位置（直接+间接动画节点一起移动）
+    pp._layerDragStartPositions = [];
+    var chain = ls._chainSkeletons || [ls];
+    for (var ci = 0; ci < chain.length; ci++) {
+        if (chain[ci].skeleton) {
+            pp._layerDragStartPositions.push({ sk: chain[ci].skeleton, x: chain[ci].skeleton.x, y: chain[ci].skeleton.y });
+        }
+    }
+};
+
+// ★ 鼠标移动：拖拽层级位置（该层所有链骨架同步移动）
+SMTool._onLayerPosMouseMove = function (e) {
+    var pp = SMData._animPreview;
+    if (!pp || !pp._layerDragActive || pp._layerDragTargetIdx < 0) return;
+    var ls = pp._layerSkeletons[pp._layerDragTargetIdx];
+    if (!ls) return;
+
+    var zoom = pp._contentZoom || 1.0;
+    var dx = (e.clientX - pp._layerDragStartX) / zoom;
+    var dy = (e.clientY - pp._layerDragStartY) / zoom;
+    // ★ 将该层所有链骨架移动相同的位移量
+    var positions = pp._layerDragStartPositions;
+    if (positions) {
+        for (var pi = 0; pi < positions.length; pi++) {
+            positions[pi].sk.x = positions[pi].x + dx;
+            positions[pi].sk.y = positions[pi].y - dy;
+        }
+    }
+};
+
+// ★ 鼠标释放：结束拖拽
+SMTool._onLayerPosMouseUp = function () {
+    var pp = SMData._animPreview;
+    if (!pp) return;
+    pp._layerDragActive = false;
+};
+
+// ★ 清除所有层级高亮、置灰遮罩和进度条（关闭预览时调用）
+SMTool._clearAllLayerHighlights = function () {
+    var allIds = new Set();
+    if (SMData._layerPlayingNodes) SMData._layerPlayingNodes.forEach(function (id) { allIds.add(id); });
+    if (SMData._layerAllChainNodes) SMData._layerAllChainNodes.forEach(function (id) { allIds.add(id); });
+    allIds.forEach(function (nid) {
+        var el = SMTool._getEl(nid);
+        if (!el) return;
+        el.classList.remove('playing-current');
+        var d = el.querySelector('.dim-overlay');
+        if (d) d.remove();
+        var b = el.querySelector('.anim-progress-bar');
+        if (b) { b.style.opacity = '0'; b.style.transform = 'scaleX(0)'; b.style.animation = ''; b.classList.remove('playing', 'paused'); }
+    });
+    SMData._layerPlayingNodes = null;
+    SMData._layerAllChainNodes = null;
 };
 
 console.log('[LayerNode] 层级节点模块已加载');
