@@ -1122,8 +1122,13 @@ SMTool._loadOneSkeletonToGL = function (gl, SP, WGL, srcNode, physParam, cw, ch,
     // ★ 等比例适配：用与单节点预览相同的居中逻辑
     var bo = new SP.Vector2(), bs = new SP.Vector2();
     try { if (typeof sk.getBounds === 'function') sk.getBounds(bo, bs, []); } catch(e) {}
-    var skelW = bs.x || 1, skelH = bs.y || 1;
-    var centerX = bo.x + skelW / 2, centerY = bo.y + skelH / 2;
+    // ★ 防御 null/NaN/0 bounds（部分骨架 setup pose 下无可见附件，getBounds 返回 null/NaN）
+    var boundsValid = Number.isFinite(bs.x) && bs.x > 0 && Number.isFinite(bs.y) && bs.y > 0;
+    var skelW = boundsValid ? bs.x : 400;
+    var skelH = boundsValid ? bs.y : 400;
+    // 无效 bounds 时 centerX/Y=0（骨架原点对齐画布中心），有效时用实际中心
+    var centerX = boundsValid ? (Number.isFinite(bo.x) ? bo.x : 0) + skelW / 2 : 0;
+    var centerY = boundsValid ? (Number.isFinite(bo.y) ? bo.y : 0) + skelH / 2 : 0;
     // 与单节点预览一致的居中
     sk.x = cw / 2 - centerX;
     sk.y = ch / 2 - centerY;
@@ -1414,7 +1419,25 @@ SMTool._renderLayerPreview = function (layerNode, pp, now) {
         if (!layerSrcNode && ls.nodeId != null) layerSrcNode = SMData.nodes.get(ls.nodeId);
 
         // ★ 按 drawOrder 精确分段交错渲染（自定义插槽图片嵌入正确层级）
-        SMTool._renderLayerSkeletonInterleaved(ls, gl, WGL, layerSrcNode);
+        try {
+            SMTool._renderLayerSkeletonInterleaved(ls, gl, WGL, layerSrcNode);
+        } catch (e) {
+            // 交错渲染失败 → 回退到正常渲染，保证其他层不受影响
+            console.warn('[LayerPreview] 交错渲染失败，回退正常渲染:', e.message);
+            if (ls.skeleton && ls.skeleton.drawOrder) {
+                // 恢复可能被修改的 drawOrder
+            }
+            if (ls.shader && ls.batcher && ls.skeletonRenderer && ls.skeleton && ls.mvp) {
+                ls.shader.bind();
+                ls.shader.setUniformi(WGL.Shader.SAMPLER, 0);
+                ls.shader.setUniform4x4f(WGL.Shader.MVP_MATRIX, ls.mvp.values);
+                ls.batcher.begin(ls.shader);
+                ls.skeletonRenderer.premultipliedAlpha = ls.premultipliedAlpha || false;
+                ls.skeletonRenderer.draw(ls.batcher, ls.skeleton);
+                ls.batcher.end();
+                ls.shader.unbind();
+            }
+        }
 
 
         // ★ 收集当前活跃骨架对应的源节点 ID，用于主画布高亮

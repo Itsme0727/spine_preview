@@ -2249,6 +2249,40 @@ SMTool._renderLayerSkeletonInterleaved = function (ls, gl, WGL, srcNode) {
         return;
     }
 
+    // ★ 检测骨架是否使用 Clipping（剪裁）或 Mesh（网格）附件
+    // 这些附件依赖 Spine 内部连续渲染状态，分段 batcher.begin/end 会打断它们
+    var SP38 = window.spine38;
+    var hasClippingOrMesh = false;
+    var ClipClass = SP38 && SP38.ClippingAttachment;
+    var MeshClass = SP38 && SP38.MeshAttachment;
+    var SkinMeshClass = SP38 && SP38.SkinnedMeshAttachment;
+    if (ClipClass || MeshClass || SkinMeshClass) {
+        for (var di = 0; di < drawOrder.length; di++) {
+            var att = drawOrder[di].attachment;
+            if (!att) continue;
+            if ((ClipClass && att instanceof ClipClass) ||
+                (MeshClass && att instanceof MeshClass) ||
+                (SkinMeshClass && att instanceof SkinMeshClass)) {
+                hasClippingOrMesh = true;
+                break;
+            }
+        }
+    }
+    if (hasClippingOrMesh) {
+        // 回退到正常渲染，自定义插槽图片在骨架后渲染
+        ls.shader.bind();
+        ls.shader.setUniformi(WGL.Shader.SAMPLER, 0);
+        ls.shader.setUniform4x4f(WGL.Shader.MVP_MATRIX, ls.mvp.values);
+        ls.batcher.begin(ls.shader);
+        ls.skeletonRenderer.premultipliedAlpha = ls.premultipliedAlpha;
+        ls.skeletonRenderer.draw(ls.batcher, ls.skeleton);
+        ls.batcher.end();
+        ls.shader.unbind();
+        // ★ 自定义插槽图片在骨架后渲染
+        SMTool._renderLayerPreviewSlotImagesForSkeleton(ls, gl, WGL, srcNode);
+        return;
+    }
+
     // 构建 drawOrder 索引映射
     var slotDrawIdx = {};
     var slotBoneMap = {};
@@ -2439,6 +2473,37 @@ SMTool._renderSingleSlotImagesDirect = function (gl, ls, slotName, bone, slot, s
     }
 
     SMTool._restoreGL(gl, saved);
+};
+
+// ★ 回退渲染：为使用 Clipping/Mesh 的骨架渲染插槽图片（在骨架之后，不分段）
+SMTool._renderLayerPreviewSlotImagesForSkeleton = function (ls, gl, WGL, srcNode) {
+    if (!srcNode || !srcNode._slotScreenshots || !ls.skeleton) return;
+    var skeleton = ls.skeleton;
+    var slotNames = Object.keys(srcNode._slotScreenshots);
+    if (slotNames.length === 0) return;
+
+    var qr = SMTool._layerSlotQR;
+    if (!qr && gl) { SMTool._layerSlotQR = SMTool._createBoneQuadRenderer(gl); qr = SMTool._layerSlotQR; }
+    if (!qr) return;
+
+    // Build slot → bone map
+    var slotBoneMap = {};
+    var slotObjMap = {};
+    var slots = skeleton.slots;
+    if (slots) {
+        for (var i = 0; i < slots.length; i++) {
+            var nm = (slots[i].data && slots[i].data.name) ? slots[i].data.name : '';
+            if (nm && slots[i].bone) { slotBoneMap[nm] = slots[i].bone; slotObjMap[nm] = slots[i]; }
+        }
+    }
+
+    for (var sni = 0; sni < slotNames.length; sni++) {
+        var sn = slotNames[sni];
+        var bone = slotBoneMap[sn];
+        if (!bone) continue;
+        var slot = slotObjMap[sn];
+        SMTool._renderSingleSlotImagesDirect(gl, ls, sn, bone, slot, srcNode);
+    }
 };
 
 // ================================================================

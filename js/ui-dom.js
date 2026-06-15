@@ -8,6 +8,10 @@ var SMTool = window.SMTool || {};
 
 // ---- 创建节点 DOM ----
 SMTool._createEl = function (node) {
+    // ★ 先移除旧 DOM，防止重复创建（toggleLoop 等场景可能多次调用 _createEl）
+    var oldEl = document.getElementById('sn-' + node.id);
+    if (oldEl) oldEl.remove();
+    
     var el = document.createElement('div');
     el.className = 'spine-node';
     if (node.nodeType === 'textBox') el.classList.add('text-box-node');
@@ -675,17 +679,51 @@ SMTool._toggleLoop = function (nid) {
         btn.textContent = node.loop ? '🔄 循环播放' : '▶ 单次播放';
         btn.classList.toggle('active', node.loop);
     }
-    // ★ 刷新循环模式行（循环/单次切换时显隐、重建）
+    // ★ 刷新循环模式行（循环/单次切换时显隐）
     var modeRow = document.getElementById('loopModeRow-' + nid);
-    var hasRow = !!modeRow;
-    if (node.loop && !hasRow) {
-        // 需要重建节点 DOM 以显示循环模式控件
-        SMTool._createEl(node);
-        SMTool._updatePos(node);
-    } else if (!node.loop && hasRow) {
-        modeRow.style.display = 'none';
-    } else if (node.loop && hasRow) {
-        modeRow.style.display = 'flex';
+    if (node.loop) {
+        if (modeRow) {
+            modeRow.style.display = 'flex';
+            // 更新循环值输入框（可能因动画切换而变化）
+            var inp2 = modeRow.querySelector('.loop-value-input');
+            var unit2 = modeRow.querySelector('.loop-value-unit');
+            var lm2 = node._loopMode || 'count';
+            if (inp2) inp2.value = (lm2 === 'count') ? (node._loopCount !== undefined ? node._loopCount : 1) : (node._loopTime !== undefined ? node._loopTime : 0);
+            if (unit2) unit2.textContent = (lm2 === 'count') ? '次' : 's';
+        } else {
+            // 行不存在 → 插入行（避免重建整个 DOM）
+            var footerEl = document.querySelector('#sn-' + nid + ' .footer');
+            if (footerEl && !footerEl.querySelector('.loop-mode-row')) {
+                var lm = node._loopMode || 'count';
+                var lc = (node._loopCount !== undefined) ? node._loopCount : 1;
+                var lt = (node._loopTime !== undefined) ? node._loopTime : 0;
+                var cv = (lm === 'count') ? lc : lt;
+                var cu = (lm === 'count') ? '次' : 's';
+                var rowDiv = document.createElement('div');
+                rowDiv.className = 'loop-mode-row';
+                rowDiv.id = 'loopModeRow-' + nid;
+                rowDiv.innerHTML =
+                    '<span class="loop-mode-capsule">' +
+                        '<button class="loop-mode-btn' + (lm === 'count' ? ' active' : '') + '" data-mode="count" ' +
+                            'onclick="event.stopPropagation();SMTool._setLoopMode(' + nid + ',\'count\')">循环次数</button>' +
+                        '<button class="loop-mode-btn' + (lm === 'time' ? ' active' : '') + '" data-mode="time" ' +
+                            'onclick="event.stopPropagation();SMTool._setLoopMode(' + nid + ',\'time\')">循环时间</button>' +
+                    '</span>' +
+                    '<input type="number" class="loop-value-input" id="loopValue-' + nid + '" ' +
+                        'value="' + cv + '" min="' + (lm === 'count' ? '-1' : '0') + '" step="' + (lm === 'count' ? '1' : '0.01') + '" ' +
+                        'onchange="event.stopPropagation();SMTool._setLoopValue(' + nid + ',this.value)" ' +
+                        'onclick="event.stopPropagation()" onkeydown="event.stopPropagation()">' +
+                    '<span class="loop-value-unit" id="loopUnit-' + nid + '">' + cu + '</span>';
+                var speedRow = footerEl.querySelector('.speed-row');
+                if (speedRow) {
+                    speedRow.parentNode.insertBefore(rowDiv, speedRow);
+                } else {
+                    footerEl.appendChild(rowDiv);
+                }
+            }
+        }
+    } else {
+        if (modeRow) modeRow.style.display = 'none';
     }
     // ★ 同步底部栏状态
     SMTool._updateBottomBar();
@@ -2545,6 +2583,28 @@ SMTool._updateEl = function (node) {
                 '<button class="loop-toggle' + (node.loop !== false ? ' active' : '') + '" onclick="event.stopPropagation();SMTool._toggleLoop(' + node.id + ')">' + (node.loop !== false ? '🔄 循环播放' : '▶ 单次播放') + '</button>' +
                 '<label class="pma-toggle" title="预乘 Alpha"><input type="checkbox" onchange="SMTool._togglePMA(' + node.id + ',this.checked)"' + (node.premultipliedAlpha ? ' checked' : '') + '>预乘Alpha</label>' +
             '</div>' +
+            // ★ 循环模式控件（循环激活时显示）
+            (function () {
+                if (node.loop === false) return '';
+                var lm = node._loopMode || 'count';
+                var lc = (node._loopCount !== undefined) ? node._loopCount : 1;
+                var lt = (node._loopTime !== undefined) ? node._loopTime : 0;
+                var cv = (lm === 'count') ? lc : lt;
+                var cu = (lm === 'count') ? '次' : 's';
+                return '<div class="loop-mode-row" id="loopModeRow-' + node.id + '">' +
+                    '<span class="loop-mode-capsule">' +
+                        '<button class="loop-mode-btn' + (lm === 'count' ? ' active' : '') + '" data-mode="count" ' +
+                            'onclick="event.stopPropagation();SMTool._setLoopMode(' + node.id + ',\'count\')">循环次数</button>' +
+                        '<button class="loop-mode-btn' + (lm === 'time' ? ' active' : '') + '" data-mode="time" ' +
+                            'onclick="event.stopPropagation();SMTool._setLoopMode(' + node.id + ',\'time\')">循环时间</button>' +
+                    '</span>' +
+                    '<input type="number" class="loop-value-input" id="loopValue-' + node.id + '" ' +
+                        'value="' + cv + '" min="' + (lm === 'count' ? '-1' : '0') + '" step="' + (lm === 'count' ? '1' : '0.01') + '" ' +
+                        'onchange="event.stopPropagation();SMTool._setLoopValue(' + node.id + ',this.value)" ' +
+                        'onclick="event.stopPropagation()" onkeydown="event.stopPropagation()">' +
+                    '<span class="loop-value-unit" id="loopUnit-' + node.id + '">' + cu + '</span>' +
+                '</div>';
+            })() +
             '<div class="speed-row">' +
                 '<span class="speed-label">⏱</span>' +
                 '<input type="range" class="speed-slider" min="0" max="1000" value="' + Math.round(((node._playbackSpeed || 1) + 5) * 100) + '" step="1" ' +
