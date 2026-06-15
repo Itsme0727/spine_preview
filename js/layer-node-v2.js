@@ -27,6 +27,47 @@ SMTool._layerData = function (node) {
     return node._layerData;
 };
 
+/**
+ * 沿下游连线查找第一个 Spine 动画节点
+ * 若直接连线节点不是动画节点（如延时器），继续向右追踪直到找到动画节点
+ * 找不到则返回直接连线节点本身
+ * @returns {{ animNode, resolvedId, directNodeId }}
+ */
+SMTool._resolveAnimNodeDownstream = function (startNodeId, maxDepth) {
+    maxDepth = maxDepth || 20;
+    var visited = new Set();
+    var currentId = startNodeId;
+    var depth = 0;
+    while (depth < maxDepth) {
+        if (visited.has(currentId)) break;
+        visited.add(currentId);
+        var node = SMData.nodes.get(currentId);
+        if (!node) break;
+        // 找到了 spine 动画节点（有骨架数据和动画列表）
+        if (node.nodeType === 'spine' && node.skeletonData && node.animations && node.animations.length > 0) {
+            return { animNode: node, resolvedId: currentId, directNodeId: startNodeId };
+        }
+        // 沿唯一下游连线继续查找
+        var nextId = null;
+        for (var i = 0; i < SMData.connections.length; i++) {
+            var c = SMData.connections[i];
+            if (c.fromNode === currentId && !visited.has(c.toNode)) {
+                // 跳过回连到 layer 节点的线
+                var toNode = SMData.nodes.get(c.toNode);
+                if (toNode && toNode.nodeType === 'layer') continue;
+                nextId = c.toNode;
+                break;
+            }
+        }
+        if (!nextId) break;
+        currentId = nextId;
+        depth++;
+    }
+    // 找不到动画节点 → 返回直接连线节点
+    var directNode = SMData.nodes.get(startNodeId);
+    return { animNode: directNode, resolvedId: startNodeId, directNodeId: startNodeId };
+};
+
 // ================================================================
 // 创建层级节点
 // ================================================================
@@ -89,7 +130,9 @@ SMTool._createLayerEl = function (node) {
         var displayText = '请连线动画节点';
         var animName = '';
         if (layerInfo && layerInfo.animNodeId) {
-            var linkedNode = SMData.nodes.get(layerInfo.animNodeId);
+            // ★ 沿下游查找第一个动画节点（跳过延时器等非动画节点）
+            var resolvedInit = SMTool._resolveAnimNodeDownstream(layerInfo.animNodeId);
+            var linkedNode = resolvedInit.animNode;
             if (linkedNode) {
                 displayText = SMTool._esc(linkedNode.sourceFile || linkedNode.name || '动画节点');
                 if (layerInfo.animName) {
@@ -159,7 +202,9 @@ SMTool._updateLayerEl = function (node) {
             var displayText = '请连线动画节点';
             var animName = '';
             if (layerInfo && layerInfo.animNodeId) {
-                var linkedNode = SMData.nodes.get(layerInfo.animNodeId);
+                // ★ 沿下游查找第一个动画节点（跳过延时器等非动画节点）
+                var resolved = SMTool._resolveAnimNodeDownstream(layerInfo.animNodeId);
+                var linkedNode = resolved.animNode;
                 if (linkedNode) {
                     displayText = SMTool._esc(linkedNode.sourceFile || linkedNode.name || '动画节点');
                     if (layerInfo.animName) {
@@ -336,7 +381,9 @@ SMTool._tryConnectLayerDot = function (fromNid, fromState, toNid) {
     if (el2) {
         var boxes2 = el2.querySelectorAll('.layer-box-text');
         if (boxes2[layerNum - 1]) {
-            var tn2 = SMData.nodes.get(toNid);
+            // ★ 使用解析后的动画节点（沿下游查找），而非直连节点
+            var resolved2 = SMTool._resolveAnimNodeDownstream(toNid);
+            var tn2 = resolved2.animNode;
             boxes2[layerNum - 1].textContent = (tn2 ? (tn2.sourceFile || tn2.name || '动画节点') : '?') + (tn2 && tn2.currentAnim ? ' — ' + tn2.currentAnim : '');
         }
     }
@@ -398,6 +445,13 @@ SMTool._refreshAllLayerBoxes = function () {
         if (ln.nodeType !== 'layer') { r = nodesIter.next(); continue; }
         var el = SMTool._getEl(ln.id);
         if (!el) { r = nodesIter.next(); continue; }
+        // ★ 检测旧版 DOM（缺少 .layer-box-text），自动重建为正确的 layer DOM
+        if (!el.classList.contains('layer-node') || el.querySelectorAll('.layer-box-text').length === 0) {
+            SMTool._createLayerEl(ln);
+            SMTool._updatePos(ln);  // ★ 重建后立即更新位置，防止连线错位
+            el = SMTool._getEl(ln.id);
+            if (!el) { r = nodesIter.next(); continue; }
+        }
         var boxes = el.querySelectorAll('.layer-box-text');
         var ld = SMTool._layerData(ln);
         var nodeConns = connIndex[ln.id] || {};
@@ -406,7 +460,10 @@ SMTool._refreshAllLayerBoxes = function () {
             var txt = '请连线动画节点';
             var cinfo = nodeConns[lnum];
             if (cinfo && cinfo.toNodeObj) {
-                txt = (cinfo.toNodeObj.sourceFile || cinfo.toNodeObj.name || '动画节点') + (cinfo.toNodeObj.currentAnim ? ' — ' + cinfo.toNodeObj.currentAnim : '');
+                // ★ 沿下游解析第一个动画节点（跳过延时器等非动画节点）
+                var resolvedR = SMTool._resolveAnimNodeDownstream(cinfo.toNode);
+                var displayNode = resolvedR.animNode;
+                txt = (displayNode ? (displayNode.sourceFile || displayNode.name || '动画节点') : (cinfo.toNodeObj.sourceFile || cinfo.toNodeObj.name || '动画节点')) + (displayNode && displayNode.currentAnim ? ' — ' + displayNode.currentAnim : '');
             } else {
                 // ★ 无连线则清除该层的旧数据
                 if (ld.layers[lnum]) delete ld.layers[lnum];
@@ -417,6 +474,8 @@ SMTool._refreshAllLayerBoxes = function () {
         }
         r = nodesIter.next();
     }
+    // ★ 重建了 DOM → 强制下一帧重绘连线
+    SMData._forceRedraw = true;
 };
 
 // ================================================================
@@ -756,6 +815,8 @@ SMTool._showLayerPreview = function (layerNode) {
     panel.style.display = 'flex';
     pp.visible = true;
     pp.nodeId = layerNode.id;
+    // ★ 重置"所有分支已完成"标记（新预览周期）
+    pp._allLayersCompletedOnce = false;
 
     // 确定 Spine 版本 — 优先从直连 Spine 节点获取，全是延时器时沿链查找
     var firstNode = null;
@@ -884,6 +945,9 @@ SMTool._showLayerPreview = function (layerNode) {
             firstSk._chainIdx = 0;
             firstSk._chainDone = false;
             firstSk._chainElapsed = 0;
+            // ★ 流面板分支高亮刷新追踪
+            firstSk._lastRptChainIdx = 0;
+            firstSk._lastRptChainDone = false;
             // ★ 循环追踪：记录当前循环次数和已流逝时间（动画流/并行播放循环控制）
             firstSk._loopTrack = { currentLoop: 0, totalElapsed: 0 };
             // ★ 若链首是延时器，从链上第一个 Spine 节点预取渲染器属性
@@ -1497,14 +1561,52 @@ SMTool._renderLayerPreview = function (layerNode, pp, now) {
     // ★ 同步主画布节点高亮 + 进度条：活跃节点粉色发光+进度条，非活跃链节点置灰
     SMTool._updateLayerPlayingHighlights(activeNodeIds, allChainNodeIds, activeNodeProgress);
 
+    // ★★★ 实时刷新流面板分支节点高亮（每帧检测 chainIdx 变化） ★★★
+    var anyBranchChanged = false;
+    for (var bi2 = 0; bi2 < list.length; bi2++) {
+        var lsBi = list[bi2];
+        if (lsBi._chainIdx !== lsBi._lastRptChainIdx || !!lsBi._chainDone !== !!lsBi._lastRptChainDone) {
+            anyBranchChanged = true;
+            lsBi._lastRptChainIdx = lsBi._chainIdx;
+            lsBi._lastRptChainDone = !!lsBi._chainDone;
+        }
+    }
+    if (anyBranchChanged) {
+        SMTool._refreshFlowBranchHighlights();
+    }
+
     // ★★★ 栅栏同步：检查所有层是否都已完成 ★★★
-    // 设旗标 → 6帧清屏 → _showLayerPreview重建 → 1帧安全延迟 → 渲染新周期
     if (!pp._flowFrozen && list.length > 0) {
         var allDone = true;
         for (var j = 0; j < list.length; j++) {
             if (!list[j]._chainDone) { allDone = false; break; }
         }
         if (allDone) {
+            pp._allLayersCompletedOnce = true;  // ★ 标记：所有分支已完成过至少一轮
+
+            // ★★★ 自动重播：如果动画流正在播放，所有分支完成 → 从流起点重播 ★★★
+            var fb = SMData._fullPlayback;
+            if (fb && fb.isPlaying && fb.activePathIdx >= 0) {
+                // 检查当前步骤是否为 layer hub（确认是流中的 layer 节点而非手动预览）
+                var fpath = SMData._fullPaths[fb.activePathIdx];
+                if (fpath && fb.currentStep < fpath.nodes.length) {
+                    var fsn = fpath.nodes[fb.currentStep];
+                    if (fsn && fsn._isLayerHub) {
+                        // ★ 停止层预览，从流起点重新播放
+                        fb.currentStep = 0;
+                        fb.isPlaying = false;
+                        if (fb._timer) { clearTimeout(fb._timer); fb._timer = null; }
+                        SMTool._clearAllProgressBars();
+                        // 重置所有节点到动画第一帧
+                        SMTool._resetAllToAnimFrame1();
+                        // 重新开始播放
+                        SMTool._startFullPlayback();
+                        return;  // ★ 不继续本帧渲染（预览即将重建）
+                    }
+                }
+            }
+
+            // 未在流播放中 → 保持原有大循环行为（预览内循环）
             for (var k = 0; k < list.length; k++) {
                 list[k]._chainDone = false;
                 list[k]._chainIdx = 0;

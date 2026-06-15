@@ -8,6 +8,10 @@ var SMTool = window.SMTool || {};
 
 // ---- 创建节点 DOM ----
 SMTool._createEl = function (node) {
+    // ★ layer 节点使用专用 DOM 创建函数
+    if (node.nodeType === 'layer') {
+        return SMTool._createLayerEl(node);
+    }
     // ★ 先移除旧 DOM，防止重复创建（toggleLoop 等场景可能多次调用 _createEl）
     var oldEl = document.getElementById('sn-' + node.id);
     if (oldEl) oldEl.remove();
@@ -2970,11 +2974,12 @@ SMTool._updateSel = function () {
                     var lnumL = liL + 1;
                     var txt = '请连线动画节点';
                     var foundL = false;
-                    // 兜底1：从连线表 _layerNum 匹配
+                    // 兜底1：从连线表 _layerNum 匹配（★ 下游解析动画节点）
                     for (var ciL = 0; ciL < SMData.connections.length; ciL++) {
                         var cL = SMData.connections[ciL];
                         if (cL.fromNode === selNode.id && cL._layerNum === lnumL) {
-                            var tnL = SMData.nodes.get(cL.toNode);
+                            var resolvedSel = SMTool._resolveAnimNodeDownstream(cL.toNode);
+                            var tnL = resolvedSel.animNode;
                             if (tnL) { txt = (tnL.sourceFile || tnL.name || '动画节点') + (tnL.currentAnim ? ' — ' + tnL.currentAnim : ''); foundL = true; }
                             break;
                         }
@@ -2984,7 +2989,8 @@ SMTool._updateSel = function () {
                         for (var ciL2 = 0; ciL2 < SMData.connections.length; ciL2++) {
                             var cL2 = SMData.connections[ciL2];
                             if (cL2.fromNode === selNode.id && typeof cL2.fromState === 'string' && cL2.fromState === 'layer_' + lnumL) {
-                                var tnL2a = SMData.nodes.get(cL2.toNode);
+                                var resolvedSel2 = SMTool._resolveAnimNodeDownstream(cL2.toNode);
+                                var tnL2a = resolvedSel2.animNode;
                                 if (tnL2a) { txt = (tnL2a.sourceFile || tnL2a.name || '动画节点') + (tnL2a.currentAnim ? ' — ' + tnL2a.currentAnim : ''); foundL = true; break; }
                             }
                         }
@@ -4316,6 +4322,91 @@ SMTool._updateFullFlowPanel = function (content, panel) {
     var pb = SMData._fullPlayback;
     var activePathIdx = pb.activePathIdx;
 
+    // ★ 辅助：渲染 layer hub 分支矩阵（内联在主干行内）
+    function _renderLayerBranchesInline(hubNode, isActivePath, stepIdx) {
+        var h = '';
+        if (!hubNode._branches || hubNode._branches.length === 0) return h;
+        // ★ 读取层预览状态用于分支节点高亮
+        var layerStates = {};
+        if (isActivePath && stepIdx === pb.currentStep) {
+            var ppLs = SMData._animPreview;
+            if (ppLs && ppLs._layerSkeletons) {
+                for (var lsi = 0; lsi < ppLs._layerSkeletons.length; lsi++) {
+                    var ls2 = ppLs._layerSkeletons[lsi];
+                    if (ls2.layer != null) {
+                        layerStates[ls2.layer] = {
+                            chainIdx: ls2._chainIdx || 0,
+                            chainDone: !!ls2._chainDone
+                        };
+                    }
+                }
+            }
+        }
+        h += '<div class="flp-layer-branches-inline">';
+        var totalBranches = hubNode._branches.length;
+        for (var bi = 0; bi < totalBranches; bi++) {
+            var br = hubNode._branches[bi];
+            var isFirst = (bi === 0);
+            var isLast = (bi === totalBranches - 1);
+            // ★ 修正分支符号：首层 ┏（┗ 上翻），中层 ┣，末层 ┗，单层 ━
+            var bullet;
+            if (totalBranches === 1) {
+                bullet = '━';
+            } else if (isFirst) {
+                bullet = '┏';
+            } else if (isLast) {
+                bullet = '┗';
+            } else {
+                bullet = '┣';
+            }
+            h += '<div class="flp-layer-branch-row">';
+            h += '<span class="flp-layer-branch-bullet">' + bullet + '</span>';
+            h += '<span class="flp-layer-branch-label">L' + br.layer + '</span>';
+            // ★ 显示关联动画节点的文件名（优先使用解析后的动画节点）
+            var brNodeName = '';
+            var lookupId = br._resolvedAnimNodeId || (br.nodes.length > 0 ? br.nodes[0].id : null);
+            if (lookupId) {
+                var brFirstNode = SMData.nodes.get(lookupId);
+                if (brFirstNode) {
+                    brNodeName = SMTool._esc(brFirstNode.sourceFile || brFirstNode.name || '');
+                }
+            }
+            if (brNodeName) {
+                h += '<span class="flp-layer-branch-srcfile">' + brNodeName + '</span>';
+            }
+            if (br._cycleClose) {
+                h += '<span class="flp-full-state branch-state cycle-close" data-br-layer="' + br.layer + '" data-br-idx="-1">↩ 闭环</span>';
+            } else if (br.nodes.length === 0) {
+                h += '<span class="flp-full-state branch-state" style="opacity:0.5" data-br-layer="' + br.layer + '" data-br-idx="-1">（空）</span>';
+            } else {
+                var lsInfo = layerStates[br.layer];
+                for (var bni = 0; bni < br.nodes.length; bni++) {
+                    var bn = br.nodes[bni];
+                    var bState = ' branch-state';
+                    if (isActivePath && stepIdx === pb.currentStep) {
+                        if (lsInfo) {
+                            if (lsInfo.chainDone || bni < lsInfo.chainIdx) bState += ' played';
+                            else if (bni === lsInfo.chainIdx) bState += ' current';
+                            else bState += ' upcoming';
+                        } else {
+                            if (bni === 0) bState += ' current';
+                            else bState += ' upcoming';
+                        }
+                    } else if (isActivePath && stepIdx < pb.currentStep) {
+                        bState += ' played';
+                    }
+                    h += '<span class="flp-full-state' + bState + '" data-br-layer="' + br.layer + '" data-br-idx="' + bni + '">' + SMTool._esc(_disp(bn.anim)) + '</span>';
+                    if (bni < br.nodes.length - 1) {
+                        h += '<span class="flp-full-arrow" style="font-size:13px;margin:0 2px;opacity:0.6;">→</span>';
+                    }
+                }
+            }
+            h += '</div>';
+        }
+        h += '</div>';
+        return h;
+    }
+
     var html = '<div class="flp-full-layout">';
     // 左侧路径列表
     html += '<div class="flp-full-list">';
@@ -4323,23 +4414,41 @@ SMTool._updateFullFlowPanel = function (content, panel) {
         var path = paths[pi];
         var isActivePath = (pi === activePathIdx);
         html += '<div class="flp-full-path' + (isActivePath ? ' active' : '') + '" data-path-idx="' + pi + '">';
+
+        // —— 主干行：状态块 + 箭头 ——
         html += '<div class="flp-full-path-row">';
         for (var si = 0; si < path.nodes.length; si++) {
             var sn = path.nodes[si];
-            var stateClass = 'flp-full-state';
-            if (sn.cycleClose) {
-                stateClass += ' cycle-close';
-            } else if (isActivePath) {
-                if (si < pb.currentStep) stateClass += ' played';
-                else if (si === pb.currentStep) stateClass += ' current';
-                else stateClass += ' upcoming';
+            if (sn._isLayerHub) {
+                // ★ 层枢纽：先画枢纽色块，再在其后内联画分支矩阵
+                var hubClass = 'flp-full-state layer-hub-state';
+                if (sn.cycleClose) hubClass += ' cycle-close';
+                else if (isActivePath) {
+                    if (si < pb.currentStep) hubClass += ' played';
+                    else if (si === pb.currentStep) hubClass += ' current';
+                    else hubClass += ' upcoming';
+                }
+                html += '<span class="' + hubClass + '">📚 ' + SMTool._esc(_disp(sn.anim)) + '</span>';
+                // ★ 内联分支矩阵（紧跟枢纽色块后面）
+                html += _renderLayerBranchesInline(sn, isActivePath, si);
+            } else {
+                var stateClass = 'flp-full-state';
+                if (sn.cycleClose) {
+                    stateClass += ' cycle-close';
+                } else if (isActivePath) {
+                    if (si < pb.currentStep) stateClass += ' played';
+                    else if (si === pb.currentStep) stateClass += ' current';
+                    else stateClass += ' upcoming';
+                }
+                html += '<span class="' + stateClass + '">' + SMTool._esc(_disp(sn.anim)) + '</span>';
             }
-            html += '<span class="' + stateClass + '">' + SMTool._esc(_disp(sn.anim)) + '</span>';
             if (si < path.nodes.length - 1) {
                 html += '<span class="flp-full-arrow">→</span>';
             }
         }
-        html += '</div></div>';
+        html += '</div>'; // end .flp-full-path-row
+
+        html += '</div>'; // end .flp-full-path
     }
     html += '</div>';
 
@@ -4393,8 +4502,17 @@ SMTool._updateFullFlowPanel = function (content, panel) {
             var ppath = SMData._fullPaths[pb.activePathIdx];
             var pmax = ppath ? ppath.nodes.length : 0;
             if (ppath && ppath.nodes[pmax - 1] && ppath.nodes[pmax - 1].cycleClose) pmax--;
-            if (pb.currentStep >= pmax) {
-                // ★ 已播放完毕 → 显示重新播放
+            // ★ 检测 layer hub 所有分支是否已完成
+            var isLayerHubComplete = false;
+            if (pb.currentStep < pmax && ppath) {
+                var curStepNode2 = ppath.nodes[pb.currentStep];
+                if (curStepNode2 && curStepNode2._isLayerHub) {
+                    var pp3 = SMData._animPreview;
+                    if (pp3 && pp3._allLayersCompletedOnce) isLayerHubComplete = true;
+                }
+            }
+            if (pb.currentStep >= pmax || isLayerHubComplete) {
+                // ★ 已播放完毕（或 layer 分支全部完成）→ 显示重新播放
                 playBtn.innerHTML = '🔄';
                 playBtn.title = '重新播放';
             } else if (pb.currentStep === pmax - 1) {
@@ -4421,7 +4539,16 @@ SMTool._updateFullFlowPanel = function (content, panel) {
                 var pm2 = pp2 ? pp2.nodes.length : 0;
                 if (pp2 && pp2.nodes[pm2 - 1] && pp2.nodes[pm2 - 1].cycleClose) pm2--;
                 var cs2 = SMData._fullPlayback.currentStep;
-                if (cs2 >= pm2) {
+                // ★ 检测 layer hub 完成
+                var isLHC2 = false;
+                if (cs2 < pm2 && pp2) {
+                    var csn2 = pp2.nodes[cs2];
+                    if (csn2 && csn2._isLayerHub) {
+                        var ppb2 = SMData._animPreview;
+                        if (ppb2 && ppb2._allLayersCompletedOnce) isLHC2 = true;
+                    }
+                }
+                if (cs2 >= pm2 || isLHC2) {
                     playBtn.innerHTML = '🔄';
                     playBtn.title = '重新播放';
                 } else if (cs2 === pm2 - 1) {
@@ -4435,6 +4562,20 @@ SMTool._updateFullFlowPanel = function (content, panel) {
                     playBtn.title = '播放';
                 }
             } else {
+                // ★ 点播放：检测是否需要从头重播（layer 分支全部完成）
+                var pb2 = SMData._fullPlayback;
+                var path2 = SMData._fullPaths[pb2.activePathIdx];
+                if (path2 && pb2.currentStep < path2.nodes.length) {
+                    var csn3 = path2.nodes[pb2.currentStep];
+                    if (csn3 && csn3._isLayerHub) {
+                        var ppb3 = SMData._animPreview;
+                        // ★ 仅在未从起点重播过且当前不在步骤0时才触发从头播放
+                        if (ppb3 && ppb3._allLayersCompletedOnce && pb2.currentStep > 0) {
+                            pb2.currentStep = 0;
+                            ppb3._allLayersCompletedOnce = false;
+                        }
+                    }
+                }
                 SMData._animPreview._suppressShow = true;
                 SMTool._startFullPlayback();
                 SMData._animPreview._suppressShow = false;
@@ -4481,6 +4622,51 @@ SMTool._updateFullFlowPanel = function (content, panel) {
     // 🔒 [LOCK-4] 锚钉激活+锁未锁定时，自动进入流预览
     if (pb.activePathIdx < 0 && paths.length > 0 && !pb.isPlaying && SMData._flowPanel.pinned && !SMData._flowExitLock) {
         SMTool._selectFullPath(0);
+    }
+};
+
+// ================================================================
+// ★ 实时刷新流面板分支节点高亮（由层预览渲染循环调用）
+// 不重建整个面板，仅更新已有的 branch-state span 的类名
+// ================================================================
+SMTool._refreshFlowBranchHighlights = function () {
+    var pp = SMData._animPreview;
+    if (!pp || !pp._layerSkeletons) return;
+    // 检查流面板是否有分支元素
+    var allSpans = document.querySelectorAll('.flp-full-state.branch-state[data-br-layer]');
+    if (allSpans.length === 0) return;
+
+    // 构建每层当前状态
+    var layerStates = {};
+    for (var i = 0; i < pp._layerSkeletons.length; i++) {
+        var ls = pp._layerSkeletons[i];
+        if (ls.layer != null) {
+            layerStates[ls.layer] = {
+                chainIdx: ls._chainIdx || 0,
+                chainDone: !!ls._chainDone
+            };
+        }
+    }
+
+    for (var j = 0; j < allSpans.length; j++) {
+        var span = allSpans[j];
+        var layer = parseInt(span.getAttribute('data-br-layer'));
+        var idx = parseInt(span.getAttribute('data-br-idx'));
+        if (idx < 0 || isNaN(layer)) continue; // 跳过闭环/空标记
+        var lsInfo = layerStates[layer];
+
+        // 移除旧状态类
+        span.classList.remove('current', 'played', 'upcoming');
+
+        if (lsInfo) {
+            if (lsInfo.chainDone || idx < lsInfo.chainIdx) {
+                span.classList.add('played');
+            } else if (idx === lsInfo.chainIdx) {
+                span.classList.add('current');
+            } else {
+                span.classList.add('upcoming');
+            }
+        }
     }
 };
 
@@ -4627,6 +4813,9 @@ SMTool._pauseFullPlayback = function () {
     }
     // ★ 暂停时冻结所有节点（不恢复各自的动画）
     SMTool._freezeAllNodes();
+    // ★ 清除 layer 完成标记，防止下次点播放误触发从头重播
+    var pp2 = SMData._animPreview;
+    if (pp2) pp2._allLayersCompletedOnce = false;
 };
 
 // ★ 冻结所有 Spine 动画节点（播放完毕或暂停时调用，不清除 _pausedByFlow 标记以便后续 prev/next 操作）

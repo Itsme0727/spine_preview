@@ -740,19 +740,255 @@ SMTool.init = function () {
     };
 
     // ---- 完整动画组路径穷举（DFS 从源节点到所有终点） ----
+    // ★★★ v2: layer 节点不拆分路径，作为 hub 内嵌分支信息 ★★★
     SMTool._findAllFullPaths = function (sourceId) {
         var paths = [];
 
+        // ★ 辅助：沿唯一下游链追踪分支（遇死胡同/环/layer 节点停止）
+        function traceBranchChain(startId, excludeIds) {
+            var nodes = [];
+            var conns = [];
+            var currentId = startId;
+            var chainVisited = new Set();
+            chainVisited.add(startId);
+            var maxSteps = 50; // 安全上限
+            while (maxSteps-- > 0) {
+                var outConns = [];
+                for (var i = 0; i < SMData.connections.length; i++) {
+                    var c = SMData.connections[i];
+                    if (c.fromNode === currentId) outConns.push(c);
+                }
+                if (outConns.length === 0) break;
+                // 选择第一条非 layer 出边（优先普通连线，跳过 layer 层连线）
+                var chosen = null;
+                for (var j = 0; j < outConns.length; j++) {
+                    var nc = outConns[j];
+                    var fn = SMData.nodes.get(nc.fromNode);
+                    if (fn && fn.nodeType === 'layer') continue; // 跳过层连线本身
+                    if (excludeIds && excludeIds.has(nc.toNode)) continue;
+                    if (chainVisited.has(nc.toNode)) continue;
+                    chosen = nc;
+                    break;
+                }
+                if (!chosen) break;
+                var nextNode = SMData.nodes.get(chosen.toNode);
+                if (!nextNode) break;
+                var animName = chosen.toState || nextNode.currentAnim ||
+                    (nextNode.animations && nextNode.animations.length > 0 ? nextNode.animations[0].name : nextNode.name);
+                nodes.push({ id: chosen.toNode, anim: animName });
+                conns.push(chosen.id);
+                chainVisited.add(chosen.toNode);
+                currentId = chosen.toNode;
+                // 遇到 layer 节点则停止
+                if (nextNode.nodeType === 'layer') break;
+            }
+            return { nodes: nodes, conns: conns, endId: currentId };
+        }
+
+        // ★ 辅助：收集从起点可达的全部节点 ID
+        function collectReachable(startId, excludeIds, maxNodes) {
+            maxNodes = maxNodes || 100;
+            var reachable = new Set();
+            var queue = [startId];
+            var visited2 = new Set();
+            visited2.add(startId);
+            while (queue.length > 0 && maxNodes-- > 0) {
+                var cur = queue.shift();
+                reachable.add(cur);
+                for (var i = 0; i < SMData.connections.length; i++) {
+                    var c = SMData.connections[i];
+                    if (c.fromNode === cur && !visited2.has(c.toNode)) {
+                        if (excludeIds && excludeIds.has(c.toNode)) continue;
+                        visited2.add(c.toNode);
+                        queue.push(c.toNode);
+                    }
+                }
+            }
+            return reachable;
+        }
+
         function dfs(currentId, nodePath, connPath, pathVisited) {
-            // 找所有出边
+            var currentNode = SMData.nodes.get(currentId);
+
+            // ════════════════════════════════════════════════════════
+            // ★★★ LAYER HUB 处理：不拆分路径 ★★★
+            // ════════════════════════════════════════════════════════
+            if (currentNode && currentNode.nodeType === 'layer') {
+                // 收集所有出边（layer connections）
+                var layerConns = [];
+                for (var li = 0; li < SMData.connections.length; li++) {
+                    var lc = SMData.connections[li];
+                    if (lc.fromNode === currentId) layerConns.push(lc);
+                }
+                // 按 _layerNum 排序（兜底：解析 fromState 'layer_N'）
+                layerConns.sort(function (a, b) {
+                    var la = a._layerNum || parseInt((a.fromState || '').replace('layer_', '')) || 999;
+                    var lb = b._layerNum || parseInt((b.fromState || '').replace('layer_', '')) || 999;
+                    return la - lb;
+                });
+
+                if (layerConns.length === 0) {
+                    // 无出边的 layer 节点 → 死胡同，记录路径
+                    if (nodePath.length >= 1) {
+                        paths.push({ nodes: nodePath.slice(), conns: connPath.slice() });
+                    }
+                    return;
+                }
+
+                // 排除集合：已在路径中的节点 + layer 节点自身
+                var stopIds = new Set(pathVisited);
+                stopIds.add(currentId);
+
+                // 追踪每条分支
+                var branches = [];
+                var branchReachableSets = [];
+                for (var bi = 0; bi < layerConns.length; bi++) {
+                    var lconn = layerConns[bi];
+                    var layerNum = lconn._layerNum || parseInt((lconn.fromState || '').replace('layer_', '')) || (bi + 1);
+                    var directTargetId = lconn.toNode;
+
+                    // ★ 沿下游解析第一个 Spine 动画节点（跳过延时器等非动画节点）
+                    var resolved = SMTool._resolveAnimNodeDownstream(directTargetId);
+                    var branchStartId = resolved.resolvedId;
+                    // 记录解析信息供渲染使用
+                    var resolvedAnimNodeId = (resolved.resolvedId !== directTargetId) ? resolved.resolvedId : null;
+
+                    if (pathVisited.has(branchStartId)) {
+                        // 分支起点已访问 → 环
+                        branches.push({ layer: layerNum, nodes: [], conns: [lconn.id], endId: branchStartId, _cycleClose: true, _resolvedAnimNodeId: resolvedAnimNodeId });
+                        branchReachableSets.push(new Set());
+                        continue;
+                    }
+
+                    var traceResult = traceBranchChain(branchStartId, stopIds);
+                    var reachable = collectReachable(branchStartId, stopIds);
+                    branchReachableSets.push(reachable);
+
+                    // 构建分支节点列表（含层连线本身）
+                    var branchNodes = [];
+                    var branchConns = [lconn.id];
+                    // ★ 分支起始节点（解析后的动画节点）总是第一个
+                    var startNode = resolved.animNode;
+                    if (startNode) {
+                        var startAnim = (branchStartId === directTargetId ? lconn.toState : '') ||
+                            startNode.currentAnim ||
+                            (startNode.animations && startNode.animations.length > 0 ? startNode.animations[0].name : startNode.name);
+                        branchNodes.push({ id: branchStartId, anim: startAnim });
+                    }
+                    for (var tn = 0; tn < traceResult.nodes.length; tn++) {
+                        branchNodes.push(traceResult.nodes[tn]);
+                        if (tn < traceResult.conns.length) branchConns.push(traceResult.conns[tn]);
+                    }
+
+                    branches.push({
+                        layer: layerNum,
+                        nodes: branchNodes,
+                        conns: branchConns,
+                        endId: traceResult.endId,
+                        _resolvedAnimNodeId: resolvedAnimNodeId
+                    });
+                }
+
+                // ★ 求收敛点：所有分支可达节点集的交集
+                var convergeId = null;
+                if (branchReachableSets.length > 1) {
+                    var intersection = null;
+                    for (var si = 0; si < branchReachableSets.length; si++) {
+                        if (branchReachableSets[si].size === 0) { intersection = new Set(); break; }
+                        if (intersection === null) {
+                            intersection = new Set(branchReachableSets[si]);
+                        } else {
+                            var newInter = new Set();
+                            intersection.forEach(function (x) {
+                                if (branchReachableSets[si].has(x)) newInter.add(x);
+                            });
+                            intersection = newInter;
+                        }
+                    }
+                    if (intersection && intersection.size > 0) {
+                        var interArr = [];
+                        intersection.forEach(function (x) { interArr.push(x); });
+                        // 排除 layer 节点自身
+                        for (var ii = 0; ii < interArr.length; ii++) {
+                            if (interArr[ii] !== currentId) { convergeId = interArr[ii]; break; }
+                        }
+                    }
+                }
+
+                // 构建 layer hub 节点
+                var layerAnim = currentNode.name || '📚 并行播放';
+                var hubNode = {
+                    id: currentId,
+                    anim: layerAnim,
+                    _isLayerHub: true,
+                    _branches: branches,
+                    _convergeId: convergeId
+                };
+
+                // 替换 nodePath 中最后一个简单节点为 hub 版本
+                var hubIdx = nodePath.length - 1;
+                var savedSimple = nodePath[hubIdx];
+                nodePath[hubIdx] = hubNode;
+
+                if (convergeId && !pathVisited.has(convergeId)) {
+                    var convergeNode = SMData.nodes.get(convergeId);
+                    if (convergeNode) {
+                        var convergeAnim = convergeNode.currentAnim ||
+                            (convergeNode.animations && convergeNode.animations.length > 0 ? convergeNode.animations[0].name : convergeNode.name);
+                        // 收集从各分支末尾到收敛点的连线
+                        var convergeConns = [];
+                        var addedConnIds = new Set();
+                        for (var ci = 0; ci < SMData.connections.length; ci++) {
+                            var cc = SMData.connections[ci];
+                            if (cc.toNode !== convergeId) continue;
+                            if (addedConnIds.has(cc.id)) continue;
+                            for (var bi2 = 0; bi2 < branches.length; bi2++) {
+                                var br = branches[bi2];
+                                var lastNodeId = br.nodes.length > 0 ? br.nodes[br.nodes.length - 1].id : br.endId;
+                                if (cc.fromNode === lastNodeId || cc.fromNode === br.endId) {
+                                    convergeConns.push(cc.id);
+                                    addedConnIds.add(cc.id);
+                                    break;
+                                }
+                            }
+                        }
+                        // 将收敛连线加入 connPath
+                        var savedConnLen = connPath.length;
+                        for (var cci = 0; cci < convergeConns.length; cci++) {
+                            connPath.push(convergeConns[cci]);
+                        }
+
+                        nodePath.push({ id: convergeId, anim: convergeAnim });
+                        pathVisited.add(convergeId);
+                        dfs(convergeId, nodePath, connPath, pathVisited);
+                        pathVisited.delete(convergeId);
+                        nodePath.pop();
+                        // 恢复 connPath
+                        connPath.length = savedConnLen;
+                    } else {
+                        // 收敛节点不存在，记录路径
+                        paths.push({ nodes: nodePath.slice(), conns: connPath.slice() });
+                    }
+                } else {
+                    // 无收敛点 → layer 即为终点
+                    paths.push({ nodes: nodePath.slice(), conns: connPath.slice() });
+                }
+
+                // 恢复简单节点（供回溯使用）
+                nodePath[hubIdx] = savedSimple;
+                return;
+            }
+
+            // ════════════════════════════════════════════════════════
+            // 常规节点：原有 DFS 逻辑
+            // ════════════════════════════════════════════════════════
             var outConns = [];
-            for (var i = 0; i < SMData.connections.length; i++) {
-                var c = SMData.connections[i];
-                if (c.fromNode === currentId) outConns.push(c);
+            for (var i2 = 0; i2 < SMData.connections.length; i2++) {
+                var c2 = SMData.connections[i2];
+                if (c2.fromNode === currentId) outConns.push(c2);
             }
 
             if (outConns.length === 0) {
-                // 终点节点：记录路径（至少包含源节点）
                 if (nodePath.length >= 1) {
                     paths.push({ nodes: nodePath.slice(), conns: connPath.slice() });
                 }
@@ -762,17 +998,15 @@ SMTool.init = function () {
             for (var j = 0; j < outConns.length; j++) {
                 var oc = outConns[j];
                 var nextId = oc.toNode;
-                // 防止环路
                 if (pathVisited.has(nextId)) {
-                    // 遇到环路，记录当前路径（含闭环连线+闭环节点）
                     if (nodePath.length >= 1) {
                         var cycleConnPath = connPath.slice();
                         cycleConnPath.push(oc.id);
                         var cycleNodes = nodePath.slice();
-                        // 闭环终点节点（虚线框表示），取源节点的动画名
                         var closeNode = SMData.nodes.get(nextId);
                         if (closeNode) {
-                            var closeAnim = oc.toState || closeNode.currentAnim || (closeNode.animations.length > 0 ? closeNode.animations[0].name : closeNode.name);
+                            var closeAnim = oc.toState || closeNode.currentAnim ||
+                                (closeNode.animations && closeNode.animations.length > 0 ? closeNode.animations[0].name : closeNode.name);
                             cycleNodes.push({ id: nextId, anim: closeAnim, cycleClose: true });
                         }
                         paths.push({ nodes: cycleNodes, conns: cycleConnPath });
@@ -781,7 +1015,8 @@ SMTool.init = function () {
                 }
                 var nextNode = SMData.nodes.get(nextId);
                 if (!nextNode) continue;
-                var animName = oc.toState || nextNode.currentAnim || (nextNode.animations.length > 0 ? nextNode.animations[0].name : nextNode.name);
+                var animName = oc.toState || nextNode.currentAnim ||
+                    (nextNode.animations && nextNode.animations.length > 0 ? nextNode.animations[0].name : nextNode.name);
 
                 nodePath.push({ id: nextId, anim: animName });
                 connPath.push(oc.id);
@@ -795,7 +1030,8 @@ SMTool.init = function () {
 
         var srcNode = SMData.nodes.get(sourceId);
         if (!srcNode) return paths;
-        var srcAnim = srcNode.currentAnim || (srcNode.animations.length > 0 ? srcNode.animations[0].name : srcNode.name);
+        var srcAnim = srcNode.currentAnim ||
+            (srcNode.animations && srcNode.animations.length > 0 ? srcNode.animations[0].name : srcNode.name);
 
         var visited = new Set();
         visited.add(sourceId);
@@ -1931,6 +2167,9 @@ SMTool.init = function () {
     SMTool._initAnimPreviewPanel();
 
     SMTool._updateSB();
+
+    // ★ 强制首帧重绘连线和网格（防止数据异步加载后连线不归位）
+    SMData._forceRedraw = true;
 
     // ★ 启动日志（设置 SMData._debugLog = false 可静默）
     if (SMData._debugLog !== false) {
