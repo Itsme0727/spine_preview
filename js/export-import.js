@@ -818,10 +818,14 @@ SMTool._serializeData = function () {
             _srcType: n._srcType,
             _srcFileNames: n._srcFileNames,
             _textContent: n._textContent,
+            _lineBreakPositions: n._lineBreakPositions,  // ★ 标题节点换行位置（字符索引数组）
             _exitText: n._exitText,
             _stateDesc: n._stateDesc,
             _customScale: n._customScale,
             _playbackSpeed: n._playbackSpeed,
+            _loopMode: n._loopMode || null,          // ★ 循环模式：'count'|'time'|null
+            _loopCount: n._loopCount,                 // ★ 循环次数
+            _loopTime: n._loopTime,                   // ★ 循环时间（秒）
             _debugOffsetX: n._debugOffsetX || 0,
             _debugOffsetY: n._debugOffsetY || 0,
             _debugCanvasW: n._debugCanvasW || 0,
@@ -1649,12 +1653,16 @@ SMTool._processImportJson = function (jsonText, fileHandle) {
             node._srcType = nd._srcType || '';
             node._srcFileNames = nd._srcFileNames || [];
             node._textContent = nd._textContent || '';
+            node._lineBreakPositions = nd._lineBreakPositions || [];  // ★ 恢复标题节点换行位置
             node._exitText = nd._exitText || '';
             node._stateDesc = nd._stateDesc || '';
             node.loop = (nd.loop !== undefined ? nd.loop : true);
             node.tracks = nd.tracks || [];
             node._customScale = (nd._customScale !== undefined ? nd._customScale : 1.0);
             node._playbackSpeed = (nd._playbackSpeed !== undefined ? nd._playbackSpeed : 1.0);
+            node._loopMode = nd._loopMode || null;
+            node._loopCount = (nd._loopCount !== undefined) ? nd._loopCount : 1;
+            node._loopTime = (nd._loopTime !== undefined) ? nd._loopTime : null;
             node._debugOffsetX = (nd._debugOffsetX !== undefined ? nd._debugOffsetX : 0);
             node._debugOffsetY = (nd._debugOffsetY !== undefined ? nd._debugOffsetY : 0);
             node._debugCanvasW = (nd._debugCanvasW !== undefined ? nd._debugCanvasW : 0);
@@ -1803,7 +1811,8 @@ SMTool._processImportJson = function (jsonText, fileHandle) {
         if (d.flowMode) SMTool.setFlowMode(d.flowMode);
         if (d.renderMode) SMTool.setRenderMode(d.renderMode);
 
-        SMTool._updateAllPos();
+        SMTool._updateAllPos(true);
+        SMData._forceRedraw = true;  // ★ 导入后强制重绘连线画布，确保曲线端点匹配节点位置
         SMTool._updateSB();
         SMTool._updateStateRowColors();
         SMTool._updateFloatPanel();

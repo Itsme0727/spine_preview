@@ -131,8 +131,8 @@ var SMData = {
         animName: '',         // 当前播放的动画名
         panelX: 0,            // 面板 left px
         panelY: 0,            // 面板 top px
-        panelW: 320,          // 面板宽度 px
-        panelH: 500,          // 面板高度 px
+        panelW: 385,          // 面板宽度 px
+        panelH: 645,          // 面板高度 px
         _spineVer: '',        // Spine 版本 ('3.8' | '4.2' | '4.3')
         _batcher: null,       // PolygonBatcher
         _shader: null,        // Shader

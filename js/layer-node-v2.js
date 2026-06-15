@@ -742,6 +742,8 @@ SMTool._showLayerPreview = function (layerNode) {
         pp._layerSkeletons = null;
         var title0 = document.getElementById('appTitle');
         if (title0) title0.textContent = '⚠ 层级节点未连线';
+        var src0 = document.getElementById('appSourceFile');
+        if (src0) src0.textContent = '';
         return;
     }
 
@@ -785,8 +787,8 @@ SMTool._showLayerPreview = function (layerNode) {
     var SP = SMTool._getSpineRuntime(useVer);
 
     // 设置画布 — 取 canvas 容器实际尺寸（排除标题栏），与单节点预览一致
-    var savedW = pp.panelW || 320;
-    var savedH = pp.panelH || 500;
+    var savedW = pp.panelW || 385;
+    var savedH = pp.panelH || 645;
     panel.style.width = savedW + 'px';
     panel.style.height = savedH + 'px';
     var wrap = canvas.parentElement;
@@ -882,6 +884,8 @@ SMTool._showLayerPreview = function (layerNode) {
             firstSk._chainIdx = 0;
             firstSk._chainDone = false;
             firstSk._chainElapsed = 0;
+            // ★ 循环追踪：记录当前循环次数和已流逝时间（动画流/并行播放循环控制）
+            firstSk._loopTrack = { currentLoop: 0, totalElapsed: 0 };
             // ★ 若链首是延时器，从链上第一个 Spine 节点预取渲染器属性
             if (firstSk._isDelayer) {
                 firstSk._delayElapsed = 0;
@@ -901,12 +905,20 @@ SMTool._showLayerPreview = function (layerNode) {
                     }
                 }
             }
-            // 链上所有动画设置为非循环（由链层控制回环）
+            // ★ 根据源节点的循环模式设置链骨架的 loop 属性
             for (var cli = 0; cli < chainSkeletons.length; cli++) {
                 if (chainSkeletons[cli].state) {
                     try {
                         var ce = chainSkeletons[cli].state.getCurrent(0);
-                        if (ce) ce.loop = false;
+                        if (ce) {
+                            var srcNode2 = SMData.nodes.get(chainSkeletons[cli]._chainNodeId);
+                            // 源节点启用了循环且设置了循环模式 → 链骨架也循环
+                            if (srcNode2 && srcNode2.loop !== false && srcNode2._loopMode) {
+                                ce.loop = true;
+                            } else {
+                                ce.loop = false;
+                            }
+                        }
                     } catch (e) {}
                 }
             }
@@ -1010,10 +1022,22 @@ SMTool._showLayerPreview = function (layerNode) {
 
     var title = document.getElementById('appTitle');
     if (title) title.textContent = '📚 层级 (' + layerSkeletons.length + '/' + ld.layerCount + '层就绪)';
+    var srcEl = document.getElementById('appSourceFile');
+    if (srcEl) {
+        var srcNames = [];
+        for (var lni = 0; lni < linkedNodes.length; lni++) {
+            var lnk = linkedNodes[lni];
+            if (lnk.node && lnk.node.sourceFile && srcNames.indexOf(lnk.node.sourceFile) < 0) {
+                srcNames.push(lnk.node.sourceFile);
+            }
+        }
+        srcEl.textContent = srcNames.length > 0 ? srcNames.join('、') : '';
+    }
 
     // ★ 诊断：若全部加载失败，标题显示错误
     if (layerSkeletons.length === 0 && linkedNodes.length > 0) {
         if (title) title.textContent = '⚠ 层级加载失败(贴图/版本?)';
+        if (srcEl) srcEl.textContent = '';
     }
 
     // ★ 立即同步初次活跃节点集合到主画布，消除第 1 帧延迟
@@ -1278,13 +1302,14 @@ SMTool._renderLayerPreview = function (layerNode, pp, now) {
                     ls._delayElapsed = 0;
                 }
             }
-            // ★ Spine 动画节点：正常播放
+            // ★ Spine 动画节点：正常播放（根据循环模式判断推进时机）
             else if (active && active.state && !pp._flowFrozen) {
                 ls._delayElapsed = 0;
-                // ★ 从链骨架对应的源节点读取播放倍速
+                // ★ 从链骨架对应的源节点读取播放倍速和循环模式
                 var chainSpd = 1.0;
+                var chainSrc = null;
                 if (active._chainNodeId != null) {
-                    var chainSrc = SMData.nodes.get(active._chainNodeId);
+                    chainSrc = SMData.nodes.get(active._chainNodeId);
                     if (chainSrc && typeof chainSrc._playbackSpeed === 'number') chainSpd = chainSrc._playbackSpeed;
                 }
                 active.state.update(dt * chainSpd);
@@ -1293,8 +1318,36 @@ SMTool._renderLayerPreview = function (layerNode, pp, now) {
                 var entry = active.state.getCurrent(0);
                 if (entry) {
                     var anim = entry.animation || entry._animation;
-                    if (anim && entry.trackTime >= anim.duration - 0.001) {
-                        shouldAdvance = true;
+                    if (anim) {
+                        var animDur = anim.duration || 1;
+                        var loopMode = (chainSrc && chainSrc.loop !== false) ? (chainSrc._loopMode || null) : null;
+                        if (!ls._loopTrack) ls._loopTrack = { currentLoop: 0, totalElapsed: 0 };
+                        if (loopMode === 'time') {
+                            // 循环时间模式：累计总流逝时间
+                            ls._loopTrack.totalElapsed += dt * chainSpd;
+                            var loopTime = chainSrc._loopTime;
+                            if (loopTime === undefined || loopTime === null) loopTime = animDur / Math.abs(chainSpd || 1);
+                            if (ls._loopTrack.totalElapsed >= loopTime) {
+                                shouldAdvance = true;
+                            }
+                        } else if (loopMode === 'count') {
+                            // 循环次数模式：追踪完成的循环次数
+                            var curLoop = Math.floor(entry.trackTime / animDur);
+                            if (curLoop > ls._loopTrack.currentLoop) {
+                                ls._loopTrack.currentLoop = curLoop;
+                            }
+                            var loopCount = (chainSrc._loopCount !== undefined) ? chainSrc._loopCount : 1;
+                            if (loopCount === -1) {
+                                shouldAdvance = false; // 无限循环，永不推进
+                            } else if (curLoop >= loopCount) {
+                                shouldAdvance = true;
+                            }
+                        } else {
+                            // 默认：动画播完就推进（单次播放）
+                            if (entry.trackTime >= animDur - 0.001) {
+                                shouldAdvance = true;
+                            }
+                        }
                     }
                 }
             }
@@ -1361,19 +1414,45 @@ SMTool._renderLayerPreview = function (layerNode, pp, now) {
         ls.shader.unbind();
 
         // ★ 收集当前活跃骨架对应的源节点 ID，用于主画布高亮
+        // ★ 注意：_chainDone 的层不应标记为活跃（主画布动画节点应停止在最后一帧）
         var activeEntry = ls._chainSkeletons ? ls._chainSkeletons[ls._chainIdx || 0] : ls;
         var nid = activeEntry._chainNodeId || activeEntry.nodeId;
-        if (nid != null) activeNodeIds.add(nid);
-        // ★ 计算播放进度比例（延时器用已等待时间/总延迟，动画用 trackTime/duration）
         if (nid != null && !ls._chainDone) {
-            if (activeEntry._isDelayer) {
+            activeNodeIds.add(nid);
+        }
+        // ★ 计算播放进度比例（延时器用已等待时间/总延迟，动画用 trackTime/duration）
+        if (nid != null) {
+            if (ls._chainDone) {
+                // 已完成层：进度固定为 100%，不再更新动画
+                activeNodeProgress[nid] = 1.0;
+            } else if (activeEntry._isDelayer) {
                 var delProg = (ls._delayElapsed || 0) / Math.max((activeEntry._delayValue || 1), 0.001);
                 activeNodeProgress[nid] = Math.min(1, delProg);
             } else if (activeEntry.state) {
                 var te = activeEntry.state.getCurrent(0);
                 if (te) {
                     var animDur = (te.animation || te._animation || {}).duration || 1;
-                    activeNodeProgress[nid] = Math.min(1, te.trackTime / Math.max(animDur, 0.001));
+                    // ★ 根据源节点的循环模式计算总进度比例
+                    var chainSrcProg = (activeEntry._chainNodeId != null) ? SMData.nodes.get(activeEntry._chainNodeId) : null;
+                    var loopModeProg = (chainSrcProg && chainSrcProg.loop !== false) ? (chainSrcProg._loopMode || null) : null;
+                    if (loopModeProg === 'time') {
+                        // 循环时间：总流逝时间 / 设定时间
+                        var totalTime = chainSrcProg._loopTime;
+                        if (!totalTime) totalTime = animDur / Math.abs(chainSrcProg._playbackSpeed || 1);
+                        activeNodeProgress[nid] = Math.min(1, (ls._loopTrack ? ls._loopTrack.totalElapsed : 0) / Math.max(totalTime, 0.001));
+                    } else if (loopModeProg === 'count') {
+                        // 循环次数：(已完成循环数×时长 + 当前循环内时间) / (总循环数×时长)
+                        var totalLoops = (chainSrcProg._loopCount !== undefined && chainSrcProg._loopCount !== -1) ? chainSrcProg._loopCount : 1;
+                        var curLoop = ls._loopTrack ? ls._loopTrack.currentLoop : 0;
+                        var trackInLoop = te.trackTime - curLoop * animDur;
+                        if (trackInLoop < 0) trackInLoop = 0;
+                        if (trackInLoop > animDur) trackInLoop = animDur;
+                        var totalProgress = (curLoop * animDur + trackInLoop) / (totalLoops * animDur);
+                        activeNodeProgress[nid] = Math.min(1, Math.max(0, totalProgress));
+                    } else {
+                        // 默认单次：当前时间 / 单次时长
+                        activeNodeProgress[nid] = Math.min(1, te.trackTime / Math.max(animDur, 0.001));
+                    }
                 }
             }
         }
@@ -1392,8 +1471,7 @@ SMTool._renderLayerPreview = function (layerNode, pp, now) {
     SMTool._updateLayerPlayingHighlights(activeNodeIds, allChainNodeIds, activeNodeProgress);
 
     // ★★★ 栅栏同步：检查所有层是否都已完成 ★★★
-    // 所有层播完后，插入短暂启动延迟帧让 GPU 清掉旧帧残留，
-    // 然后再从头开始新周期的播放。不销毁重建骨架。
+    // 设旗标 → 6帧清屏 → _showLayerPreview重建 → 1帧安全延迟 → 渲染新周期
     if (!pp._flowFrozen && list.length > 0) {
         var allDone = true;
         for (var j = 0; j < list.length; j++) {
@@ -1504,8 +1582,8 @@ SMTool._syncLayerPreviewViewport = function (pp, newW, newH) {
     if (!pp._layerSkeletons) return;
     var canvas = pp.canvas;
     var wrap = canvas ? canvas.parentElement : null;
-    var cw = (wrap && wrap.clientWidth > 10) ? wrap.clientWidth : (newW || pp._canvasWidth || pp.panelW || 320);
-    var ch = (wrap && wrap.clientHeight > 10) ? wrap.clientHeight : (newH || pp._canvasHeight || pp.panelH || 500);
+    var cw = (wrap && wrap.clientWidth > 10) ? wrap.clientWidth : (newW || pp._canvasWidth || pp.panelW || 385);
+    var ch = (wrap && wrap.clientHeight > 10) ? wrap.clientHeight : (newH || pp._canvasHeight || pp.panelH || 645);
 
     // ★ 检测画布尺寸是否变化（缩放 vs 拖拽面板边缘改变尺寸）
     var oldCw = pp._canvasWidth || cw;
@@ -1648,7 +1726,7 @@ SMTool._testLayerPreviewDirect = function () {
     var WGL = SP.webgl; if (!WGL || !WGL.Shader) { alert('WGL 未就绪'); return; }
     pp._spineVer = '3.8';
 
-    var cw = pp.panelW || 320, ch = pp.panelH || 500;
+    var cw = pp.panelW || 385, ch = pp.panelH || 645;
     canvas.width = cw; canvas.height = ch;
     pp.canvas = canvas; pp._canvasWidth = cw; pp._canvasHeight = ch;
 
@@ -1718,6 +1796,8 @@ SMTool._testLayerPreviewDirect = function () {
 
     var title = document.getElementById('appTitle');
     if (title) title.textContent = '🧪 L1(上):' + (nodeA.sourceFile || 'A') + ' + L2(下):' + (nodeB.sourceFile || 'B');
+    var srcEl2 = document.getElementById('appSourceFile');
+    if (srcEl2) srcEl2.textContent = '';
 
     alert('✅ 测试就绪！\n\nL1 上层: ' + (nodeA.sourceFile || '节点A') + '\nL2 下层: ' + (nodeB.sourceFile || '节点B') + '\n\n浮窗里应该看到两个不同的动画叠加。');
 };

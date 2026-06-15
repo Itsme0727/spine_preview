@@ -206,6 +206,28 @@ SMTool._createEl = function (node) {
                 '<button class="loop-toggle' + (node.loop !== false ? ' active' : '') + '" onclick="event.stopPropagation();SMTool._toggleLoop(' + node.id + ')">' + (node.loop !== false ? '🔄 循环播放' : '▶ 单次播放') + '</button>' +
                 '<label class="pma-toggle" title="预乘 Alpha"><input type="checkbox" onchange="SMTool._togglePMA(' + node.id + ',this.checked)"' + (node.premultipliedAlpha ? ' checked' : '') + '>预乘Alpha</label>' +
             '</div>' +
+            // ★ 循环模式控件（仅在循环播放激活时显示）
+            (function () {
+                if (node.loop === false) return '';
+                var lm = node._loopMode || 'count';
+                var lc = (node._loopCount !== undefined) ? node._loopCount : 1;
+                var lt = (node._loopTime !== undefined) ? node._loopTime : 0;
+                var countValue = (lm === 'count') ? lc : lt;
+                var countUnit = (lm === 'count') ? '次' : 's';
+                return '<div class="loop-mode-row" id="loopModeRow-' + node.id + '">' +
+                    '<span class="loop-mode-capsule">' +
+                        '<button class="loop-mode-btn' + (lm === 'count' ? ' active' : '') + '" data-mode="count" ' +
+                            'onclick="event.stopPropagation();SMTool._setLoopMode(' + node.id + ',\'count\')">循环次数</button>' +
+                        '<button class="loop-mode-btn' + (lm === 'time' ? ' active' : '') + '" data-mode="time" ' +
+                            'onclick="event.stopPropagation();SMTool._setLoopMode(' + node.id + ',\'time\')">循环时间</button>' +
+                    '</span>' +
+                    '<input type="number" class="loop-value-input" id="loopValue-' + node.id + '" ' +
+                        'value="' + countValue + '" min="' + (lm === 'count' ? '-1' : '0') + '" step="' + (lm === 'count' ? '1' : '0.01') + '" ' +
+                        'onchange="event.stopPropagation();SMTool._setLoopValue(' + node.id + ',this.value)" ' +
+                        'onclick="event.stopPropagation()" onkeydown="event.stopPropagation()">' +
+                    '<span class="loop-value-unit" id="loopUnit-' + node.id + '">' + countUnit + '</span>' +
+                '</div>';
+            })() +
             '<div class="speed-row">' +
                 '<span class="speed-label">⏱</span>' +
                 '<input type="range" class="speed-slider" min="0" max="1000" value="' + Math.round(((node._playbackSpeed || 1) + 5) * 100) + '" step="1" ' +
@@ -635,6 +657,11 @@ SMTool._toggleLoop = function (nid) {
     var node = SMData.nodes.get(nid);
     if (!node) return;
     node.loop = !node.loop;
+    // ★ 初始化循环模式（首次启用循环时默认为循环次数模式，1次）
+    if (node.loop && !node._loopMode) {
+        node._loopMode = 'count';
+        node._loopCount = 1;
+    }
     // 同步到 track 0
     if (!node.tracks || node.tracks.length === 0) {
         SMTool._initDefaultTracks(node);
@@ -648,8 +675,83 @@ SMTool._toggleLoop = function (nid) {
         btn.textContent = node.loop ? '🔄 循环播放' : '▶ 单次播放';
         btn.classList.toggle('active', node.loop);
     }
+    // ★ 刷新循环模式行（循环/单次切换时显隐、重建）
+    var modeRow = document.getElementById('loopModeRow-' + nid);
+    var hasRow = !!modeRow;
+    if (node.loop && !hasRow) {
+        // 需要重建节点 DOM 以显示循环模式控件
+        SMTool._createEl(node);
+        SMTool._updatePos(node);
+    } else if (!node.loop && hasRow) {
+        modeRow.style.display = 'none';
+    } else if (node.loop && hasRow) {
+        modeRow.style.display = 'flex';
+    }
     // ★ 同步底部栏状态
     SMTool._updateBottomBar();
+};
+
+// ★ 切换循环模式（循环次数 / 循环时间）
+SMTool._setLoopMode = function (nid, mode) {
+    var node = SMData.nodes.get(nid);
+    if (!node) return;
+    node._loopMode = mode;
+    // 更新胶囊按钮状态
+    var row = document.getElementById('loopModeRow-' + nid);
+    if (!row) return;
+    var btns = row.querySelectorAll('.loop-mode-btn');
+    for (var i = 0; i < btns.length; i++) {
+        btns[i].classList.toggle('active', btns[i].getAttribute('data-mode') === mode);
+    }
+    var inp = row.querySelector('.loop-value-input');
+    var unit = row.querySelector('.loop-value-unit');
+    if (inp) {
+        if (mode === 'count') {
+            inp.min = '-1';
+            inp.step = '1';
+            inp.value = (node._loopCount !== undefined) ? node._loopCount : 1;
+        } else {
+            inp.min = '0';
+            inp.step = '0.01';
+            // 计算默认循环时间 = 动画时长 / 倍速
+            if (node._loopTime === undefined || node._loopTime === null) {
+                var lt = 1.0;
+                if (node.skeletonData && node.currentAnim) {
+                    for (var adi = 0; adi < node.skeletonData.animations.length; adi++) {
+                        if (node.skeletonData.animations[adi].name === node.currentAnim) {
+                            var spd = (typeof node._playbackSpeed === 'number' && node._playbackSpeed !== 0) ? Math.abs(node._playbackSpeed) : 1.0;
+                            lt = Math.round(node.skeletonData.animations[adi].duration / spd * 100) / 100;
+                            break;
+                        }
+                    }
+                }
+                node._loopTime = lt;
+            }
+            inp.value = node._loopTime;
+        }
+    }
+    if (unit) unit.textContent = (mode === 'count') ? '次' : 's';
+};
+
+// ★ 设置循环值（次数或时间）
+SMTool._setLoopValue = function (nid, val) {
+    var node = SMData.nodes.get(nid);
+    if (!node) return;
+    var mode = node._loopMode || 'count';
+    if (mode === 'count') {
+        var count = parseInt(val);
+        if (isNaN(count)) count = 1;
+        if (count < -1) count = -1;
+        node._loopCount = count;
+    } else {
+        var time = parseFloat(val);
+        if (isNaN(time)) time = 0;
+        if (time < 0) time = 0;
+        node._loopTime = Math.round(time * 100) / 100;
+    }
+    // 同步输入框
+    var inp = document.getElementById('loopValue-' + nid);
+    if (inp) inp.value = val;
 };
 
 // ---- 状态描述更新 ----
@@ -2914,8 +3016,7 @@ SMTool._showAnimPreview = function (node) {
 
     if (sameSource) {
         pp.nodeId = node.id;
-        var title = document.getElementById('appTitle');
-        if (title) title.textContent = '🎬 ' + targetAnim;
+        SMTool._updateAppTitle('🎬 ' + targetAnim, node.sourceFile || '');
         if (pp.animName !== targetAnim) {
             SMTool._updateAnimPreviewAnim(targetAnim);
         }
@@ -2950,6 +3051,14 @@ SMTool._showAnimPreview = function (node) {
 };
 
 // ---- 隐藏预览面板 ----
+// ★ 统一更新浮窗预览面板标题（状态名 + 依赖的动画文件名）
+SMTool._updateAppTitle = function (titleText, sourceFileName) {
+    var title = document.getElementById('appTitle');
+    if (title) title.textContent = titleText || '🎬 动画预览';
+    var srcEl = document.getElementById('appSourceFile');
+    if (srcEl) srcEl.textContent = sourceFileName || '';
+};
+
 SMTool._hideAnimPreview = function () {
     var panel = document.getElementById('animPreviewPanel');
     if (panel) panel.style.display = 'none';
@@ -2959,6 +3068,45 @@ SMTool._hideAnimPreview = function () {
 
     SMTool._destroyAnimPreview();
     SMData._animPreview.visible = false;
+
+    // ★ 重置暂停按钮状态
+    var btn = document.getElementById('appPauseBtn');
+    if (btn) {
+        btn.classList.remove('paused');
+        btn.textContent = '⏸';
+        btn.title = '暂停播放';
+    }
+};
+
+// ★ 暂停/继续浮窗预览播放（适用于单节点预览和并行播放模式）
+SMTool._togglePreviewPause = function () {
+    var pp = SMData._animPreview;
+    if (!pp || !pp.visible) return;
+
+    var btn = document.getElementById('appPauseBtn');
+    var isPaused = pp._flowFrozen;
+
+    if (isPaused) {
+        // ★ 继续播放：解除预览冻结 + 恢复所有 Spine 节点动画
+        pp._flowFrozen = false;
+        // 恢复所有主画布动画节点（timeScale 从 0 恢复为 1）
+        SMTool._unfreezeAllNodes();
+        if (btn) {
+            btn.classList.remove('paused');
+            btn.textContent = '⏸';
+            btn.title = '暂停播放';
+        }
+    } else {
+        // ★ 暂停播放：冻结预览 + 冻结所有 Spine 节点在最后一帧
+        pp._flowFrozen = true;
+        // 冻结所有主画布动画节点（timeScale=0，保留当前帧）
+        SMTool._freezeAllNodes();
+        if (btn) {
+            btn.classList.add('paused');
+            btn.textContent = '▶';
+            btn.title = '继续播放';
+        }
+    }
 };
 
 // ---- 初始化预览面板拖拽与缩放事件 ----
@@ -4827,29 +4975,58 @@ SMTool._playFullStep = function () {
         duration = duration / flowSpeed;
     }
 
-    // 延时器进度条（使用已调整的 duration）
+    // ★ 根据循环模式计算实际等待时长
+    var timerDelay;
+    if (spineNode && spineNode.loop !== false && spineNode._loopMode) {
+        if (spineNode._loopMode === 'time') {
+            // 循环时间模式：直接使用设定的时间（秒）
+            var loopTime = spineNode._loopTime;
+            if (loopTime === undefined || loopTime === null) {
+                loopTime = duration / 1000;
+            }
+            timerDelay = Math.max(0, loopTime * 1000);
+        } else {
+            // 循环次数模式
+            var loopCount = (spineNode._loopCount !== undefined) ? spineNode._loopCount : 1;
+            if (loopCount === -1) {
+                // 无限循环：进度条持续循环，不自动推进
+                SMTool._clearAllProgressBars();
+                var infBar = document.querySelector('#sn-' + stepNode.id + ' .anim-progress-bar');
+                if (infBar) {
+                    infBar.style.setProperty('--progress-duration', duration + 'ms');
+                    void infBar.offsetWidth;
+                    infBar.classList.add('playing');
+                }
+                return; // ★ 不设 setTimeout，永不自动推进
+            }
+            timerDelay = duration * loopCount;
+        }
+    } else {
+        timerDelay = duration;
+    }
+    timerDelay += (path.nodes.length <= 1 ? 100 : 0);
+
+    // 延时器进度条（使用计算后的总时长）
     if (spineNode && spineNode.nodeType === 'delayer') {
         var delayerBar = document.getElementById('delayerBar-' + stepNode.id);
         if (delayerBar) {
             delayerBar.style.transition = 'none';
             delayerBar.style.width = '0%';
             void delayerBar.offsetWidth;
-            delayerBar.style.transition = 'width ' + duration + 'ms linear';
+            delayerBar.style.transition = 'width ' + timerDelay + 'ms linear';
             delayerBar.style.width = '100%';
         }
     }
 
-    // 启动当前节点的进度条动画
+    // 启动当前节点的进度条动画（使用计算后的总时长）
     SMTool._clearAllProgressBars();
     var progressBar = document.querySelector('#sn-' + stepNode.id + ' .anim-progress-bar');
     if (progressBar) {
-        progressBar.style.setProperty('--progress-duration', duration + 'ms');
+        progressBar.style.setProperty('--progress-duration', timerDelay + 'ms');
         // 强制重排后重新触发动画
         void progressBar.offsetWidth;
         progressBar.classList.add('playing');
     }
-
-    var timerDelay = duration + (path.nodes.length <= 1 ? 100 : 0);
 
     pb._timer = setTimeout(function () {
         pb.currentStep++;

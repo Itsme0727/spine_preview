@@ -254,6 +254,10 @@ SMTool.copyNode = function (nid, offsetX, offsetY) {
     node._boneShotRefs = orig._boneShotRefs ? JSON.parse(JSON.stringify(orig._boneShotRefs)) : {};
     node._stateDesc = orig._stateDesc || '';
     node._textContent = orig._textContent || '';
+    node._lineBreakPositions = orig._lineBreakPositions ? orig._lineBreakPositions.slice() : [];  // ★ 复制标题节点换行位置
+    node._loopMode = orig._loopMode || null;
+    node._loopCount = (orig._loopCount !== undefined) ? orig._loopCount : 1;
+    node._loopTime = (orig._loopTime !== undefined) ? orig._loopTime : null;
     node._exitText = orig._exitText || '';
     node.loop = orig.loop;
     // 深拷贝轨道配置
@@ -1321,6 +1325,10 @@ SMTool.init = function () {
                 _stateDesc: n._stateDesc || '',
                 _exitText: n._exitText || '',
                 _textContent: n._textContent || '',
+                _lineBreakPositions: n._lineBreakPositions ? n._lineBreakPositions.slice() : [],  // ★ 标题节点换行位置
+                _loopMode: n._loopMode || null,
+                _loopCount: n._loopCount !== undefined ? n._loopCount : 1,
+                _loopTime: n._loopTime !== undefined ? n._loopTime : null,
                 _customScale: n._customScale !== undefined ? n._customScale : 1.0,
                 _playbackSpeed: n._playbackSpeed !== undefined ? n._playbackSpeed : 1.0,
                 _debugOffsetX: n._debugOffsetX || 0,
@@ -1492,6 +1500,10 @@ SMTool.init = function () {
                 existing._stateDesc = nd._stateDesc || '';
                 existing._exitText = nd._exitText || '';
                 existing._textContent = nd._textContent || '';
+                existing._lineBreakPositions = nd._lineBreakPositions ? nd._lineBreakPositions.slice() : [];  // ★ 恢复标题节点换行位置
+                existing._loopMode = nd._loopMode || null;
+                existing._loopCount = (nd._loopCount !== undefined) ? nd._loopCount : 1;
+                existing._loopTime = (nd._loopTime !== undefined) ? nd._loopTime : null;
                 existing._customScale = nd._customScale !== undefined ? nd._customScale : 1.0;
                 existing._playbackSpeed = nd._playbackSpeed !== undefined ? nd._playbackSpeed : 1.0;
                 existing._debugOffsetX = nd._debugOffsetX || 0;
@@ -1662,6 +1674,10 @@ SMTool.init = function () {
                 node._stateDesc = nd._stateDesc || '';
                 node._exitText = nd._exitText || '';
                 node._textContent = nd._textContent || '';
+                node._lineBreakPositions = nd._lineBreakPositions ? nd._lineBreakPositions.slice() : [];  // ★ 恢复标题节点换行位置
+                node._loopMode = nd._loopMode || null;
+                node._loopCount = (nd._loopCount !== undefined) ? nd._loopCount : 1;
+                node._loopTime = (nd._loopTime !== undefined) ? nd._loopTime : null;
                 node._customScale = nd._customScale !== undefined ? nd._customScale : 1.0;
                 node._playbackSpeed = nd._playbackSpeed !== undefined ? nd._playbackSpeed : 1.0;
                 node._debugOffsetX = nd._debugOffsetX || 0;
@@ -2732,6 +2748,10 @@ SMTool.ctxAddTitle = function () {
     node.nodeType = 'titleText';
     node.name = '标题';
     node._textContent = '标题';
+    node._lineBreakPositions = [];  // ★ 初始化换行位置数组
+    node._loopMode = null;
+    node._loopCount = 1;
+    node._loopTime = null;
     var wp = SMTool.canvasToWorld(SMData._mx || window.innerWidth / 2, SMData._my || window.innerHeight / 2);
     node.x = wp.x;
     node.y = wp.y;
@@ -2747,9 +2767,20 @@ SMTool.ctxAddTitle = function () {
 };
 
 // ★ 更新标题节点文本
+// 换行字符（Enter键）会被存储为 \n，JSON 序列化后保留，下次打开工程时还原换行位置
 SMTool._updateTitleText = function (nid, text) {
     var node = SMData.nodes.get(nid);
-    if (node) { node._textContent = text; node.name = text; }
+    if (!node) return;
+    // 规范化换行：Windows 的 \r\n → \n，确保跨平台一致
+    var normalized = String(text).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    node._textContent = normalized;
+    node.name = normalized;
+    // ★ 同时存储换行位置（字符索引数组），用于精确还原
+    var positions = [];
+    for (var i = 0; i < normalized.length; i++) {
+        if (normalized.charAt(i) === '\n') positions.push(i);
+    }
+    node._lineBreakPositions = positions;
 };
 
 // ★ 播放倍速：滑块拖动（实时更新）

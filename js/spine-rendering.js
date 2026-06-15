@@ -744,8 +744,8 @@ SMTool._initAnimPreview = function (node) {
     var physParam = (useVer !== '3.8' && SP.Physics) ? SP.Physics.update : undefined;
 
     // 设置面板尺寸和画布（保留用户缩放后的尺寸，首次默认 280×420）
-    var savedW = pp.panelW || 320;
-    var savedH = pp.panelH || 500;
+    var savedW = pp.panelW || 385;
+    var savedH = pp.panelH || 645;
     panel.style.width = savedW + 'px';
     panel.style.height = savedH + 'px';
     // ★ 等 DOM 布局完成后，取 canvas 实际容器尺寸（排除标题栏），避免拉伸
@@ -1045,8 +1045,7 @@ SMTool._initAnimPreview = function (node) {
             // 🔒 [LOCK-D] END
 
             // 更新面板标题
-            var title = document.getElementById('appTitle');
-            if (title) title.textContent = '🎬 ' + targetAnim;
+            SMTool._updateAppTitle('🎬 ' + targetAnim, node.sourceFile || '');
 
         } catch (e) {
             console.error('[AnimPreview] Setup failed:', e);
@@ -1267,8 +1266,8 @@ SMTool._resetAnimPreviewZoom = function () {
         SMTool._syncLayerPreviewViewport(pp);
         return;
     }
-    var cw = pp._canvasWidth || pp.panelW || 320;
-    var ch = pp._canvasHeight || pp.panelH || 500;
+    var cw = pp._canvasWidth || pp.panelW || 385;
+    var ch = pp._canvasHeight || pp.panelH || 645;
     SMTool._syncAnimPreviewViewport(pp, cw, ch);
 };
 
@@ -1373,8 +1372,7 @@ SMTool._updateAnimPreviewAnim = function (animName) {
     // ★ 同步 PMA 和皮肤
     SMTool._syncPreviewPmaAndSkin(pp, node);
 
-    var title = document.getElementById('appTitle');
-    if (title) title.textContent = '🎬 ' + pp.animName;
+    SMTool._updateAppTitle('🎬 ' + pp.animName, node.sourceFile || '');
 };
 
 // ---- 将源节点的轨道混合配置复制到预览 AnimationState ----

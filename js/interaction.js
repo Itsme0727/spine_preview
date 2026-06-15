@@ -957,6 +957,10 @@ SMTool._onKD = function (e) {
                     _stateDesc: n._stateDesc || '',
                     _exitText: n._exitText || '',
                     _textContent: n._textContent || '',
+                    _lineBreakPositions: n._lineBreakPositions ? n._lineBreakPositions.slice() : [],  // ★ 标题节点换行位置
+                    _loopMode: n._loopMode || null,           // ★ 循环模式
+                    _loopCount: n._loopCount !== undefined ? n._loopCount : 1,  // ★ 循环次数
+                    _loopTime: n._loopTime !== undefined ? n._loopTime : null,  // ★ 循环时间
                     _customScale: n._customScale !== undefined ? n._customScale : 1.0,
                     infoCollapsed: !!n.infoCollapsed,
                     _oldId: n.id
@@ -1068,6 +1072,10 @@ SMTool._onKD = function (e) {
                 node._stateDesc = nd._stateDesc;
                 node._exitText = nd._exitText;
                 node._textContent = nd._textContent;
+                node._lineBreakPositions = nd._lineBreakPositions ? nd._lineBreakPositions.slice() : [];  // ★ 恢复标题节点换行位置
+                node._loopMode = nd._loopMode || null;
+                node._loopCount = (nd._loopCount !== undefined) ? nd._loopCount : 1;
+                node._loopTime = (nd._loopTime !== undefined) ? nd._loopTime : null;
                 node._customScale = nd._customScale !== undefined ? nd._customScale : 1.0;
                 node.infoCollapsed = nd.infoCollapsed;
 

@@ -207,7 +207,10 @@
             <div class="all-list" id="allListContent"></div>
         </div>
         <div class="app-header">
-            <span class="app-title" id="appTitle">🎬 动画预览</span>
+            <div class="app-title-wrap">
+                <span class="app-title" id="appTitle">🎬 动画预览</span>
+                <span class="app-source-file" id="appSourceFile"></span>
+            </div>
             <span class="app-close" title="关闭预览" onclick="SMTool._hideAnimPreview()">✕</span>
         </div>
         <div class="app-canvas-wrap">
@@ -216,6 +219,8 @@
                 <span class="app-zoom-label" id="appZoomLabel">100%</span>
                 <button class="app-zoom-reset" id="appZoomReset" title="恢复 100%" onclick="SMTool._resetAnimPreviewZoom()">1:1</button>
             </div>
+            <!-- 暂停/继续播放按钮（右下角） -->
+            <button class="app-pause-btn" id="appPauseBtn" onclick="SMTool._togglePreviewPause()" title="暂停 / 继续播放">⏸</button>
         </div>
         <div class="app-resize-handle"></div>
     </div>
