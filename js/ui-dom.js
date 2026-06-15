@@ -4661,6 +4661,48 @@ SMTool._freezeAllNodes = function () {
     }
 };
 
+// ★ 冻结所有非层关联的动画节点（流遇到并行播放节点时调用）
+// 层的关联节点不受冻结，保持正常播放；其他节点冻结防止干扰层播放
+SMTool._freezeAllNodesExceptLayer = function (layerNode) {
+    var layerNodeIds = new Set();
+    var ld = SMTool._layerData(layerNode);
+    if (ld && ld.layers) {
+        for (var lk = 1; lk <= ld.layerCount; lk++) {
+            if (ld.layers[lk] && ld.layers[lk].animNodeId) {
+                layerNodeIds.add(ld.layers[lk].animNodeId);
+            }
+        }
+    }
+    var nodesIter = SMData.nodes.values();
+    var r = nodesIter.next();
+    while (!r.done) {
+        var n = r.value;
+        if (!n.state || !n.skeletonData) { r = nodesIter.next(); continue; }
+        if (layerNodeIds.has(n.id)) {
+            // ★ 层关联节点：解冻，恢复 timeScale=1 正常播放
+            n._pausedByFlow = false;
+            try { n.state.apply(n.skeleton); n.skeleton.updateWorldTransform(n._physParam); } catch (e) {}
+            try {
+                for (var ti = 0; ti < 5; ti++) {
+                    var entry = n.state.getCurrent(ti);
+                    if (entry) { entry.timeScale = 1; }
+                }
+            } catch (e) {}
+        } else {
+            // ★ 非层关联节点：冻结
+            try { n.state.apply(n.skeleton); n.skeleton.updateWorldTransform(n._physParam); } catch (e) {}
+            try {
+                for (var ti = 0; ti < 5; ti++) {
+                    var entry = n.state.getCurrent(ti);
+                    if (entry) { entry.timeScale = 0; }
+                }
+            } catch (e) {}
+            n._pausedByFlow = true;
+        }
+        r = nodesIter.next();
+    }
+};
+
 // ================================================================
 // 🔒🔒🔒 [LOCK-3] 动画流播放节点状态管理
 // ⚠️ 解锁策略：除非用户明确说「解锁 LOCK-3」，或我主动问询
@@ -4919,6 +4961,18 @@ SMTool._goToPrevStep = function () {
     if (!path) return;
     var maxStep = path.nodes.length;
     if (path.nodes[maxStep - 1] && path.nodes[maxStep - 1].cycleClose) maxStep--;
+    // ★ 离开层节点前清理预览
+    var oldStepNode2 = path.nodes[pb.currentStep];
+    if (oldStepNode2 && !oldStepNode2.cycleClose) {
+        var oldNode2 = SMData.nodes.get(oldStepNode2.id);
+        if (oldNode2 && oldNode2.nodeType === 'layer') {
+            SMTool._destroyAnimPreview();
+            var pp2 = SMData._animPreview;
+            if (pp2) { pp2.visible = false; pp2._layerSkeletons = null; }
+            var panel2 = document.getElementById('animPreviewPanel');
+            if (panel2) panel2.style.display = 'none';
+        }
+    }
     if (pb.currentStep > 0) {
         do { pb.currentStep--; } while (pb.currentStep > 0 && path.nodes[pb.currentStep] && path.nodes[pb.currentStep].cycleClose);
     } else {
@@ -4940,10 +4994,14 @@ SMTool._goToPrevStep = function () {
     SMTool._updateSel();
     SMTool._updateStateRowColors();
 
-    // ★ 触发右上角动画预览浮窗（使用当前步骤节点）
+    // ★ 层节点：启动层预览 + 冻结非层关联节点
     if (stepNode && !stepNode.cycleClose) {
         var prevSpineNode = SMData.nodes.get(stepNode.id);
-        if (prevSpineNode && prevSpineNode.nodeType === 'spine') {
+        if (prevSpineNode && prevSpineNode.nodeType === 'layer') {
+            SMTool._showLayerPreview(prevSpineNode);
+            SMTool._freezeAllNodesExceptLayer(prevSpineNode);
+        } else if (prevSpineNode && prevSpineNode.nodeType === 'spine') {
+            // ★ 触发右上角动画预览浮窗
             SMTool._showAnimPreview(prevSpineNode);
         }
     }
@@ -4958,6 +5016,18 @@ SMTool._goToNextStep = function () {
     if (!path) return;
     var maxStep = path.nodes.length;
     if (path.nodes[maxStep - 1] && path.nodes[maxStep - 1].cycleClose) maxStep--;
+    // ★ 离开层节点前清理预览
+    var oldStepNode = path.nodes[pb.currentStep];
+    if (oldStepNode && !oldStepNode.cycleClose) {
+        var oldNode = SMData.nodes.get(oldStepNode.id);
+        if (oldNode && oldNode.nodeType === 'layer') {
+            SMTool._destroyAnimPreview();
+            var pp1 = SMData._animPreview;
+            if (pp1) { pp1.visible = false; pp1._layerSkeletons = null; }
+            var panel1 = document.getElementById('animPreviewPanel');
+            if (panel1) panel1.style.display = 'none';
+        }
+    }
     if (pb.currentStep < maxStep - 1) {
         pb.currentStep++;
     } else {
@@ -4979,10 +5049,14 @@ SMTool._goToNextStep = function () {
     SMTool._updateSel();
     SMTool._updateStateRowColors();
 
-    // ★ 触发右上角动画预览浮窗（使用当前步骤节点）
+    // ★ 层节点：启动层预览 + 冻结非层关联节点
     if (stepNode && !stepNode.cycleClose) {
         var nextSpineNode = SMData.nodes.get(stepNode.id);
-        if (nextSpineNode && nextSpineNode.nodeType === 'spine') {
+        if (nextSpineNode && nextSpineNode.nodeType === 'layer') {
+            SMTool._showLayerPreview(nextSpineNode);
+            SMTool._freezeAllNodesExceptLayer(nextSpineNode);
+        } else if (nextSpineNode && nextSpineNode.nodeType === 'spine') {
+            // ★ 触发右上角动画预览浮窗
             SMTool._showAnimPreview(nextSpineNode);
         }
     }
@@ -5028,6 +5102,19 @@ SMTool._playFullStep = function () {
 
     // 暂停其他所有动画节点，仅播放当前步骤的节点
     var spineNode = SMTool._applyStepToMainNode(stepNode);
+
+    // ★ 并行播放节点（layer）：启动层预览并暂停流自动推进，层独立播放不受流干扰
+    if (spineNode && spineNode.nodeType === 'layer') {
+        SMTool._showLayerPreview(spineNode);
+        SMTool._updateFullFlowPanel(document.getElementById('flpContent'), document.getElementById('flowPanel'));
+        SMTool._setFullComponentFocus(SMData.selectedNode);
+        SMTool._updateSel();
+        SMTool._updateStateRowColors();
+        // 冻结非层关联的动画节点，防止流干扰层播放
+        SMTool._freezeAllNodesExceptLayer(spineNode);
+        // ★ 不设 setTimeout 自动推进——层播放有自己独立的生命周期
+        return;
+    }
 
     // 更新面板高亮和画布焦点
     SMTool._updateFullFlowPanel(document.getElementById('flpContent'), document.getElementById('flowPanel'));
