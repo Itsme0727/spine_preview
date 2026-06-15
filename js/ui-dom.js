@@ -3572,7 +3572,11 @@ SMTool._updateStateRowColors = function () {
                     else curState = node.currentAnim || '';
                 }
                 var infos = stateMap.get(curState);
-                if (infos && infos.length > 0) {
+                // ★ 延时器/文本节点不参与 anim-bar 着色（无动画状态概念，空字符串会误匹配）
+                if (node && (node.nodeType === 'delayer' || node.nodeType === 'shortText' || node.nodeType === 'textBox' || node.nodeType === 'titleText' || node.nodeType === 'image')) {
+                    bar.style.backgroundColor = '';
+                    bar.style.borderLeft = '';
+                } else if (infos && infos.length > 0) {
                     var info = infos[0];
                     bar.style.backgroundColor = info.color + info.alpha;
                     bar.style.borderLeft = '3px solid ' + info.color;

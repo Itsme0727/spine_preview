@@ -476,11 +476,16 @@ SMTool._loop = function (now) {
             SMData._fullPaths[SMData._fullPlayback.activePathIdx].nodes[SMData._fullPlayback.currentStep].id === node.id;
         var isSelectedNode = SMData.selectedNodes.has(node.id);
         var isLayerActive = SMData._layerPlayingNodes && SMData._layerPlayingNodes.has(node.id);
+        var isInLayerChain = SMData._layerAllChainNodes && SMData._layerAllChainNodes.has(node.id);
         var shouldAnimate = false;
         if (SMData.renderMode === 'static') {
             shouldAnimate = isSelectedNode || isPlayingNode || isLayerActive;
         } else {
             shouldAnimate = (SMData.renderMode === 'dyn' || z >= 0.20 || isPlayingNode || isLayerActive);
+        }
+        // ★ 层级预览播放中：链内非活跃节点强制冻结，不受渲染模式/缩放影响
+        if (isInLayerChain && !isLayerActive) {
+            shouldAnimate = false;
         }
         if (shouldAnimate) {
             var spd = (typeof node._playbackSpeed === 'number' && node._playbackSpeed !== 1.0) ? node._playbackSpeed : 1.0;
@@ -1078,17 +1083,30 @@ SMTool._renderAnimPreview = function (now) {
     // ★ 层级节点预览（含测试模式）：多层叠加渲染
     if (pp && pp.visible && pp._layerSkeletons && pp._layerSkeletons.length > 0) {
         if (!pp._readyToRender || !pp.gl) return;
-        SMTool._renderLayerPreview(null, pp, now);
-        // ★ 渲染所有层的骨骼挂点图片
-        SMTool._renderLayerPreviewBoneImages(pp);
-        // ★ 栅栏同步：所有层播完一轮 → 重建并同步渲染新周期首帧
-        if (pp._needsLayerReinit) {
-            pp._needsLayerReinit = false;
+        // ★ 延迟结束后重建骨架
+        if (pp._needsLayerRebuild && !(pp._startupDelayFrames > 0)) {
+            pp._needsLayerRebuild = false;
             var layerNode = SMData.nodes.get(pp.nodeId);
             if (layerNode) {
                 SMTool._showLayerPreview(layerNode);
-                SMTool._renderLayerPreview(null, pp, performance.now());
-                SMTool._renderLayerPreviewBoneImages(pp);
+            }
+            // ★ 安全：重建后多清一帧，让 GPU 消化完纹理/Shader 创建再渲染
+            pp._startupDelayFrames = 1;
+        }
+        SMTool._renderLayerPreview(null, pp, now);
+        // ★ 渲染骨骼挂图（重建期间跳过）
+        if (!pp._needsLayerRebuild) {
+            SMTool._renderLayerPreviewBoneImages(pp);
+        }
+        if (pp._needsLayerReinit) {
+            pp._needsLayerReinit = false;
+            var gl2 = pp.gl;
+            var canvas2 = pp.canvas;
+            if (gl2 && canvas2) {
+                gl2.viewport(0, 0, canvas2.width, canvas2.height);
+                gl2.clearColor(0, 0, 0, 0);
+                gl2.clearStencil(0);
+                gl2.clear(gl2.COLOR_BUFFER_BIT | gl2.STENCIL_BUFFER_BIT);
             }
             if (document.getElementById('appLayerList') && document.getElementById('appLayerList').style.display !== 'none') {
                 SMTool._buildLayerList();
@@ -1333,6 +1351,10 @@ SMTool._destroyAnimPreview = function () {
     pp._boundsSize = null;
     pp._premultipliedAlpha = false;
     pp._lastTime = 0;
+
+    // ★ 清除层级播放高亮状态，防止主画布节点残留冻结/置灰
+    SMData._layerPlayingNodes = null;
+    SMData._layerAllChainNodes = null;
 };
 
 // ---- 更新预览动画（完整轨道混合复制） ----

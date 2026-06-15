@@ -755,16 +755,29 @@ SMTool._showLayerPreview = function (layerNode) {
     pp.visible = true;
     pp.nodeId = layerNode.id;
 
-    // 确定 Spine 版本 — 从任一 Spine 节点获取版本信息（跳过延时器）
+    // 确定 Spine 版本 — 优先从直连 Spine 节点获取，全是延时器时沿链查找
     var firstNode = null;
     for (var fni = 0; fni < linkedNodes.length; fni++) {
         if (linkedNodes[fni].node.nodeType === 'spine') { firstNode = linkedNodes[fni].node; break; }
     }
+    // ★ 全延时器兜底：沿每个延时器的出边链找到第一个 Spine 动画节点
     if (!firstNode) {
-        // 无 Spine 节点 → 清屏并隐藏
-        gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT);
+        for (var fni2 = 0; fni2 < linkedNodes.length; fni2++) {
+            var lnk = linkedNodes[fni2];
+            if (lnk.node.nodeType === 'delayer') {
+                var chainIds = SMTool._buildChainFromNode(lnk.node.id);
+                for (var ci = 0; ci < chainIds.length; ci++) {
+                    var cn = SMData.nodes.get(chainIds[ci]);
+                    if (cn && cn.nodeType === 'spine') { firstNode = cn; break; }
+                }
+                if (firstNode) break;
+            }
+        }
+    }
+    if (!firstNode) {
+        // 真的没有任何 Spine 节点 → 隐藏面板
         panel.style.display = 'none';
-        pp.visible = false; pp.gl = null;
+        pp.visible = false;
         return;
     }
     var ver = firstNode.version || firstNode._spineVer || '';
@@ -1002,6 +1015,28 @@ SMTool._showLayerPreview = function (layerNode) {
     if (layerSkeletons.length === 0 && linkedNodes.length > 0) {
         if (title) title.textContent = '⚠ 层级加载失败(贴图/版本?)';
     }
+
+    // ★ 立即同步初次活跃节点集合到主画布，消除第 1 帧延迟
+    if (pp._layerSkeletons && pp._layerSkeletons.length > 0) {
+        var initActiveIds = new Set();
+        var initAllIds = new Set();
+        for (var si = 0; si < pp._layerSkeletons.length; si++) {
+            var lsk = pp._layerSkeletons[si];
+            var chains = lsk._chainSkeletons || [lsk];
+            var curIdx = lsk._chainIdx || 0;
+            var curActive = (chains.length > curIdx) ? chains[curIdx] : chains[0];
+            var nid = (curActive && curActive._chainNodeId) || lsk.nodeId;
+            if (nid != null) initActiveIds.add(nid);
+            for (var cj = 0; cj < chains.length; cj++) {
+                var cnid = chains[cj]._chainNodeId;
+                if (cnid != null) initAllIds.add(cnid);
+            }
+        }
+        SMData._layerPlayingNodes = initActiveIds;
+        SMData._layerAllChainNodes = initAllIds;
+        // ★ 同步主画布 CSS 高亮/置灰效果
+        SMTool._updateLayerPlayingHighlights(initActiveIds, initAllIds, {});
+    }
 };
 
 /** 加载单个节点的骨架到指定的 GL 上下文，返回骨架渲染数据 */
@@ -1209,6 +1244,13 @@ SMTool._renderLayerPreview = function (layerNode, pp, now) {
     gl.clearColor(0, 0, 0, 0); gl.clearStencil(0);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
 
+    // ★ 启动延迟帧（含重建后安全帧）：清屏不渲染
+    if (pp._startupDelayFrames > 0) {
+        pp._startupDelayFrames--;
+        pp._lastTime = now;
+        return;
+    }
+
     var dt = Math.min((now - (pp._lastTime || now)) / 1000, 0.1);
     pp._lastTime = now;
 
@@ -1293,7 +1335,13 @@ SMTool._renderLayerPreview = function (layerNode, pp, now) {
             // ★ 延时器节点：不更新骨架引用，沿用上一帧的渲染数据（画面定格）
         }
 
-        if (!ls.skeleton || !ls.state || !ls.shader || !ls.batcher || !ls.skeletonRenderer) continue;
+        if (!ls.skeleton || !ls.state || !ls.shader || !ls.batcher || !ls.skeletonRenderer) {
+            // ★ 延时器直连且链中无动画骨架时，跳过渲染但不影响链时间推进
+            if (ls._chainSkeletons && ls._chainSkeletons.length > 1) {
+                // 链中有后续元素，当前元素缺少渲染资源 → 正常情况，跳过渲染
+            }
+            continue;
+        }
         // 动画已在链逻辑中更新，此处不再重复调用 state.update
         if (!ls._chainSkeletons && !pp._flowFrozen) {
             ls.state.update(dt);
@@ -1344,23 +1392,26 @@ SMTool._renderLayerPreview = function (layerNode, pp, now) {
     SMTool._updateLayerPlayingHighlights(activeNodeIds, allChainNodeIds, activeNodeProgress);
 
     // ★★★ 栅栏同步：检查所有层是否都已完成 ★★★
-    // 当所有层都播完各自的动画链后，标记需要重新初始化。
-    // 由 _renderAnimPreview 检测标记并调用 _showLayerPreview 完成重置——
-    // 与用户点击层节点时走完全相同的初始化路径，确保状态干净。
+    // 所有层播完后，插入短暂启动延迟帧让 GPU 清掉旧帧残留，
+    // 然后再从头开始新周期的播放。不销毁重建骨架。
     if (!pp._flowFrozen && list.length > 0) {
         var allDone = true;
         for (var j = 0; j < list.length; j++) {
             if (!list[j]._chainDone) { allDone = false; break; }
         }
         if (allDone) {
-            // 先复位标记防止同帧内重复触发
             for (var k = 0; k < list.length; k++) {
                 list[k]._chainDone = false;
                 list[k]._chainIdx = 0;
                 list[k]._delayElapsed = 0;
             }
-            // ★ 设置标记，由 _renderAnimPreview 在渲染完成后调用 _showLayerPreview 重新初始化
+            pp._startupDelayFrames = 6;
+            pp._needsLayerRebuild = true;
             pp._needsLayerReinit = true;
+            gl.clearColor(0, 0, 0, 0);
+            gl.clearStencil(0);
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
+            gl.flush();
         }
     }
 };
@@ -1422,6 +1473,23 @@ SMTool._updateLayerPlayingHighlights = function (activeNodeIds, allChainNodeIds,
                 bar.style.animation = '';
                 bar.style.opacity = '0';
                 bar.style.transform = 'scaleX(0)';
+            }
+        }
+        // ★ 延时器进度条：活跃时跟随延迟时间动画增长
+        var dBar = el.querySelector('.delayer-progress-bar');
+        if (dBar) {
+            if (isActive && progress !== undefined && progress >= 0) {
+                dBar.style.transition = 'none';
+                dBar.style.width = Math.round(Math.max(0, Math.min(1, progress)) * 100) + '%';
+                dBar.style.opacity = '1';
+            } else if (isInChain && !isActive) {
+                dBar.style.transition = 'none';
+                dBar.style.width = '0%';
+                dBar.style.opacity = '0';
+            } else if (!isInChain) {
+                dBar.style.transition = '';
+                dBar.style.width = '0%';
+                dBar.style.opacity = '';
             }
         }
     });
@@ -1891,6 +1959,8 @@ SMTool._clearAllLayerHighlights = function () {
         if (d) d.remove();
         var b = el.querySelector('.anim-progress-bar');
         if (b) { b.style.opacity = '0'; b.style.transform = 'scaleX(0)'; b.style.animation = ''; b.classList.remove('playing', 'paused'); }
+        var db = el.querySelector('.delayer-progress-bar');
+        if (db) { db.style.width = '0%'; db.style.opacity = ''; db.style.transition = ''; }
     });
     SMData._layerPlayingNodes = null;
     SMData._layerAllChainNodes = null;
