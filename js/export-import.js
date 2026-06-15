@@ -36,28 +36,67 @@ SMTool._serializeShots = function (boneShots) {
 
 // ---- 收集所有节点的骨骼截图（去重）----
 // 返回：{ shotId: { dataUrl, nodes: [{nodeId, boneName, idx}] } }
+// ---- 收集所有节点的骨骼/皮肤/插槽截图（去重）----
+// 返回：{ shotId: { dataUrl, refs: [{nodeId, boneName, idx, type}] } }
 SMTool._collectAllBoneScreenshots = function () {
-    var shotMap = {}; // shotId → { dataUrl, refs: [{nodeId, boneName, idx}] }
+    var shotMap = {}; // shotId → { dataUrl, refs: [{nodeId, boneName, idx, type}] }
     var nodesIter = SMData.nodes.values();
     var result = nodesIter.next();
     while (!result.done) {
         var n = result.value;
-        if (n._boneScreenshots && n.nodeType === 'spine') {
-            var boneNames = Object.keys(n._boneScreenshots);
-            for (var b = 0; b < boneNames.length; b++) {
-                var bn = boneNames[b];
-                var shotList = n._boneScreenshots[bn];
-                if (!Array.isArray(shotList)) shotList = shotList ? [shotList] : [];
-                for (var s = 0; s < shotList.length; s++) {
-                    var shotVal = shotList[s];
-                    var shotId = (typeof shotVal === 'number') ? shotVal : null;
-                    if (shotId === null) continue;
-                    var dataUrl = SMData._shotGetDataUrl(shotId);
-                    if (!dataUrl || dataUrl.indexOf('data:image/') !== 0) continue;
-                    if (!shotMap[shotId]) {
-                        shotMap[shotId] = { dataUrl: dataUrl, refs: [] };
+        if (n.nodeType === 'spine') {
+            // ★ 收集骨骼截图
+            if (n._boneScreenshots) {
+                var boneNames = Object.keys(n._boneScreenshots);
+                for (var b = 0; b < boneNames.length; b++) {
+                    var bn = boneNames[b];
+                    var shotList = n._boneScreenshots[bn];
+                    if (!Array.isArray(shotList)) shotList = shotList ? [shotList] : [];
+                    for (var s = 0; s < shotList.length; s++) {
+                        var shotVal = shotList[s];
+                        var shotId = (typeof shotVal === 'number') ? shotVal : null;
+                        if (shotId === null) continue;
+                        var dataUrl = SMData._shotGetDataUrl(shotId);
+                        if (!dataUrl || dataUrl.indexOf('data:image/') !== 0) continue;
+                        if (!shotMap[shotId]) { shotMap[shotId] = { dataUrl: dataUrl, refs: [] }; }
+                        shotMap[shotId].refs.push({ nodeId: n.id, boneName: bn, idx: s, type: 'bone' });
                     }
-                    shotMap[shotId].refs.push({ nodeId: n.id, boneName: bn, idx: s });
+                }
+            }
+            // ★ 收集皮肤截图
+            if (n._skinScreenshots) {
+                var skinNames = Object.keys(n._skinScreenshots);
+                for (var sk = 0; sk < skinNames.length; sk++) {
+                    var skn = skinNames[sk];
+                    var skShotList = n._skinScreenshots[skn];
+                    if (!Array.isArray(skShotList)) skShotList = skShotList ? [skShotList] : [];
+                    for (var ss = 0; ss < skShotList.length; ss++) {
+                        var skVal = skShotList[ss];
+                        var skId = (typeof skVal === 'number') ? skVal : null;
+                        if (skId === null) continue;
+                        var skDataUrl = SMData._shotGetDataUrl(skId);
+                        if (!skDataUrl || skDataUrl.indexOf('data:image/') !== 0) continue;
+                        if (!shotMap[skId]) { shotMap[skId] = { dataUrl: skDataUrl, refs: [] }; }
+                        shotMap[skId].refs.push({ nodeId: n.id, boneName: skn, idx: ss, type: 'skin' });
+                    }
+                }
+            }
+            // ★ 收集插槽截图
+            if (n._slotScreenshots) {
+                var slotNames = Object.keys(n._slotScreenshots);
+                for (var sl = 0; sl < slotNames.length; sl++) {
+                    var sln = slotNames[sl];
+                    var slShotList = n._slotScreenshots[sln];
+                    if (!Array.isArray(slShotList)) slShotList = slShotList ? [slShotList] : [];
+                    for (var ssi = 0; ssi < slShotList.length; ssi++) {
+                        var slVal = slShotList[ssi];
+                        var slId = (typeof slVal === 'number') ? slVal : null;
+                        if (slId === null) continue;
+                        var slDataUrl = SMData._shotGetDataUrl(slId);
+                        if (!slDataUrl || slDataUrl.indexOf('data:image/') !== 0) continue;
+                        if (!shotMap[slId]) { shotMap[slId] = { dataUrl: slDataUrl, refs: [] }; }
+                        shotMap[slId].refs.push({ nodeId: n.id, boneName: sln, idx: ssi, type: 'slot' });
+                    }
                 }
             }
         }
@@ -99,6 +138,8 @@ SMTool._saveCompanionImages = function (dirHandle) {
     var nr2 = nodesIter2.next();
     while (!nr2.done) {
         nr2.value._boneShotRefs = {};
+        nr2.value._skinShotRefs = {};
+        nr2.value._slotShotRefs = {};
         nr2.value._nodeShotRefs = [];
         nr2 = nodesIter2.next();
     }
@@ -132,11 +173,21 @@ SMTool._saveCompanionImages = function (dirHandle) {
             }
             usedNames[finalName] = true;
 
-            // ★ 为所有引用此 shotId 的节点设置 _boneShotRefs
+            // ★ 为所有引用此 shotId 的节点设置引用（按 type 区分 bone/skin/slot）
             for (var r = 0; r < shotInfo.refs.length; r++) {
                 var ref = shotInfo.refs[r];
                 var node = SMData.nodes.get(ref.nodeId);
-                if (node) {
+                if (!node) continue;
+                if (ref.type === 'slot') {
+                    if (!node._slotShotRefs) node._slotShotRefs = {};
+                    if (!node._slotShotRefs[ref.boneName]) node._slotShotRefs[ref.boneName] = [];
+                    node._slotShotRefs[ref.boneName][ref.idx] = '_assets/' + finalName;
+                } else if (ref.type === 'skin') {
+                    if (!node._skinShotRefs) node._skinShotRefs = {};
+                    if (!node._skinShotRefs[ref.boneName]) node._skinShotRefs[ref.boneName] = [];
+                    node._skinShotRefs[ref.boneName][ref.idx] = '_assets/' + finalName;
+                } else {
+                    // bone (default)
                     if (!node._boneShotRefs) node._boneShotRefs = {};
                     if (!node._boneShotRefs[ref.boneName]) node._boneShotRefs[ref.boneName] = [];
                     node._boneShotRefs[ref.boneName][ref.idx] = '_assets/' + finalName;
@@ -196,6 +247,38 @@ SMTool._loadCompanionImages = function (dirHandle) {
                     var fileName = refPath.replace('_assets/', '');
                     if (!fileRefs[fileName]) fileRefs[fileName] = [];
                     fileRefs[fileName].push({ node: n, boneName: bn, idx: r, type: 'bone' });
+                }
+            }
+        }
+        // ★ 皮肤截图引用
+        if (n._skinShotRefs && n.nodeType === 'spine') {
+            var skinNames = Object.keys(n._skinShotRefs);
+            for (var sk = 0; sk < skinNames.length; sk++) {
+                var skn = skinNames[sk];
+                var skRefList = n._skinShotRefs[skn];
+                if (!Array.isArray(skRefList)) skRefList = skRefList ? [skRefList] : [];
+                for (var sr = 0; sr < skRefList.length; sr++) {
+                    var skRefPath = skRefList[sr];
+                    if (!skRefPath) continue;
+                    var skFileName = skRefPath.replace('_assets/', '');
+                    if (!fileRefs[skFileName]) fileRefs[skFileName] = [];
+                    fileRefs[skFileName].push({ node: n, boneName: skn, idx: sr, type: 'skin' });
+                }
+            }
+        }
+        // ★ 插槽截图引用
+        if (n._slotShotRefs && n.nodeType === 'spine') {
+            var slotNames = Object.keys(n._slotShotRefs);
+            for (var sl = 0; sl < slotNames.length; sl++) {
+                var sln = slotNames[sl];
+                var slRefList = n._slotShotRefs[sln];
+                if (!Array.isArray(slRefList)) slRefList = slRefList ? [slRefList] : [];
+                for (var slr = 0; slr < slRefList.length; slr++) {
+                    var slRefPath = slRefList[slr];
+                    if (!slRefPath) continue;
+                    var slFileName = slRefPath.replace('_assets/', '');
+                    if (!fileRefs[slFileName]) fileRefs[slFileName] = [];
+                    fileRefs[slFileName].push({ node: n, boneName: sln, idx: slr, type: 'slot' });
                 }
             }
         }
@@ -261,8 +344,20 @@ SMTool._loadCompanionImages = function (dirHandle) {
                                         // ★ 节点右上角图片附件
                                         if (!ref.node._nodeImages) ref.node._nodeImages = [];
                                         ref.node._nodeImages[ref.idx] = newShotId;
+                                    } else if (ref.type === 'slot') {
+                                        // ★ 插槽截图
+                                        if (!ref.node._slotScreenshots) ref.node._slotScreenshots = {};
+                                        if (!ref.node._slotScreenshots[ref.boneName]) ref.node._slotScreenshots[ref.boneName] = [];
+                                        if (!Array.isArray(ref.node._slotScreenshots[ref.boneName])) ref.node._slotScreenshots[ref.boneName] = [ref.node._slotScreenshots[ref.boneName]];
+                                        ref.node._slotScreenshots[ref.boneName][ref.idx] = newShotId;
+                                    } else if (ref.type === 'skin') {
+                                        // ★ 皮肤截图
+                                        if (!ref.node._skinScreenshots) ref.node._skinScreenshots = {};
+                                        if (!ref.node._skinScreenshots[ref.boneName]) ref.node._skinScreenshots[ref.boneName] = [];
+                                        if (!Array.isArray(ref.node._skinScreenshots[ref.boneName])) ref.node._skinScreenshots[ref.boneName] = [ref.node._skinScreenshots[ref.boneName]];
+                                        ref.node._skinScreenshots[ref.boneName][ref.idx] = newShotId;
                                     } else {
-                                        // 骨骼截图
+                                        // 骨骼截图（默认）
                                         if (!ref.node._boneScreenshots) ref.node._boneScreenshots = {};
                                         if (!ref.node._boneScreenshots[ref.boneName]) ref.node._boneScreenshots[ref.boneName] = [];
                                         if (!Array.isArray(ref.node._boneScreenshots[ref.boneName])) ref.node._boneScreenshots[ref.boneName] = [ref.node._boneScreenshots[ref.boneName]];

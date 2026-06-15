@@ -1404,14 +1404,18 @@ SMTool._renderLayerPreview = function (layerNode, pp, now) {
         // 每层前清 stencil（Spine 裁剪依赖）
         gl.clear(gl.STENCIL_BUFFER_BIT);
         gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-        ls.shader.bind();
-        ls.shader.setUniformi(WGL.Shader.SAMPLER, 0);
-        ls.shader.setUniform4x4f(WGL.Shader.MVP_MATRIX, ls.mvp.values);
-        ls.batcher.begin(ls.shader);
-        ls.skeletonRenderer.premultipliedAlpha = ls.premultipliedAlpha;
-        ls.skeletonRenderer.draw(ls.batcher, ls.skeleton);
-        ls.batcher.end();
-        ls.shader.unbind();
+
+        // ★ 获取本层骨架对应的源节点（用于读取插槽自定义图片）
+        var layerSrcNode = null;
+        if (ls._chainSkeletons && ls._chainSkeletons.length > 0) {
+            var activeSk = ls._chainSkeletons[ls._chainIdx || 0];
+            if (activeSk && activeSk._chainNodeId != null) layerSrcNode = SMData.nodes.get(activeSk._chainNodeId);
+        }
+        if (!layerSrcNode && ls.nodeId != null) layerSrcNode = SMData.nodes.get(ls.nodeId);
+
+        // ★ 按 drawOrder 精确分段交错渲染（自定义插槽图片嵌入正确层级）
+        SMTool._renderLayerSkeletonInterleaved(ls, gl, WGL, layerSrcNode);
+
 
         // ★ 收集当前活跃骨架对应的源节点 ID，用于主画布高亮
         // ★ 注意：_chainDone 的层不应标记为活跃（主画布动画节点应停止在最后一帧）
