@@ -1008,8 +1008,11 @@ SMTool._buildSlotRowHtml = function (node, slotName) {
                 if (!shotSrc) {
                     shotSrc = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="128" height="96" viewBox="0 0 128 96"><rect fill="%232a2a35" width="128" height="96"/><text fill="%23666" x="64" y="52" text-anchor="middle" font-size="12">📷 ' + (si + 1) + '</text></svg>');
                 }
-                // ★ 插槽截图无挂载按钮
+                var isMountedSlot = !(node._slotShotMounted && node._slotShotMounted[slotName] && node._slotShotMounted[slotName][si] === false);
+                var mountClassSlot = isMountedSlot ? 'dfp-shot-mount' : 'dfp-shot-mount active';
+                var mountTextSlot = isMountedSlot ? '取消插槽' : '映射插槽';
                 shotsHtml += '<div class="dfp-shot-item">' +
+                    '<button class="' + mountClassSlot + '" onclick="event.stopPropagation();SMTool._toggleSlotShotMount(\'' + SMTool._esc(slotName) + '\',' + si + ')">' + mountTextSlot + '</button>' +
                     '<img src="' + shotSrc + '" alt="截图' + (si + 1) + '" onclick="event.stopPropagation();SMTool._openSlotScreenshot(\'' + SMTool._esc(slotName) + '\',' + si + ')">' +
                     '<span class="dfp-shot-del" onclick="event.stopPropagation();SMTool._removeSlotScreenshot(\'' + SMTool._esc(slotName) + '\',' + si + ')" title="删除此截图">×</span>' +
                 '</div>';
@@ -1849,6 +1852,22 @@ SMTool._toggleBoneShotMount = function (boneName, index) {
         if (!n._boneShotMounted[boneName]) n._boneShotMounted[boneName] = {};
         var cur = n._boneShotMounted[boneName][index];
         n._boneShotMounted[boneName][index] = (cur === false);
+    }
+    SMData._lastPanelNodeId = -1;
+    SMTool._updateFloatPanel();
+};
+
+// ★ 切换插槽截图的挂载状态（同步到所有多选同源节点）
+SMTool._toggleSlotShotMount = function (slotName, index) {
+    var node = SMData.nodes.get(SMData.selectedNode);
+    if (!node) return;
+    var sameSourceNodes = SMTool._getSameSourceNodes(node);
+    for (var ni = 0; ni < sameSourceNodes.length; ni++) {
+        var n = sameSourceNodes[ni];
+        if (!n._slotShotMounted) n._slotShotMounted = {};
+        if (!n._slotShotMounted[slotName]) n._slotShotMounted[slotName] = {};
+        var cur = n._slotShotMounted[slotName][index];
+        n._slotShotMounted[slotName][index] = (cur === false);
     }
     SMData._lastPanelNodeId = -1;
     SMTool._updateFloatPanel();

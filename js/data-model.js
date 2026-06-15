@@ -403,6 +403,7 @@ var SpineNodeData = (function () {
         this._slotNotes = {};       // { slotName: "备注文本" }
         this._slotScreenshots = {}; // { slotName: [shotId, ...] }
         this._slotFade = {};        // { slotName: { enabled: bool, duration: number } }
+        this._slotShotMounted = {}; // { slotName: { shotIndex: true/false } } 插槽截图挂载状态，默认挂载
 
         // ★ 节点面板右上角图片附件（shotId 数组）
         this._nodeImages = [];
