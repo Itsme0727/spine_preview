@@ -54,7 +54,7 @@ SMTool._resolveAnimNodeDownstream = function (startNodeId, maxDepth) {
             if (c.fromNode === currentId && !visited.has(c.toNode)) {
                 // 跳过回连到 layer 节点的线
                 var toNode = SMData.nodes.get(c.toNode);
-                if (toNode && (toNode.nodeType === 'layer' || toNode.nodeType === 'hider')) continue;
+                if (toNode && toNode.nodeType === 'layer') continue;
                 nextId = c.toNode;
                 break;
             }
@@ -687,7 +687,7 @@ SMTool._layerSwap = function (layerNode, srcLayer, tgtLayer) {
     SMTool._refreshAllLayerBoxes();
     SMTool._updateSB();
     SMTool._updateStateRowColors();
-    SMTool._syncLayerPreviewOrder(layerNode);
+    SMTool._refreshLayerPreviewIfOpen(layerNode);
     // ★ 强制重绘连线画布（连线 _layerNum/fromState 已变更）
     SMData._forceRedraw = true;
 };
@@ -698,45 +698,6 @@ SMTool._refreshLayerPreviewIfOpen = function (layerNode) {
     var pp = SMData._animPreview;
     if (pp && pp.visible && pp.nodeId === layerNode.id && pp._layerSkeletons && pp._layerSkeletons.length > 0) {
         SMTool._showLayerPreview(layerNode);
-    }
-};
-
-/** ★ 轻量同步层预览排序：根据 _layerData 更新 pp._layerSkeletons 的 layer 编号并重排 */
-SMTool._syncLayerPreviewOrder = function (layerNode) {
-    var pp = SMData._animPreview;
-    if (!pp || !pp._layerSkeletons || !pp._layerSkeletons.length) return;
-    var ld = SMTool._layerData(layerNode);
-    if (!ld || !ld.layers) return;
-
-    // 根据当前 _layerData.layers 更新每个骨架的 layer 编号
-    for (var i = 0; i < pp._layerSkeletons.length; i++) {
-        var lsk = pp._layerSkeletons[i];
-        var foundLayer = 0;
-        // 在 _layerData 中匹配 nodeId，找到该骨架对应的新层号
-        for (var ln = 1; ln <= ld.layerCount; ln++) {
-            if (ld.layers[ln] && ld.layers[ln].animNodeId === lsk.nodeId) {
-                foundLayer = ln;
-                break;
-            }
-        }
-        if (foundLayer > 0) {
-            lsk.layer = foundLayer;
-        }
-    }
-
-    // 按新的层号重新排序
-    pp._layerSkeletons.sort(function (a, b) {
-        return (a.layer || 0) - (b.layer || 0);
-    });
-
-    // 更新标题栏层数
-    var title = document.getElementById('appTitle');
-    if (title) {
-        var oldText = title.textContent || '';
-        var match = oldText.match(/\((\d+)\//);
-        if (match) {
-            title.textContent = oldText.replace(/\(\d+\//, '(' + pp._layerSkeletons.length + '/');
-        }
     }
 };
 
@@ -779,281 +740,182 @@ SMTool._buildChainFromNode = function (startNodeId) {
     return chain;
 };
 
-// ★ 嵌套层感知的链构建：遇到并行播放节点时展开为子层枢纽入口
-// 返回链条目数组，每个条目可能是 { type:'node', id } 或 { type:'layerHub', nodeId, subChains }
-SMTool._buildChainEntriesNested = function (startNodeId, visited) {
-    visited = visited || {};
-    var entries = [];
-    var currentId = startNodeId;
-    var maxSteps = 50; // 安全上限
-    while (maxSteps-- > 0) {
-        if (visited[currentId]) break;
-        visited[currentId] = true;
+// ================================================================
+// ★★ 嵌套并行播放树（金字塔模型）— 构建与状态管理
+// ================================================================
 
-        var node = SMData.nodes.get(currentId);
-        if (!node) break;
+// 最大嵌套深度（防止无限递归）
+var MAX_PLAYBACK_TREE_DEPTH = 5;
 
-        // ★ 并行播放节点：展开为层枢纽
-        if (node.nodeType === 'layer') {
-            var ld = SMTool._layerData(node);
-            var subChains = [];
-            // 收集该层节点的所有出边（按层号排序）
-            var layerConns = [];
-            for (var ci = 0; ci < SMData.connections.length; ci++) {
-                var c = SMData.connections[ci];
-                if (c.fromNode === currentId) layerConns.push(c);
-            }
-            layerConns.sort(function (a, b) {
-                var la = a._layerNum || parseInt((a.fromState || '').replace('layer_', '')) || 999;
-                var lb = b._layerNum || parseInt((b.fromState || '').replace('layer_', '')) || 999;
-                return la - lb;
-            });
-            // 为每层递归构建子链
-            for (var li = 0; li < layerConns.length; li++) {
-                var lc = layerConns[li];
-                // 每个子链使用独立的 visited 副本（各层平行展开，互不干扰）
-                var subVisited = {};
-                // 复制已有的 visited（防止回到父链节点）
-                var parentKeys = Object.keys(visited);
-                for (var pk = 0; pk < parentKeys.length; pk++) {
-                    subVisited[parentKeys[pk]] = true;
-                }
-                var subEntries = SMTool._buildChainEntriesNested(lc.toNode, subVisited);
-                subChains.push(subEntries);
-            }
-            // ★ 也用 _layerData 回填（兼容没有显式连线的层）
-            if (subChains.length === 0 && ld && ld.layers) {
-                for (var lj = 1; lj <= ld.layerCount; lj++) {
-                    if (ld.layers[lj] && ld.layers[lj].animNodeId) {
-                        var subVisited2 = {};
-                        var parentKeys2 = Object.keys(visited);
-                        for (var pk2 = 0; pk2 < parentKeys2.length; pk2++) {
-                            subVisited2[parentKeys2[pk2]] = true;
-                        }
-                        var subEnt2 = SMTool._buildChainEntriesNested(ld.layers[lj].animNodeId, subVisited2);
-                        subChains.push(subEnt2);
-                    }
-                }
-            }
-            entries.push({ type: 'layerHub', nodeId: currentId, subChains: subChains });
-            // ★ 枢纽之后需要继续追踪：找所有子层的公共下游（收敛点）
-            // 收集所有子链末端的节点 ID
-            var subEndIds = [];
-            for (var si = 0; si < subChains.length; si++) {
-                if (subChains[si].length > 0) {
-                    var lastEntry = subChains[si][subChains[si].length - 1];
-                    subEndIds.push(lastEntry.type === 'layerHub' ? lastEntry.nodeId : lastEntry.id);
-                }
-            }
-            // 简单策略：取第一个子链末端的下游作为枢纽后续
-            if (subEndIds.length > 0) {
-                // 找从第一个子链末端出发的下游节点（排除已访问的）
-                var nextAfterHub = null;
-                for (var ci2 = 0; ci2 < SMData.connections.length; ci2++) {
-                    var c2 = SMData.connections[ci2];
-                    if (c2.fromNode === subEndIds[0] && !visited[c2.toNode]) {
-                        nextAfterHub = c2.toNode;
-                        break;
-                    }
-                }
-                if (nextAfterHub) {
-                    currentId = nextAfterHub;
-                    continue;
-                }
-            }
-            break; // 无后续节点 → 结束链
-        }
+/**
+ * 为指定并行播放节点构建"播放树"
+ * 遍历每层的动画链，遇嵌套并行节点时递归构建子树。
+ *
+ * 返回结构：
+ * {
+ *   layerNodeId: <id>,
+ *   layers: [{
+ *     layerNum: 1,
+ *     chainNodeIds: [id1, id2, ...],      // 链上的普通节点 ID（直到遇到嵌套 layer 或链结束）
+ *     subLayerNodeId: <id> | null,         // 链末尾如果是嵌套的并行播放节点，记录其 ID
+ *     subLayerTree: <playbackTree> | null   // 嵌套并行节点的子树（递归）
+ *   }, ...],
+ *   depth: 0                               // 嵌套深度（根=0）
+ * }
+ */
+SMTool._buildPlaybackTree = function (layerNode, depth, ancestorIds) {
+    if (depth === undefined) depth = 0;
+    if (ancestorIds === undefined) ancestorIds = new Set();
+    if (depth >= MAX_PLAYBACK_TREE_DEPTH) {
+        console.warn('[PlaybackTree] 嵌套深度已达上限(' + MAX_PLAYBACK_TREE_DEPTH + ')，停止递归');
+        return null;
+    }
+    // ★ 循环检测：若当前 layer 节点的 ID 已在祖先链中 → 检测到环路，停止
+    if (ancestorIds.has(layerNode.id)) {
+        console.warn('[PlaybackTree] 检测到循环引用: #' + layerNode.id + '，已截断');
+        return null;
+    }
+    ancestorIds.add(layerNode.id);
 
-        // ★ 普通节点：加入链
-        entries.push({ type: 'node', id: currentId });
+    var ld = SMTool._layerData(layerNode);
+    if (!ld || ld.layerCount < 1) return null;
 
-        // 找唯一下游节点
-        var nextId = null;
-        for (var ci3 = 0; ci3 < SMData.connections.length; ci3++) {
-            var c3 = SMData.connections[ci3];
-            if (c3.fromNode === currentId && !visited[c3.toNode]) {
-                nextId = c3.toNode;
+    var tree = {
+        layerNodeId: layerNode.id,
+        layers: [],
+        depth: depth
+    };
+
+    for (var lnum = 1; lnum <= ld.layerCount; lnum++) {
+        // ★ 获取该层的连线目标节点
+        var startNodeId = null;
+        for (var ci = 0; ci < SMData.connections.length; ci++) {
+            var c = SMData.connections[ci];
+            if (c.fromNode !== layerNode.id) continue;
+            var cln = (c._layerNum >= 1 && c._layerNum <= ld.layerCount) ? c._layerNum : 0;
+            if (!cln && typeof c.fromState === 'string' && c.fromState.indexOf('layer_') === 0) {
+                cln = parseInt(c.fromState.replace('layer_', '')) || 0;
+            }
+            if (cln === lnum) {
+                startNodeId = c.toNode;
                 break;
             }
         }
-        if (!nextId) break;
-        currentId = nextId;
-    }
-    return entries;
-};
-
-// ★ 将链条目数组展平为节点 ID 数组（用于向后兼容的 _chainNodeIds）
-SMTool._flattenChainEntries = function (entries) {
-    var ids = [];
-    for (var i = 0; i < entries.length; i++) {
-        var e = entries[i];
-        if (e.type === 'node') {
-            ids.push(e.id);
-        } else if (e.type === 'layerHub') {
-            ids.push(e.nodeId);
-            for (var j = 0; j < e.subChains.length; j++) {
-                var sub = SMTool._flattenChainEntries(e.subChains[j]);
-                for (var k = 0; k < sub.length; k++) ids.push(sub[k]);
-            }
+        // 兜底：从 _layerData 获取
+        if (!startNodeId && ld.layers[lnum] && ld.layers[lnum].animNodeId) {
+            startNodeId = ld.layers[lnum].animNodeId;
         }
-    }
-    return ids;
-};
 
-// ★ 为嵌套并行播放节点构建层枢纽入口（含全部子层骨架链）
-SMTool._buildLayerHubEntry = function (gl, SP, WGL, layerNode, physParam, cw, ch, useVer, pp) {
-    var ld2 = SMTool._layerData(layerNode);
-    // 收集该层节点的所有出边
-    var subLinked = [];
-    for (var ci = 0; ci < SMData.connections.length; ci++) {
-        var c = SMData.connections[ci];
-        if (c.fromNode !== layerNode.id) continue;
-        var lnNum = (c._layerNum >= 1 && c._layerNum <= ld2.layerCount) ? c._layerNum : 0;
-        if (!lnNum && typeof c.fromState === 'string' && c.fromState.indexOf('layer_') === 0) {
-            lnNum = parseInt(c.fromState.replace('layer_', '')) || 0;
-        }
-        if (lnNum >= 1 && lnNum <= ld2.layerCount) {
-            var tn = SMData.nodes.get(c.toNode);
-            if (tn && (tn.nodeType === 'spine' || tn.nodeType === 'delayer' || tn.nodeType === 'layer' || tn.nodeType === 'hider')) {
-                subLinked.push({ layer: lnNum, node: tn });
-            }
-        }
-    }
-    if (subLinked.length === 0) return null;
+        var layerInfo = {
+            layerNum: lnum,
+            chainNodeIds: [],
+            subLayerNodeId: null,
+            subLayerTree: null
+        };
 
-    // 为每个子层构建骨架链
-    var subLayerSkeletons = [];
-    for (var lj = 0; lj < subLinked.length; lj++) {
-        var item = subLinked[lj];
-        var chainIds = SMTool._buildChainFromNode(item.node.id);
-        var chainSkeletons = [];
-        for (var cni = 0; cni < chainIds.length; cni++) {
-            var chainNode = SMData.nodes.get(chainIds[cni]);
-            if (chainNode && chainNode.nodeType === 'spine' && chainNode._srcAtlasText && (chainNode._srcSkelJson || chainNode._srcSkelBinBase64) && (chainNode.textureImg || (chainNode._texImgs && chainNode._texImgs.length > 0))) {
-                var cls = SMTool._loadOneSkeletonToGL(gl, SP, WGL, chainNode, physParam, cw, ch, useVer);
-                if (cls) {
-                    cls._chainNodeId = chainIds[cni];
-                    cls._chainAnimName = chainNode.currentAnim || '';
-                    chainSkeletons.push(cls);
+        if (startNodeId) {
+            // ★ 沿链遍历，直到遇到嵌套 layer 节点或链结束
+            var visited = {};
+            var currentId = startNodeId;
+            var maxSteps = 50;
+            while (currentId && maxSteps-- > 0) {
+                if (visited[currentId]) break;
+                visited[currentId] = true;
+
+                var curNode = SMData.nodes.get(currentId);
+                if (!curNode) break;
+
+                // 检测是否是嵌套的并行播放节点
+                if (curNode.nodeType === 'layer') {
+                    // ★ 链在此暂停，记录嵌套并行节点并构建其子树
+                    layerInfo.subLayerNodeId = curNode.id;
+                    layerInfo.subLayerTree = SMTool._buildPlaybackTree(curNode, depth + 1, ancestorIds);
+                    break;
                 }
-            } else if (chainNode && chainNode.nodeType === 'delayer') {
-                chainSkeletons.push({
-                    _chainNodeId: chainIds[cni],
-                    _isDelayer: true,
-                    _delayValue: chainNode._delayValue || 1.0,
-                    _chainAnimName: '',
-                    skeleton: null, state: null, shader: null, batcher: null,
-                    skeletonRenderer: null, physParam: null, mvp: null,
-                    premultipliedAlpha: false, aspectInfo: null
-                });
-            } else if (chainNode && chainNode.nodeType === 'hider') {
-                chainSkeletons.push({
-                    _chainNodeId: chainIds[cni],
-                    _isHider: true,
-                    _hideValue: chainNode._hideValue !== undefined ? chainNode._hideValue : -1,
-                    _hideDirection: chainNode._hideDirection || 'left',
-                    _chainAnimName: '',
-                    skeleton: null, state: null, shader: null, batcher: null,
-                    skeletonRenderer: null, physParam: null, mvp: null,
-                    premultipliedAlpha: false, aspectInfo: null
-                });
-            } else if (chainNode && chainNode.nodeType === 'layer') {
-                // ★ 递归：嵌套的层节点再建一层枢纽
-                var nestedHub = SMTool._buildLayerHubEntry(gl, SP, WGL, chainNode, physParam, cw, ch, useVer, pp);
-                if (nestedHub) {
-                    nestedHub._chainNodeId = chainIds[cni];
-                    nestedHub._chainAnimName = '';
-                    chainSkeletons.push(nestedHub);
-                }
-            }
-        }
-        if (chainSkeletons.length > 0) {
-            var firstSk2 = chainSkeletons[0];
-            firstSk2.layer = item.layer;
-            firstSk2.nodeId = item.node.id;
-            firstSk2._chainNodeIds = chainIds;
-            firstSk2._chainSkeletons = chainSkeletons;
-            firstSk2._chainIdx = 0;
-            firstSk2._chainDone = false;
-            firstSk2._chainElapsed = 0;
-            firstSk2._loopTrack = { currentLoop: 0, totalElapsed: 0 };
-            if (firstSk2._isDelayer) {
-                firstSk2._delayElapsed = 0;
-                for (var csi = 0; csi < chainSkeletons.length; csi++) {
-                    var pre = chainSkeletons[csi];
-                    if (pre && !pre._isDelayer && !pre._isLayerHub && !pre._isHider && pre.skeleton) {
-                        firstSk2.skeleton = pre.skeleton;
-                        firstSk2.state = pre.state;
-                        firstSk2.shader = pre.shader;
-                        firstSk2.batcher = pre.batcher;
-                        firstSk2.skeletonRenderer = pre.skeletonRenderer;
-                        firstSk2.physParam = pre.physParam;
-                        firstSk2.mvp = pre.mvp;
-                        firstSk2.premultipliedAlpha = pre.premultipliedAlpha || false;
+
+                // 普通节点：加入链
+                layerInfo.chainNodeIds.push(currentId);
+
+                // 查找唯一下游连线
+                var nextId = null;
+                for (var cj = 0; cj < SMData.connections.length; cj++) {
+                    var cc = SMData.connections[cj];
+                    if (cc.fromNode === currentId && !visited[cc.toNode]) {
+                        nextId = cc.toNode;
                         break;
                     }
                 }
+                if (!nextId) break;
+                currentId = nextId;
             }
-            // ★ 设置循环模式
-            for (var cli = 0; cli < chainSkeletons.length; cli++) {
-                if (chainSkeletons[cli].state) {
-                    try {
-                        var ce = chainSkeletons[cli].state.getCurrent(0);
-                        if (ce) {
-                            var srcNode2 = SMData.nodes.get(chainSkeletons[cli]._chainNodeId);
-                            ce.loop = (srcNode2 && srcNode2.loop !== false && srcNode2._loopMode);
-                        }
-                    } catch (e) {}
-                }
-            }
-            subLayerSkeletons.push(firstSk2);
         }
-    }
-    if (subLayerSkeletons.length === 0) return null;
 
-    // ★ 创建层枢纽：含全部子层骨架，同步子层的 mvp / skeleton.position / zoom
-    var zoom = pp._contentZoom || 1.0;
-    for (var lsi = 0; lsi < subLayerSkeletons.length; lsi++) {
-        var lsk = subLayerSkeletons[lsi];
-        for (var csj = 0; csj < (lsk._chainSkeletons || []).length; csj++) {
-            var cs = lsk._chainSkeletons[csj];
-            if (cs && cs.mvp && cs.aspectInfo) {
-                cs.mvp.ortho2d(cw / 2 - cw / (2 * zoom), ch / 2 - ch / (2 * zoom), cw / zoom, ch / zoom);
-            }
-        }
+        // ★ 即使某层无连线，也保留该层（用于显示"未连线"状态）
+        tree.layers.push(layerInfo);
     }
 
-    var hub = {
-        _isLayerHub: true,
-        _layerNodeId: layerNode.id,
-        _subLayers: subLayerSkeletons,
-        // 渲染时使用的引用（从第一个有骨架的子层借用）
-        skeleton: null,
-        state: null,
-        shader: null,
-        batcher: null,
-        skeletonRenderer: null,
-        physParam: physParam,
-        mvp: null,
-        premultipliedAlpha: false,
-        aspectInfo: null
-    };
-    // ★ 从第一个含骨架的子层借用渲染引用
-    for (var li = 0; li < subLayerSkeletons.length; li++) {
-        var sl = subLayerSkeletons[li];
-        if (sl.skeleton) {
-            hub.skeleton = sl.skeleton;
-            hub.state = sl.state;
-            hub.shader = sl.shader;
-            hub.batcher = sl.batcher;
-            hub.skeletonRenderer = sl.skeletonRenderer;
-            hub.mvp = sl.mvp;
-            hub.premultipliedAlpha = sl.premultipliedAlpha || false;
-            hub.aspectInfo = sl.aspectInfo;
-            break;
+    return tree;
+};
+
+/**
+ * 判断播放树是否全部完成（递归检查所有层和所有嵌套子树）
+ * @returns true=全部完成, false=仍有未完成的层或子树
+ */
+SMTool._isPlaybackTreeCompleted = function (tree, nodeStates) {
+    if (!tree || !tree.layers || tree.layers.length === 0) return true;
+
+    for (var li = 0; li < tree.layers.length; li++) {
+        var layer = tree.layers[li];
+        var stateKey = 'L' + layer.layerNum;
+        var ls = (nodeStates && nodeStates[stateKey]) ? nodeStates[stateKey] : null;
+
+        // 该层有嵌套子树
+        if (layer.subLayerNodeId && layer.subLayerTree) {
+            var subState = (nodeStates && nodeStates[stateKey + '_subState']) ? nodeStates[stateKey + '_subState'] : null;
+            // 检查主链是否播完（所有 chainNodeIds 都走完了，chainIdx >= chainNodeIds.length）
+            var chainDone = ls ? (ls.chainIdx >= layer.chainNodeIds.length) : (layer.chainNodeIds.length === 0);
+            if (!chainDone) return false;
+
+            // 检查子树是否全部完成
+            var subCompleted = SMTool._isPlaybackTreeCompleted(layer.subLayerTree, subState);
+            if (!subCompleted) return false;
+        } else {
+            // 无嵌套子树：检查链是否播完
+            var chainDone2 = ls ? (ls.chainIdx >= layer.chainNodeIds.length) : (layer.chainNodeIds.length === 0);
+            if (!chainDone2) return false;
         }
     }
-    return hub;
+    return true;
+};
+
+/**
+ * 在 nodeStates 中初始化一棵播放树的状态（所有 layer 从 0 开始）
+ * @returns {Object} 初始化的 nodeStates
+ */
+SMTool._initPlaybackTreeState = function (tree, existingStates) {
+    var states = existingStates || {};
+    if (!tree || !tree.layers) return states;
+
+    for (var li = 0; li < tree.layers.length; li++) {
+        var layer = tree.layers[li];
+        var stateKey = 'L' + layer.layerNum;
+        states[stateKey] = {
+            chainIdx: 0,
+            chainDone: false,
+            delayElapsed: 0,
+            loopTrack: { currentLoop: 0, totalElapsed: 0 },
+            _subActive: false,  // 是否正在渲染嵌套子树（而非主链）
+            _lastRptChainIdx: 0,
+            _lastRptChainDone: false
+        };
+
+        // 递归初始化嵌套子树状态
+        if (layer.subLayerNodeId && layer.subLayerTree) {
+            var subStateKey = stateKey + '_subState';
+            states[subStateKey] = SMTool._initPlaybackTreeState(layer.subLayerTree, null);
+        }
+    }
+    return states;
 };
 
 /** 为层级节点设置浮窗预览 — 统一加载所有连线节点到预览 GL */
@@ -1075,9 +937,9 @@ SMTool._showLayerPreview = function (layerNode) {
         }
         if (ln >= 1 && ln <= ld.layerCount) {
             var tn = SMData.nodes.get(c.toNode);
-            // ★ 接受 Spine 动画节点、延时器、隐藏器、或嵌套层节点
-            if (tn && (tn.nodeType === 'spine' || tn.nodeType === 'delayer' || tn.nodeType === 'layer' || tn.nodeType === 'hider')) {
-                var hasRes = (tn.nodeType === 'delayer' || tn.nodeType === 'layer' || tn.nodeType === 'hider') || (tn._srcAtlasText && (tn._srcSkelJson || tn._srcSkelBinBase64) && (tn.textureImg || (tn._texImgs && tn._texImgs.length > 0)));
+            // ★ 接受 Spine 动画节点、延时器节点、隐藏器节点 或 嵌套并行播放节点
+            if (tn && (tn.nodeType === 'spine' || tn.nodeType === 'delayer' || tn.nodeType === 'hider' || tn.nodeType === 'layer')) {
+                var hasRes = (tn.nodeType === 'delayer' || tn.nodeType === 'hider' || tn.nodeType === 'layer') || (tn._srcAtlasText && (tn._srcSkelJson || tn._srcSkelBinBase64) && (tn.textureImg || (tn._texImgs && tn._texImgs.length > 0)));
                 if (hasRes) {
                     var dup = false;
                     for (var dj = 0; dj < linkedNodes.length; dj++) {
@@ -1098,8 +960,8 @@ SMTool._showLayerPreview = function (layerNode) {
             }
             if (!dup2) {
                 var ln2 = SMData.nodes.get(info.animNodeId);
-                if (ln2 && (ln2.nodeType === 'spine' || ln2.nodeType === 'delayer' || ln2.nodeType === 'layer' || ln2.nodeType === 'hider')) {
-                    var hasRes2 = (ln2.nodeType === 'delayer' || ln2.nodeType === 'layer' || ln2.nodeType === 'hider') || (ln2._srcAtlasText && (ln2._srcSkelJson || ln2._srcSkelBinBase64) && (ln2.textureImg || (ln2._texImgs && ln2._texImgs.length > 0)));
+                if (ln2 && (ln2.nodeType === 'spine' || ln2.nodeType === 'delayer' || ln2.nodeType === 'hider' || ln2.nodeType === 'layer')) {
+                    var hasRes2 = (ln2.nodeType === 'delayer' || ln2.nodeType === 'hider' || ln2.nodeType === 'layer') || (ln2._srcAtlasText && (ln2._srcSkelJson || ln2._srcSkelBinBase64) && (ln2.textureImg || (ln2._texImgs && ln2._texImgs.length > 0)));
                     if (hasRes2) {
                         linkedNodes.push({ layer: li, node: ln2 });
                     }
@@ -1139,37 +1001,15 @@ SMTool._showLayerPreview = function (layerNode) {
     for (var fni = 0; fni < linkedNodes.length; fni++) {
         if (linkedNodes[fni].node.nodeType === 'spine') { firstNode = linkedNodes[fni].node; break; }
     }
-    // ★ 全延时器兜底：沿每个延时器的出边链找到第一个 Spine 动画节点
+    // ★ 全延时器/隐藏器兜底：沿链找到第一个 Spine 动画节点
     if (!firstNode) {
         for (var fni2 = 0; fni2 < linkedNodes.length; fni2++) {
             var lnk = linkedNodes[fni2];
-            if (lnk.node.nodeType === 'delayer') {
+            if (lnk.node.nodeType === 'delayer' || lnk.node.nodeType === 'hider') {
                 var chainIds = SMTool._buildChainFromNode(lnk.node.id);
                 for (var ci = 0; ci < chainIds.length; ci++) {
                     var cn = SMData.nodes.get(chainIds[ci]);
                     if (cn && cn.nodeType === 'spine') { firstNode = cn; break; }
-                }
-                if (firstNode) break;
-            }
-        }
-    }
-    // ★ 嵌套层节点兜底：沿层节点的第一个子层链找到 Spine 动画节点
-    if (!firstNode) {
-        for (var fni3 = 0; fni3 < linkedNodes.length; fni3++) {
-            var lnk3 = linkedNodes[fni3];
-            if (lnk3.node.nodeType === 'layer') {
-                var ldSub = SMTool._layerData(lnk3.node);
-                // 尝试从连线表找第一个子层目标
-                for (var cs = 0; cs < SMData.connections.length; cs++) {
-                    var csConn = SMData.connections[cs];
-                    if (csConn.fromNode === lnk3.node.id) {
-                        var csChain = SMTool._buildChainFromNode(csConn.toNode);
-                        for (var csi = 0; csi < csChain.length; csi++) {
-                            var ccn = SMData.nodes.get(csChain[csi]);
-                            if (ccn && ccn.nodeType === 'spine') { firstNode = ccn; break; }
-                        }
-                        if (firstNode) break;
-                    }
                 }
                 if (firstNode) break;
             }
@@ -1226,12 +1066,34 @@ SMTool._showLayerPreview = function (layerNode) {
     var physParam = (useVer !== '3.8' && SP.Physics) ? SP.Physics.update : undefined;
     var WGL = useVer === '3.8' ? (window.spine38 && window.spine38.webgl) : null;
 
-    // ★ 统一加载所有层（含动画链，支持嵌套并行播放节点）
+    // ★ 统一加载所有层（含动画链）— 遇到嵌套并行播放节点时，链在此停止并标记子树
+    // ★★ 先构建播放树（检测嵌套 layer 节点）
+    pp._playbackTree = SMTool._buildPlaybackTree(layerNode, 0);
+    pp._layerPlaybackState = {
+        activeTreeNodeId: layerNode.id,
+        treeCompleted: false,
+        nodeStates: pp._playbackTree ? SMTool._initPlaybackTreeState(pp._playbackTree, null) : {},
+        parentStack: []
+    };
+
     var layerSkeletons = [];
     for (var lj = 0; lj < linkedNodes.length; lj++) {
         var item = linkedNodes[lj];
-        // ★ 构建从直接连线节点出发的动画链
-        var chainIds = SMTool._buildChainFromNode(item.node.id);
+        // ★ 构建从直接连线节点出发的动画链（遇到嵌套 layer 节点时停止）
+        var chainIds = [];
+        if (pp._playbackTree) {
+            // ★ 从播放树获取该层的 chainNodeIds
+            for (var tli = 0; tli < pp._playbackTree.layers.length; tli++) {
+                if (pp._playbackTree.layers[tli].layerNum === item.layer) {
+                    chainIds = pp._playbackTree.layers[tli].chainNodeIds.slice();
+                    break;
+                }
+            }
+        }
+        if (chainIds.length === 0) {
+            // 兜底：使用旧逻辑
+            chainIds = SMTool._buildChainFromNode(item.node.id);
+        }
         var chainSkeletons = [];
         for (var cni = 0; cni < chainIds.length; cni++) {
             var chainNode = SMData.nodes.get(chainIds[cni]);
@@ -1271,12 +1133,13 @@ SMTool._showLayerPreview = function (layerNode) {
                     aspectInfo: null
                 });
             }
-            // ★ 隐藏器节点：创建虚拟条目（无骨架，仅含隐藏时长）
+            // ★★ 隐藏器节点：创建虚拟条目（无骨架，仅含隐藏值 + 方向）
             else if (chainNode && chainNode.nodeType === 'hider') {
                 chainSkeletons.push({
                     _chainNodeId: chainIds[cni],
                     _isHider: true,
-                    _hideValue: chainNode._hideValue !== undefined ? chainNode._hideValue : -1,
+                    _hideValue: (chainNode._hideValue !== undefined) ? chainNode._hideValue : -1,
+                    _hideDirection: chainNode._hideDirection || 'left',
                     _chainAnimName: '',
                     skeleton: null,
                     state: null,
@@ -1288,15 +1151,6 @@ SMTool._showLayerPreview = function (layerNode) {
                     premultipliedAlpha: false,
                     aspectInfo: null
                 });
-            }
-            // ★ 嵌套并行播放节点：创建层枢纽入口（含全部子层骨架）
-            else if (chainNode && chainNode.nodeType === 'layer') {
-                var hubEntry = SMTool._buildLayerHubEntry(gl, SP, WGL, chainNode, physParam, cw, ch, useVer, pp);
-                if (hubEntry) {
-                    hubEntry._chainNodeId = chainIds[cni];
-                    hubEntry._chainAnimName = '';
-                    chainSkeletons.push(hubEntry);
-                }
             }
         }
         if (chainSkeletons.length > 0) {
@@ -1315,8 +1169,20 @@ SMTool._showLayerPreview = function (layerNode) {
             firstSk._lastRptChainDone = false;
             // ★ 循环追踪：记录当前循环次数和已流逝时间（动画流/并行播放循环控制）
             firstSk._loopTrack = { currentLoop: 0, totalElapsed: 0 };
-            // ★ 若链首是延时器，从链上第一个 Spine 节点预取渲染器属性
-            if (firstSk._isDelayer) {
+            // ★★ 嵌套并行播放：若链末尾是嵌套的 layer 节点，在此记录引用
+            if (pp._playbackTree) {
+                for (var tli2 = 0; tli2 < pp._playbackTree.layers.length; tli2++) {
+                    if (pp._playbackTree.layers[tli2].layerNum === item.layer) {
+                        if (pp._playbackTree.layers[tli2].subLayerNodeId) {
+                            firstSk._nestedLayerNodeId = pp._playbackTree.layers[tli2].subLayerNodeId;
+                            firstSk._nestedSubTree = pp._playbackTree.layers[tli2].subLayerTree;
+                        }
+                        break;
+                    }
+                }
+            }
+            // ★ 若链首是延时器或隐藏器，从链上第一个 Spine 节点预取渲染器属性
+            if (firstSk._isDelayer || firstSk._isHider) {
                 firstSk._delayElapsed = 0;
                 for (var csi2 = 0; csi2 < chainSkeletons.length; csi2++) {
                     var pre = chainSkeletons[csi2];
@@ -1687,22 +1553,534 @@ SMTool._getLayerAnimNodes = function (layerNode) {
     return nodes;
 };
 
+// ================================================================
+// ★★ 嵌套子树管理（金字塔模型）
+// ================================================================
+
+/**
+ * ★★ 为层骨架条目加载嵌套并行节点的子层骨架（缓存到 ls._nestedLayerSkeletons）
+ * 此函数不修改 pp._layerSkeletons，不打断同层其他骨架的渲染。
+ */
+SMTool._ensureSubtreeSkeletons = function (nestedLayerNodeId, pp) {
+    var cache = pp._subtreeCache || {};
+    if (cache[nestedLayerNodeId] && cache[nestedLayerNodeId].skeletons) {
+        return cache[nestedLayerNodeId];
+    }
+
+    var nestedLayerNode = SMData.nodes.get(nestedLayerNodeId);
+    if (!nestedLayerNode || nestedLayerNode.nodeType !== 'layer') return null;
+
+    var ld = SMTool._layerData(nestedLayerNode);
+    if (!ld) return null;
+
+    var linkedNodes = [];
+    for (var ci = 0; ci < SMData.connections.length; ci++) {
+        var c = SMData.connections[ci];
+        if (c.fromNode !== nestedLayerNodeId) continue;
+        var ln = (c._layerNum >= 1 && c._layerNum <= ld.layerCount) ? c._layerNum : 0;
+        if (!ln && typeof c.fromState === 'string' && c.fromState.indexOf('layer_') === 0) {
+            ln = parseInt(c.fromState.replace('layer_', '')) || 0;
+        }
+        if (ln >= 1 && ln <= ld.layerCount) {
+            var tn = SMData.nodes.get(c.toNode);
+            if (tn && (tn.nodeType === 'spine' || tn.nodeType === 'delayer' || tn.nodeType === 'hider' || tn.nodeType === 'layer')) {
+                linkedNodes.push({ layer: ln, node: tn });
+            }
+        }
+    }
+
+    if (linkedNodes.length === 0) {
+        cache[nestedLayerNodeId] = { skeletons: [], gl: pp.gl };
+        pp._subtreeCache = cache;
+        return cache[nestedLayerNodeId];
+    }
+
+    var gl = pp.gl;
+    var useVer = pp._spineVer || '3.8';
+    var SP = SMTool._getSpineRuntime(useVer);
+    var WGL = useVer === '3.8' ? (window.spine38 && window.spine38.webgl) : null;
+    var physParam = (useVer !== '3.8' && SP.Physics) ? SP.Physics.update : undefined;
+    var cw = pp._canvasWidth || 385;
+    var ch = pp._canvasHeight || 645;
+
+    var subTree = SMTool._buildPlaybackTree(nestedLayerNode, 0, new Set());
+
+    var layerSkeletons = [];
+    for (var lj = 0; lj < linkedNodes.length; lj++) {
+        var item = linkedNodes[lj];
+        var chainIds = [];
+        if (subTree) {
+            for (var tli = 0; tli < subTree.layers.length; tli++) {
+                if (subTree.layers[tli].layerNum === item.layer) {
+                    chainIds = subTree.layers[tli].chainNodeIds.slice();
+                    break;
+                }
+            }
+        }
+        if (chainIds.length === 0) {
+            chainIds = SMTool._buildChainFromNode(item.node.id);
+        }
+
+        var chainSkeletons = [];
+        for (var cni = 0; cni < chainIds.length; cni++) {
+            var chainNode = SMData.nodes.get(chainIds[cni]);
+            if (chainNode && chainNode.nodeType === 'spine' && chainNode._srcAtlasText && (chainNode._srcSkelJson || chainNode._srcSkelBinBase64) && (chainNode.textureImg || (chainNode._texImgs && chainNode._texImgs.length > 0))) {
+                var cls = SMTool._loadOneSkeletonToGL(gl, SP, WGL, chainNode, physParam, cw, ch, useVer);
+                if (cls) {
+                    cls._chainNodeId = chainIds[cni];
+                    cls._chainAnimName = chainNode.currentAnim || '';
+                    chainSkeletons.push(cls);
+                }
+            } else if (chainNode && chainNode.nodeType === 'delayer') {
+                chainSkeletons.push({
+                    _chainNodeId: chainIds[cni], _isDelayer: true,
+                    _delayValue: chainNode._delayValue || 1.0, _chainAnimName: '',
+                    skeleton: null, state: null, shader: null, batcher: null,
+                    skeletonRenderer: null, physParam: null, mvp: null,
+                    premultipliedAlpha: false, aspectInfo: null
+                });
+            }
+            // ★★ 隐藏器节点
+            else if (chainNode && chainNode.nodeType === 'hider') {
+                chainSkeletons.push({
+                    _chainNodeId: chainIds[cni], _isHider: true,
+                    _hideValue: (chainNode._hideValue !== undefined) ? chainNode._hideValue : -1,
+                    _hideDirection: chainNode._hideDirection || 'left',
+                    _chainAnimName: '',
+                    skeleton: null, state: null, shader: null, batcher: null,
+                    skeletonRenderer: null, physParam: null, mvp: null,
+                    premultipliedAlpha: false, aspectInfo: null
+                });
+            }
+        }
+
+        if (chainSkeletons.length > 0) {
+            var firstSk = chainSkeletons[0];
+            firstSk.layer = item.layer;
+            firstSk.nodeId = item.node.id;
+            firstSk._chainNodeIds = chainIds;
+            firstSk._chainSkeletons = chainSkeletons;
+            firstSk._chainIdx = 0;
+            firstSk._chainDone = false;
+            firstSk._chainElapsed = 0;
+            firstSk._delayElapsed = 0;
+            firstSk._lastRptChainIdx = 0;
+            firstSk._lastRptChainDone = false;
+            firstSk._loopTrack = { currentLoop: 0, totalElapsed: 0 };
+
+            if (firstSk._isDelayer || firstSk._isHider) {
+                for (var csi2 = 0; csi2 < chainSkeletons.length; csi2++) {
+                    var pre = chainSkeletons[csi2];
+                    if (pre && !pre._isDelayer && !pre._isHider && pre.skeleton) {
+                        firstSk.skeleton = pre.skeleton; firstSk.state = pre.state;
+                        firstSk.shader = pre.shader; firstSk.batcher = pre.batcher;
+                        firstSk.skeletonRenderer = pre.skeletonRenderer;
+                        firstSk.physParam = pre.physParam; firstSk.mvp = pre.mvp;
+                        firstSk.premultipliedAlpha = pre.premultipliedAlpha || false;
+                        firstSk.aspectInfo = pre.aspectInfo;
+                        break;
+                    }
+                }
+            }
+
+            if (firstSk.mvp && firstSk.aspectInfo) {
+                firstSk.mvp.ortho2d(cw / 2 - cw / (2 * (pp._contentZoom || 1)), ch / 2 - ch / (2 * (pp._contentZoom || 1)), cw / (pp._contentZoom || 1), ch / (pp._contentZoom || 1));
+                if (firstSk.skeleton) {
+                    firstSk._defaultSkX = cw / 2 - firstSk.aspectInfo.centerX;
+                    firstSk._defaultSkY = ch / 2 - firstSk.aspectInfo.centerY;
+                    // ★★ 恢复已保存的位置偏移
+                    var _savedOff = null;
+                    if (nestedLayerNode && nestedLayerNode._layerData && nestedLayerNode._layerData.layers[item.layer]) {
+                        var _lp = nestedLayerNode._layerData.layers[item.layer]._chainPositions;
+                        if (_lp) {
+                            for (var _fci = 0; _fci < chainIds.length; _fci++) {
+                                if (_lp[chainIds[_fci]]) { _savedOff = _lp[chainIds[_fci]]; break; }
+                            }
+                            if (!_savedOff && firstSk._chainNodeId != null) _savedOff = _lp[firstSk._chainNodeId];
+                        }
+                    }
+                    firstSk.skeleton.x = firstSk._defaultSkX + (_savedOff ? (_savedOff.offX || 0) : 0);
+                    firstSk.skeleton.y = firstSk._defaultSkY + (_savedOff ? (_savedOff.offY || 0) : 0);
+                }
+            }
+
+            // ★ 标记嵌套子树引用（递归）
+            if (subTree) {
+                for (var tli2 = 0; tli2 < subTree.layers.length; tli2++) {
+                    if (subTree.layers[tli2].layerNum === item.layer) {
+                        if (subTree.layers[tli2].subLayerNodeId) {
+                            firstSk._nestedLayerNodeId = subTree.layers[tli2].subLayerNodeId;
+                            firstSk._nestedSubTree = subTree.layers[tli2].subLayerTree;
+                        }
+                        break;
+                    }
+                }
+            }
+
+            layerSkeletons.push(firstSk);
+        }
+    }
+
+    layerSkeletons.sort(function (a, b) { return (a.layer || 0) - (b.layer || 0); });
+
+    cache[nestedLayerNodeId] = {
+        skeletons: layerSkeletons,
+        gl: gl,
+        subTree: subTree,
+        nodeStates: subTree ? SMTool._initPlaybackTreeState(subTree, null) : {}
+    };
+    pp._subtreeCache = cache;
+
+    return cache[nestedLayerNodeId];
+};
+
+// ================================================================
+// ★★ 单层链推进辅助函数（提取公共逻辑，供主层和嵌套子层复用）
+// ================================================================
+
+/**
+ * 为一层的链推进动画（更新 dt，判断 shouldAdvance，处理链切换）
+ * @param ls      - 层骨架条目
+ * @param dt      - 帧时间增量
+ * @param frozen  - 是否冻结（true=不更新动画）
+ * @returns { shouldAdvance, curIdx, chainLen, active } 
+ */
+SMTool._advanceLayerChain = function (ls, dt, frozen) {
+    var chainLen = (ls._chainSkeletons && ls._chainSkeletons.length > 0) ? ls._chainSkeletons.length : 0;
+    if (chainLen === 0) return { shouldAdvance: false, curIdx: 0, chainLen: 0, active: null };
+
+    var curIdx = ls._chainIdx || 0;
+    if (curIdx >= chainLen) curIdx = chainLen - 1;
+    var active = ls._chainSkeletons[curIdx];
+    var shouldAdvance = false;
+
+    if (ls._chainDone || frozen) {
+        // 冻结：不更新动画，保留最后一帧
+    } else if (active && active._isDelayer) {
+        if (ls._delayElapsed === undefined) ls._delayElapsed = 0;
+        ls._delayElapsed += dt;
+        if (ls._delayElapsed >= (active._delayValue || 1.0)) {
+            shouldAdvance = true;
+            ls._delayElapsed = 0;
+        }
+    }
+    // ★★ 隐藏器节点：立即推进链，隐藏效果是渲染侧的事（不阻塞链）
+    else if (active && active._isHider) {
+        shouldAdvance = true;
+        ls._pendingHide = active._hideValue;
+        ls._pendingHideDir = active._hideDirection || 'right';
+    } else if (active && active.state) {
+        ls._delayElapsed = 0;
+        var chainSpd = 1.0;
+        var chainSrc = null;
+        if (active._chainNodeId != null) {
+            chainSrc = SMData.nodes.get(active._chainNodeId);
+            if (chainSrc && typeof chainSrc._playbackSpeed === 'number') chainSpd = chainSrc._playbackSpeed;
+        }
+        active.state.update(dt * chainSpd);
+        active.state.apply(active.skeleton);
+        active.skeleton.updateWorldTransform(active.physParam);
+        var entry = active.state.getCurrent(0);
+        if (entry) {
+            var anim = entry.animation || entry._animation;
+            if (anim) {
+                var animDur = anim.duration || 1;
+                var loopMode = (chainSrc && chainSrc.loop !== false) ? (chainSrc._loopMode || null) : null;
+                // ★★ 强制动画内部循环：循环时间/次数模式下，track 必须 loop=true 才能持续播放
+                if (loopMode && !entry.loop) { entry.loop = true; }
+                if (!ls._loopTrack) ls._loopTrack = { currentLoop: 0, totalElapsed: 0 };
+                if (loopMode === 'time') {
+                    ls._loopTrack.totalElapsed += dt * chainSpd;
+                    var loopTime = chainSrc._loopTime;
+                    if (loopTime === undefined || loopTime === null) loopTime = animDur / Math.abs(chainSpd || 1);
+                    if (ls._loopTrack.totalElapsed >= loopTime) shouldAdvance = true;
+                } else if (loopMode === 'count') {
+                    var curLoop = Math.floor(entry.trackTime / animDur);
+                    if (curLoop > ls._loopTrack.currentLoop) ls._loopTrack.currentLoop = curLoop;
+                    var loopCount = (chainSrc._loopCount !== undefined) ? chainSrc._loopCount : 1;
+                    if (loopCount === -1) { shouldAdvance = false; }
+                    else if (curLoop >= loopCount) { shouldAdvance = true; }
+                } else {
+                    if (entry.trackTime >= animDur - 0.001) shouldAdvance = true;
+                }
+            }
+        }
+    }
+
+    return { shouldAdvance: shouldAdvance, curIdx: curIdx, chainLen: chainLen, active: active };
+};
+
+/**
+ * ★★ 渲染单层（含嵌套子层内联渲染）
+ * @returns { activeNodeId, activeProgress, chainDone }
+ */
+SMTool._renderOneLayer = function (ls, dt, frozen, gl, WGL, pp) {
+    var result = { activeNodeId: null, activeProgress: -1, chainDone: ls._chainDone || false };
+
+    // ════════════════════════════════════════════════════════════
+    // ★★ 嵌套子层模式：递归渲染子树的所有层（支持任意深度 A→B→C→...）
+    // ════════════════════════════════════════════════════════════
+    if (ls._nestedSubActive && ls._nestedLayerSkeletons && ls._nestedLayerSkeletons.length > 0) {
+        var allNestedDone = true;
+        var nestedSkeletons = ls._nestedLayerSkeletons;
+        for (var ni = nestedSkeletons.length - 1; ni >= 0; ni--) {
+            var ns = nestedSkeletons[ni];
+            if (ns._hidden) continue;
+
+            // ★★ 递归调用：若 ns 自身也嵌套了更深层，递归处理
+            var nsResult;
+            if (ns._nestedSubActive && ns._nestedLayerSkeletons && ns._nestedLayerSkeletons.length > 0) {
+                // 深层嵌套：递归渲染 ns 的子层
+                nsResult = SMTool._renderOneLayer(ns, dt, frozen, gl, WGL, pp);
+            } else {
+                // 普通子层：正常链推进 + 渲染
+                nsResult = SMTool._renderOneNormalLayer(ns, dt, frozen, gl, WGL, pp);
+            }
+
+            if (!nsResult.chainDone && !ns._chainDone) allNestedDone = false;
+            if (nsResult.activeNodeId != null) result.activeNodeId = nsResult.activeNodeId;
+            if (nsResult.activeProgress >= 0) result.activeProgress = nsResult.activeProgress;
+        }
+
+        // ★ 所有嵌套子层完成 → 父层该链标记完成
+        if (allNestedDone) {
+            ls._nestedSubActive = false;
+            ls._nestedLayerSkeletons = null;
+            ls._chainDone = true;
+            result.chainDone = true;
+            result.activeProgress = 1.0;
+        }
+        return result;
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // 普通模式：单层链渲染（非嵌套，或嵌套的最底层子层）
+    // ════════════════════════════════════════════════════════════
+    return SMTool._renderOneNormalLayer(ls, dt, frozen, gl, WGL, pp);
+};
+
+/**
+ * ★★ 归一化单个 MVP 矩阵到根缩放值
+ */
+SMTool._normalizeMVP = function (mvp, pp) {
+    if (!mvp || !pp) return;
+    var zoom = pp._contentZoom || 1.0;
+    var cw = pp._canvasWidth || 385;
+    var ch = pp._canvasHeight || 645;
+    mvp.ortho2d(cw / 2 - cw / (2 * zoom), ch / 2 - ch / (2 * zoom), cw / zoom, ch / zoom);
+};
+
+/**
+ * ★★ 归一化层的 MVP 矩阵
+ */
+SMTool._normalizeLayerMVP = function (ls, pp) {
+    if (!ls || !ls.mvp || !pp) return;
+    SMTool._normalizeMVP(ls.mvp, pp);
+};
+
+/**
+ * ★★ 渲染一个"普通"层（非嵌套顶层，或嵌套最深层的叶子子层）
+ * 处理：链推进 → 骨架渲染 → 嵌套检测 → 进度计算
+ */
+SMTool._renderOneNormalLayer = function (ls, dt, frozen, gl, WGL, pp) {
+    var result = { activeNodeId: null, activeProgress: -1, chainDone: ls._chainDone || false };
+
+    // ── 无链骨架的简单层 ──
+    if (!ls._chainSkeletons || ls._chainSkeletons.length === 0) {
+        if (ls._hidden) return result;
+        if (!ls.skeleton || !ls.state || !ls.shader || !ls.batcher || !ls.skeletonRenderer) return result;
+        if (!ls._chainDone && !frozen) { ls.state.update(dt); ls.state.apply(ls.skeleton); }
+        ls.skeleton.updateWorldTransform(ls.physParam);
+        // ★★ 归一化 MVP（简单层也需要统一缩放）
+        SMTool._normalizeLayerMVP(ls, pp);
+        gl.clear(gl.STENCIL_BUFFER_BIT);
+        gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+        try { SMTool._renderLayerSkeletonInterleaved(ls, gl, WGL, SMData.nodes.get(ls.nodeId)); } catch (e) {
+            ls.shader.bind(); ls.shader.setUniformi(WGL.Shader.SAMPLER, 0);
+            ls.shader.setUniform4x4f(WGL.Shader.MVP_MATRIX, ls.mvp.values);
+            ls.batcher.begin(ls.shader); ls.skeletonRenderer.premultipliedAlpha = ls.premultipliedAlpha || false;
+            ls.skeletonRenderer.draw(ls.batcher, ls.skeleton); ls.batcher.end(); ls.shader.unbind();
+        }
+        if (!ls._chainDone && ls.nodeId != null) result.activeNodeId = ls.nodeId;
+        return result;
+    }
+
+    // ── 有链骨架：推进链动画 ──
+    var adv = SMTool._advanceLayerChain(ls, dt, frozen);
+    var curIdx = adv.curIdx;
+    var chainLen = adv.chainLen;
+    var active = adv.active;
+
+    // ★ 链推进逻辑
+    if (!ls._chainDone && !frozen && adv.shouldAdvance) {
+        if (curIdx >= chainLen - 1) {
+            // ★★ 链末尾：检查是否有嵌套并行节点
+            if (ls._nestedLayerNodeId && !ls._nestedSubActive) {
+                var subCache = SMTool._ensureSubtreeSkeletons(ls._nestedLayerNodeId, pp);
+                if (subCache && subCache.skeletons.length > 0) {
+                    ls._nestedLayerSkeletons = subCache.skeletons;
+                    ls._nestedSubActive = true;
+                    // 不设 chainDone，链的最后骨架保持渲染，嵌套子层覆盖其上
+                } else {
+                    ls._chainDone = true;
+                    result.chainDone = true;
+                }
+            } else {
+                ls._chainDone = true;
+                result.chainDone = true;
+            }
+        } else {
+            // 推进到链上下一个节点
+            ls._chainIdx = curIdx + 1;
+            ls._delayElapsed = 0;
+            ls._loopTrack = { currentLoop: 0, totalElapsed: 0 };
+            var next = ls._chainSkeletons[ls._chainIdx];
+            if (next && !next._isDelayer && !next._isHider && next.state) {
+                try { next.state.clearTracks(); } catch (e) {}
+                var nextAnim = next._chainAnimName || '';
+                if (nextAnim) {
+                    // ★★ 根据源节点的循环模式决定动画是否内部循环
+                    var nextSrc = (next._chainNodeId != null) ? SMData.nodes.get(next._chainNodeId) : null;
+                    var nextLoop = (nextSrc && nextSrc.loop !== false && nextSrc._loopMode) ? true : false;
+                    next.state.setAnimation(0, nextAnim, nextLoop);
+                    next.state.update(0);
+                    next.state.apply(next.skeleton);
+                    next.skeleton.updateWorldTransform(next.physParam);
+                }
+            }
+            // ★★ 切换后立即归一化新骨架的 MVP 和世界变换，消除抖动
+            if (ls._chainSkeletons && ls._chainIdx < ls._chainSkeletons.length) {
+                var switched = ls._chainSkeletons[ls._chainIdx];
+                if (switched && switched.skeleton && switched.mvp) {
+                    switched.skeleton.updateWorldTransform(switched.physParam);
+                    SMTool._normalizeMVP(switched.mvp, pp);
+                }
+            }
+        }
+    }
+
+    // ★ 同步活跃骨架引用到 ls（排除延时器和隐藏器——它们没有真实骨架）
+    if (!ls._chainDone && active && !active._isDelayer && !active._isHider) {
+        ls.skeleton = active.skeleton;
+        ls.state = active.state;
+        ls.shader = active.shader;
+        ls.batcher = active.batcher;
+        ls.skeletonRenderer = active.skeletonRenderer;
+        ls.physParam = active.physParam;
+        ls.mvp = active.mvp;
+        ls.premultipliedAlpha = active.premultipliedAlpha || false;
+    }
+
+    // ★★ 隐藏器效果：将隐藏参数从链条目转移到层状态
+    if (ls._pendingHide !== undefined) {
+        var ph = ls._pendingHide;
+        ls._pendingHide = undefined;
+        if (ph === -1) {
+            ls._hidePermanent = true;
+            ls._hideRemaining = 0;
+        } else if (ph > 0) {
+            ls._hideRemaining = ph;
+            ls._hidePermanent = false;
+        }
+        // ph === 0 表示不隐藏
+    }
+
+    // ★★ 隐藏计时器递减
+    if (ls._hideRemaining > 0) ls._hideRemaining -= dt;
+    var isHidden = ls._hidePermanent || (ls._hideRemaining > 0);
+
+    // ★ 渲染当前骨架（隐藏时跳过渲染，但动画照常推进）
+    if (!isHidden && ls.skeleton && ls.state && ls.shader && ls.batcher && ls.skeletonRenderer) {
+        if (!ls._chainSkeletons && !ls._chainDone && !frozen) { ls.state.update(dt); ls.state.apply(ls.skeleton); }
+        ls.skeleton.updateWorldTransform(ls.physParam);
+        gl.clear(gl.STENCIL_BUFFER_BIT);
+        gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+        var layerSrcNode = null;
+        var ask = (ls._chainSkeletons && ls._chainSkeletons.length > 0) ? ls._chainSkeletons[ls._chainIdx || 0] : null;
+        if (ask && ask._chainNodeId != null) layerSrcNode = SMData.nodes.get(ask._chainNodeId);
+        if (!layerSrcNode && ls.nodeId != null) layerSrcNode = SMData.nodes.get(ls.nodeId);
+        try {
+            SMTool._renderLayerSkeletonInterleaved(ls, gl, WGL, layerSrcNode);
+        } catch (e) {
+            if (ls.shader && ls.batcher && ls.skeletonRenderer && ls.mvp) {
+                ls.shader.bind(); ls.shader.setUniformi(WGL.Shader.SAMPLER, 0);
+                ls.shader.setUniform4x4f(WGL.Shader.MVP_MATRIX, ls.mvp.values);
+                ls.batcher.begin(ls.shader); ls.skeletonRenderer.premultipliedAlpha = ls.premultipliedAlpha || false;
+                ls.skeletonRenderer.draw(ls.batcher, ls.skeleton);
+                ls.batcher.end(); ls.shader.unbind();
+            }
+        }
+    }
+
+    // ★ 收集活跃节点 ID
+    var activeEntry = (ls._chainSkeletons && ls._chainSkeletons.length > 0) ? ls._chainSkeletons[ls._chainIdx || 0] : ls;
+    var nid = activeEntry._chainNodeId || activeEntry.nodeId;
+    if (nid != null && !ls._chainDone) result.activeNodeId = nid;
+
+    // ★★ 计算播放进度（根据倍速 + 循环模式计算总时长比例）
+    if (nid != null) {
+        if (ls._chainDone) {
+            result.activeProgress = 1.0;
+        } else if (activeEntry._isDelayer) {
+            var delTotal = Math.max((activeEntry._delayValue || 1), 0.001);
+            result.activeProgress = Math.min(1, (ls._delayElapsed || 0) / delTotal);
+        } else if (activeEntry._isHider) {
+            var hvHide = activeEntry._hideValue;
+            if (hvHide === -1 || hvHide === 0) {
+                result.activeProgress = 1.0;
+            } else {
+                result.activeProgress = Math.min(1, (ls._delayElapsed || 0) / Math.max(hvHide, 0.001));
+            }
+        } else if (activeEntry.state) {
+            var te = activeEntry.state.getCurrent(0);
+            if (te) {
+                var anim = te.animation || te._animation || {};
+                var animDur = anim.duration || 1;
+                // 获取源节点信息
+                var srcNode = (activeEntry._chainNodeId != null) ? SMData.nodes.get(activeEntry._chainNodeId) : null;
+                var speed = (srcNode && typeof srcNode._playbackSpeed === 'number' && srcNode._playbackSpeed !== 0) ? Math.abs(srcNode._playbackSpeed) : 1.0;
+                var loopMode = (srcNode && srcNode.loop !== false) ? (srcNode._loopMode || null) : null;
+
+                if (loopMode === 'time') {
+                    // 循环时间模式：totalElapsed / loopTime
+                    var loopTime = srcNode._loopTime;
+                    if (loopTime === undefined || loopTime === null) loopTime = animDur / speed;
+                    var totalElapsed = (ls._loopTrack ? ls._loopTrack.totalElapsed : 0);
+                    result.activeProgress = Math.min(1, totalElapsed / Math.max(loopTime, 0.001));
+                } else if (loopMode === 'count') {
+                    // 循环次数模式：(completedLoops * animDur + trackTime) / (loopCount * animDur)
+                    var loopCount = (srcNode._loopCount !== undefined && srcNode._loopCount !== -1) ? srcNode._loopCount : 1;
+                    var curLoop = ls._loopTrack ? ls._loopTrack.currentLoop : 0;
+                    var trackInLoop = te.trackTime - curLoop * animDur;
+                    if (trackInLoop < 0) trackInLoop = 0;
+                    if (trackInLoop > animDur) trackInLoop = animDur;
+                    var totalProgress = (curLoop * animDur + trackInLoop) / (loopCount * animDur);
+                    result.activeProgress = Math.min(1, Math.max(0, totalProgress));
+                } else {
+                    // 默认单次：trackTime / animDur
+                    result.activeProgress = Math.min(1, te.trackTime / Math.max(animDur, 0.001));
+                }
+            }
+        }
+    }
+
+    return result;
+};
+
 /** ★ 渲染多层骨架到预览画布 — 先清屏(透明)，从底向上逐层绘制 */
 SMTool._renderLayerPreview = function (layerNode, pp, now) {
     var list = pp._layerSkeletons; if (!list || list.length === 0) return;
     var gl = pp.gl, canvas = pp.canvas; if (!gl || !canvas) return;
     var WGL = window.spine38 && window.spine38.webgl; if (!WGL || !WGL.Shader) return;
 
-    // ★ 收集本帧正在播放 + 全部参与的动画节点 ID，及播放进度
     var activeNodeIds = new Set();
     var allChainNodeIds = new Set();
-    var activeNodeProgress = {};  // { nodeId: 0.0~1.0 } 播放进度比例
+    var activeNodeProgress = {};
 
     gl.viewport(0, 0, canvas.width, canvas.height);
     gl.clearColor(0, 0, 0, 0); gl.clearStencil(0);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
 
-    // ★ 启动延迟帧（含重建后安全帧）：清屏不渲染
     if (pp._startupDelayFrames > 0) {
         pp._startupDelayFrames--;
         pp._lastTime = now;
@@ -1711,422 +2089,21 @@ SMTool._renderLayerPreview = function (layerNode, pp, now) {
 
     var dt = Math.min((now - (pp._lastTime || now)) / 1000, 0.1);
     pp._lastTime = now;
+    var frozen = pp._flowFrozen;
 
+    // ★★ 每层独立渲染（含内联嵌套子树），互不干扰
     for (var i = list.length - 1; i >= 0; i--) {
         var ls = list[i];
-        // ★ 跳过隐藏的层
         if (ls._hidden) continue;
-        // ★ 动画链播放：每次只更新链上当前活跃的骨架
-        if (ls._chainSkeletons && ls._chainSkeletons.length > 0) {
-            var chainLen = ls._chainSkeletons.length;
-            var curIdx = ls._chainIdx || 0;
-            var active = ls._chainSkeletons[curIdx];
-            var shouldAdvance = false;
-            // ★ 已完成层冻结：不再更新动画，保持最后一帧画面不动，等待栅栏同步
-            if (ls._chainDone) {
-                // 不更新动画状态，下方仍会渲染 ls.skeleton（最后一帧定格）
-            }
-            // ★ 嵌套并行播放节点（层枢纽）：必须在 Spine 动画分支之前检查！
-            //    因为枢纽条目从子层借用了 state 引用，会误匹配 Spine 动画分支
-            else if (active && active._isLayerHub && !pp._flowFrozen) {
-                ls._delayElapsed = 0;
-                var allSubDone = true;
-                var subLayers = active._subLayers;
-                if (subLayers && subLayers.length > 0) {
-                    for (var sli = 0; sli < subLayers.length; sli++) {
-                        var sl = subLayers[sli];
-                        // 更新子层的动画链（复用现有链逻辑）
-                        if (sl._chainSkeletons && sl._chainSkeletons.length > 0) {
-                            var slChainLen = sl._chainSkeletons.length;
-                            var slCurIdx = sl._chainIdx || 0;
-                            var slActive = sl._chainSkeletons[slCurIdx];
-                            var slShouldAdv = false;
-                            if (sl._chainDone) {
-                                // 子层已完成，不更新
-                            } else if (slActive && slActive._isDelayer) {
-                                if (sl._delayElapsed === undefined) sl._delayElapsed = 0;
-                                sl._delayElapsed += dt;
-                                if (sl._delayElapsed >= (slActive._delayValue || 1.0)) {
-                                    slShouldAdv = true;
-                                    sl._delayElapsed = 0;
-                                }
-                            } else if (slActive && slActive._isLayerHub) {
-                                // ★ 深层嵌套：递归处理（暂简化：标记为完成）
-                                sl._chainDone = true;
-                            } else if (slActive && slActive.state) {
-                                var slSpd = 1.0;
-                                var slSrc = (slActive._chainNodeId != null) ? SMData.nodes.get(slActive._chainNodeId) : null;
-                                if (slSrc && typeof slSrc._playbackSpeed === 'number') slSpd = slSrc._playbackSpeed;
-                                slActive.state.update(dt * slSpd);
-                                slActive.state.apply(slActive.skeleton);
-                                slActive.skeleton.updateWorldTransform(slActive.physParam);
-                                var slEntry = slActive.state.getCurrent(0);
-                                if (slEntry) {
-                                    var slAnim = slEntry.animation || slEntry._animation;
-                                    if (slAnim) {
-                                        var slAnimDur = slAnim.duration || 1;
-                                        var slLoopMode = (slSrc && slSrc.loop !== false) ? (slSrc._loopMode || null) : null;
-                                        if (!sl._loopTrack) sl._loopTrack = { currentLoop: 0, totalElapsed: 0 };
-                                        if (slLoopMode === 'time') {
-                                            sl._loopTrack.totalElapsed += dt * slSpd;
-                                            var slLoopTime = slSrc._loopTime;
-                                            if (slLoopTime === undefined || slLoopTime === null) slLoopTime = slAnimDur / Math.abs(slSpd || 1);
-                                            if (sl._loopTrack.totalElapsed >= slLoopTime) slShouldAdv = true;
-                                        } else if (slLoopMode === 'count') {
-                                            var slCurLoop = Math.floor(slEntry.trackTime / slAnimDur);
-                                            if (slCurLoop > sl._loopTrack.currentLoop) sl._loopTrack.currentLoop = slCurLoop;
-                                            var slLoopCount = (slSrc._loopCount !== undefined) ? slSrc._loopCount : 1;
-                                            if (slLoopCount !== -1 && slCurLoop >= slLoopCount) slShouldAdv = true;
-                                        } else {
-                                            if (slEntry.trackTime >= slAnimDur - 0.001) slShouldAdv = true;
-                                        }
-                                    }
-                                }
-                            }
-                            // 子层链推进
-                            if (slShouldAdv) {
-                                if (slCurIdx >= slChainLen - 1) {
-                                    sl._chainDone = true;
-                                } else {
-                                    sl._chainIdx = slCurIdx + 1;
-                                    sl._delayElapsed = 0;
-                                    sl._loopTrack = { currentLoop: 0, totalElapsed: 0 };
-                                    var slNext = sl._chainSkeletons[sl._chainIdx];
-                                    if (slNext && !slNext._isDelayer && !slNext._isLayerHub && !slNext._isHider && slNext.state) {
-                                        try { slNext.state.clearTracks(); } catch (e) {}
-                                        var slNextAnim = (slNext._chainAnimName || '');
-                                        if (slNextAnim) {
-                                            var slNextSrc = SMData.nodes.get(slNext._chainNodeId);
-                                            var slNextLoop = (slNextSrc && slNextSrc.loop !== false && slNextSrc._loopMode);
-                                            slNext.state.setAnimation(0, slNextAnim, slNextLoop);
-                                            slNext.state.update(0);
-                                            slNext.state.apply(slNext.skeleton);
-                                        }
-                                        slNext.skeleton.updateWorldTransform(slNext.physParam);
-                                    }
-                                }
-                            }
-                            // 同步子层骨架引用
-                            if (slActive && !slActive._isDelayer && !slActive._isLayerHub && !slActive._isHider) {
-                                sl.skeleton = slActive.skeleton;
-                                sl.state = slActive.state;
-                                sl.shader = slActive.shader;
-                                sl.batcher = slActive.batcher;
-                                sl.skeletonRenderer = slActive.skeletonRenderer;
-                                sl.physParam = slActive.physParam;
-                                sl.mvp = slActive.mvp;
-                                sl.premultipliedAlpha = slActive.premultipliedAlpha || false;
-                            }
-                        }
-                        if (!sl._chainDone) allSubDone = false;
-                    }
-                }
-                if (allSubDone) shouldAdvance = true;
-            }
-            // ★ 延时器节点：累积等待时间
-            else if (active && active._isDelayer && !pp._flowFrozen) {
-                if (ls._delayElapsed === undefined) ls._delayElapsed = 0;
-                ls._delayElapsed += dt;
-                // 延时器期间保持上一帧的骨架渲染（ls.skeleton 等沿用上次赋值）
-                if (ls._delayElapsed >= (active._delayValue || 1.0)) {
-                    shouldAdvance = true;
-                    ls._delayElapsed = 0;
-                }
-            }
-            // ★ 隐藏器节点：隐藏画面 + 控制推进时机
-            else if (active && active._isHider && !pp._flowFrozen) {
-                var hideVal = active._hideValue;
-                var hideDir = active._hideDirection || 'left';
-                if (hideDir === 'right') {
-                    // ★ 右隐藏模式：立即推进，将隐藏任务挂到层骨架，下一动画节点激活时生效
-                    if (hideVal === -1) {
-                        ls._hiderPendingRight = { hideValue: -1, elapsed: 0 };
-                    } else if (hideVal > 0) {
-                        ls._hiderPendingRight = { hideValue: hideVal, elapsed: 0 };
-                    } else {
-                        ls._hiderPendingRight = null;  // 0=不隐藏
-                    }
-                    shouldAdvance = true;
-                } else if (hideVal === -1) {
-                    // 永久隐藏：立即推进，隐藏标记保持（由后续 Spine 节点到达时清除）
-                    ls._hiddenByHider = true;
-                    shouldAdvance = true;
-                } else if (hideVal === 0) {
-                    // 不隐藏：立即推进，清除隐藏标记
-                    ls._hiddenByHider = false;
-                    shouldAdvance = true;
-                } else if (hideVal > 0) {
-                    // 定时隐藏：隐藏画面 N 秒后推进
-                    ls._hiddenByHider = true;
-                    if (ls._hideElapsed === undefined) ls._hideElapsed = 0;
-                    ls._hideElapsed += dt;
-                    if (ls._hideElapsed >= hideVal) {
-                        ls._hiddenByHider = false;
-                        ls._hideElapsed = 0;
-                        shouldAdvance = true;
-                    }
-                }
-            }
-            // ★ Spine 动画节点：正常播放（根据循环模式判断推进时机）
-            else if (active && active.state && !pp._flowFrozen) {
-                ls._delayElapsed = 0;
-                // ★ 处理右隐藏挂起任务：若是 pending 则应用隐藏
-                if (ls._hiderPendingRight) {
-                    var pr = ls._hiderPendingRight;
-                    if (pr.hideValue === -1) {
-                        ls._hiddenByHider = true;
-                    } else if (pr.hideValue > 0) {
-                        ls._hiddenByHider = true;
-                        ls._hideElapsed = pr.elapsed || 0;
-                    }
-                    // 不消耗 pending（保留数据供链推进切换时清除）
-                }
-                // ★ 从链骨架对应的源节点读取播放倍速和循环模式
-                var chainSpd = 1.0;
-                var chainSrc = null;
-                if (active._chainNodeId != null) {
-                    chainSrc = SMData.nodes.get(active._chainNodeId);
-                    if (chainSrc && typeof chainSrc._playbackSpeed === 'number') chainSpd = chainSrc._playbackSpeed;
-                }
-                active.state.update(dt * chainSpd);
-                active.state.apply(active.skeleton);
-                active.skeleton.updateWorldTransform(active.physParam);
-                var entry = active.state.getCurrent(0);
-                if (entry) {
-                    var anim = entry.animation || entry._animation;
-                    if (anim) {
-                        var animDur = anim.duration || 1;
-                        var loopMode = (chainSrc && chainSrc.loop !== false) ? (chainSrc._loopMode || null) : null;
-                        if (!ls._loopTrack) ls._loopTrack = { currentLoop: 0, totalElapsed: 0 };
-                        if (loopMode === 'time') {
-                            // 循环时间模式：累计总流逝时间
-                            ls._loopTrack.totalElapsed += dt * chainSpd;
-                            var loopTime = chainSrc._loopTime;
-                            if (loopTime === undefined || loopTime === null) loopTime = animDur / Math.abs(chainSpd || 1);
-                            if (ls._loopTrack.totalElapsed >= loopTime) {
-                                shouldAdvance = true;
-                            }
-                        } else if (loopMode === 'count') {
-                            // 循环次数模式：追踪完成的循环次数
-                            var curLoop = Math.floor(entry.trackTime / animDur);
-                            if (curLoop > ls._loopTrack.currentLoop) {
-                                ls._loopTrack.currentLoop = curLoop;
-                            }
-                            var loopCount = (chainSrc._loopCount !== undefined) ? chainSrc._loopCount : 1;
-                            if (loopCount === -1) {
-                                shouldAdvance = false; // 无限循环，永不推进
-                            } else if (curLoop >= loopCount) {
-                                shouldAdvance = true;
-                            }
-                        } else {
-                            // 默认：动画播完就推进（单次播放）
-                            if (entry.trackTime >= animDur - 0.001) {
-                                shouldAdvance = true;
-                            }
-                        }
-                    }
-                }
-                // ★ 右隐藏定时器：若 pending 的 hideValue > 0，累计时间到后清除隐藏
-                if (ls._hiderPendingRight && ls._hiderPendingRight.hideValue > 0) {
-                    ls._hideElapsed += dt;
-                    if (ls._hideElapsed >= ls._hiderPendingRight.hideValue) {
-                        ls._hiddenByHider = false;
-                        ls._hideElapsed = 0;
-                        ls._hiderPendingRight = null;
-                    }
-                }
-            }
-            // ★ 切换到链上下一个（或停在末尾等待栅栏同步）
-            if (shouldAdvance) {
-                if (curIdx >= chainLen - 1) {
-                    // ★ 已是链上最后一个动画 → 标记此层完成，停在最后一帧不动
-                    ls._chainDone = true;
-                } else {
-                    ls._chainIdx = curIdx + 1;
-                    ls._delayElapsed = 0;
-                    // ★ 重置循环追踪，确保新动画从零开始计数
-                    ls._loopTrack = { currentLoop: 0, totalElapsed: 0 };
-                    var next = ls._chainSkeletons[ls._chainIdx];
-                    // 下一个是 Spine 节点：重置动画（排除延时器和层枢纽）
-                    if (next && !next._isDelayer && !next._isLayerHub && !next._isHider && next.state) {
-                        try { next.state.clearTracks(); } catch (e) {}
-                        var nextAnim = (next._chainAnimName || (next.stateData && next.stateData.skeletonData && next.stateData.skeletonData.animations && next.stateData.skeletonData.animations[0] && next.stateData.skeletonData.animations[0].name) || '');
-                        if (nextAnim) {
-                            // ★ 根据源节点的循环模式决定下一个动画是否循环播放
-                            var nextSrcNode = SMData.nodes.get(next._chainNodeId);
-                            var nextLoop = false;
-                            if (nextSrcNode && nextSrcNode.loop !== false && nextSrcNode._loopMode) {
-                                nextLoop = true;
-                            }
-                            next.state.setAnimation(0, nextAnim, nextLoop);
-                            next.state.update(0);
-                            next.state.apply(next.skeleton);
-                        }
-                        // ★ 立即刷新新骨架的世界变换（否则本帧骨图渲染会读到居中默认位置）
-                        next.skeleton.updateWorldTransform(next.physParam);
-                        // ★ 推进到新动画节点时清除隐藏标记和 pending
-                        ls._hiddenByHider = false;
-                        ls._hideElapsed = 0;
-                        ls._hiderPendingRight = null;
-                    }
-                }
-            }
-            // ★ 将活跃骨架引用同步到 ls 以便下方渲染（延时器/隐藏器节点无骨架，保留上次渲染的骨架）
-            if (active && !active._isDelayer && !active._isHider) {
-                ls.skeleton = active.skeleton;
-                ls.state = active.state;
-                ls.shader = active.shader;
-                ls.batcher = active.batcher;
-                ls.skeletonRenderer = active.skeletonRenderer;
-                ls.physParam = active.physParam;
-                ls.mvp = active.mvp;
-                ls.premultipliedAlpha = active.premultipliedAlpha || false;
-            }
-            // ★ 延时器节点：不更新骨架引用，沿用上一帧的渲染数据（画面定格）
-            // ★ 隐藏器激活时跳过所有渲染（层枢纽也不渲染子层）
-            if (ls._hiddenByHider) continue;
-            // ★ 层枢纽：渲染全部子层骨架（多骨架叠加），不做单骨架渲染
-            if (active && active._isLayerHub && active._subLayers && active._subLayers.length > 0) {
-                for (var slr = 0; slr < active._subLayers.length; slr++) {
-                    var ssl = active._subLayers[slr];
-                    if (!ssl.skeleton || !ssl.state || !ssl.shader || !ssl.batcher || !ssl.skeletonRenderer) continue;
-                    ssl.skeleton.updateWorldTransform(ssl.physParam);
-                    gl.clear(gl.STENCIL_BUFFER_BIT);
-                    gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-                    var hslSrc = (ssl._chainSkeletons && ssl._chainSkeletons.length > 0)
-                        ? (ssl._chainSkeletons[ssl._chainIdx || 0]._chainNodeId != null ? SMData.nodes.get(ssl._chainSkeletons[ssl._chainIdx || 0]._chainNodeId) : null)
-                        : null;
-                    try {
-                        SMTool._renderLayerSkeletonInterleaved(ssl, gl, WGL, hslSrc);
-                    } catch (e2) {
-                        if (ssl.shader && ssl.batcher && ssl.skeletonRenderer && ssl.skeleton && ssl.mvp) {
-                            ssl.shader.bind();
-                            ssl.shader.setUniformi(WGL.Shader.SAMPLER, 0);
-                            ssl.shader.setUniform4x4f(WGL.Shader.MVP_MATRIX, ssl.mvp.values);
-                            ssl.batcher.begin(ssl.shader);
-                            ssl.skeletonRenderer.premultipliedAlpha = ssl.premultipliedAlpha || false;
-                            ssl.skeletonRenderer.draw(ssl.batcher, ssl.skeleton);
-                            ssl.batcher.end();
-                            ssl.shader.unbind();
-                        }
-                    }
-                }
-                // ★ 跳过本层正常的单骨架渲染（已在上面完成子层渲染）
-                continue;
-            }
+
+        var r = SMTool._renderOneLayer(ls, dt, frozen, gl, WGL, pp);
+
+        if (r.activeNodeId != null) activeNodeIds.add(r.activeNodeId);
+        if (r.activeProgress >= 0 && r.activeNodeId != null) {
+            activeNodeProgress[r.activeNodeId] = r.activeProgress;
         }
 
-        if (!ls.skeleton || !ls.state || !ls.shader || !ls.batcher || !ls.skeletonRenderer) {
-            // ★ 延时器直连且链中无动画骨架时，跳过渲染但不影响链时间推进
-            if (ls._chainSkeletons && ls._chainSkeletons.length > 1) {
-                // 链中有后续元素，当前元素缺少渲染资源 → 正常情况，跳过渲染
-            }
-            continue;
-        }
-        // ★ 隐藏器激活时跳过本轮骨架渲染（画面隐藏）
-        if (ls._hiddenByHider) continue;
-        // 动画已在链逻辑中更新，此处不再重复调用 state.update
-        if (!ls._chainSkeletons && !pp._flowFrozen) {
-            ls.state.update(dt);
-            ls.state.apply(ls.skeleton);
-        }
-        ls.skeleton.updateWorldTransform(ls.physParam);
-        // 每层前清 stencil（Spine 裁剪依赖）
-        gl.clear(gl.STENCIL_BUFFER_BIT);
-        gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-
-        // ★ 获取本层骨架对应的源节点（用于读取插槽自定义图片）
-        var layerSrcNode = null;
-        if (ls._chainSkeletons && ls._chainSkeletons.length > 0) {
-            var activeSk = ls._chainSkeletons[ls._chainIdx || 0];
-            if (activeSk && activeSk._chainNodeId != null) layerSrcNode = SMData.nodes.get(activeSk._chainNodeId);
-        }
-        if (!layerSrcNode && ls.nodeId != null) layerSrcNode = SMData.nodes.get(ls.nodeId);
-
-        // ★ 按 drawOrder 精确分段交错渲染（自定义插槽图片嵌入正确层级）
-        try {
-            SMTool._renderLayerSkeletonInterleaved(ls, gl, WGL, layerSrcNode);
-        } catch (e) {
-            // 交错渲染失败 → 回退到正常渲染，保证其他层不受影响
-            console.warn('[LayerPreview] 交错渲染失败，回退正常渲染:', e.message);
-            if (ls.skeleton && ls.skeleton.drawOrder) {
-                // 恢复可能被修改的 drawOrder
-            }
-            if (ls.shader && ls.batcher && ls.skeletonRenderer && ls.skeleton && ls.mvp) {
-                ls.shader.bind();
-                ls.shader.setUniformi(WGL.Shader.SAMPLER, 0);
-                ls.shader.setUniform4x4f(WGL.Shader.MVP_MATRIX, ls.mvp.values);
-                ls.batcher.begin(ls.shader);
-                ls.skeletonRenderer.premultipliedAlpha = ls.premultipliedAlpha || false;
-                ls.skeletonRenderer.draw(ls.batcher, ls.skeleton);
-                ls.batcher.end();
-                ls.shader.unbind();
-            }
-        }
-
-
-        // ★ 收集当前活跃骨架对应的源节点 ID，用于主画布高亮
-        // ★ 注意：_chainDone 的层不应标记为活跃（主画布动画节点应停止在最后一帧）
-        var activeEntry = ls._chainSkeletons ? ls._chainSkeletons[ls._chainIdx || 0] : ls;
-        var nid = activeEntry._chainNodeId || activeEntry.nodeId;
-        if (nid != null && !ls._chainDone) {
-            activeNodeIds.add(nid);
-        }
-        // ★ 若活跃元素是层枢纽，也收集全部子层的活跃节点 ID
-        if (activeEntry && activeEntry._isLayerHub && activeEntry._subLayers) {
-            for (var sln = 0; sln < activeEntry._subLayers.length; sln++) {
-                var subLayer = activeEntry._subLayers[sln];
-                var subActive = subLayer._chainSkeletons ? subLayer._chainSkeletons[subLayer._chainIdx || 0] : subLayer;
-                var subNid = subActive._chainNodeId || subActive.nodeId;
-                if (subNid != null && !subLayer._chainDone) {
-                    activeNodeIds.add(subNid);
-                }
-                // 收集子层链上的全部节点
-                if (subLayer._chainSkeletons) {
-                    for (var scn = 0; scn < subLayer._chainSkeletons.length; scn++) {
-                        var sc = subLayer._chainSkeletons[scn];
-                        if (sc._chainNodeId != null) allChainNodeIds.add(sc._chainNodeId);
-                    }
-                }
-            }
-        }
-        // ★ 计算播放进度比例（延时器用已等待时间/总延迟，动画用 trackTime/duration）
-        if (nid != null) {
-            if (ls._chainDone) {
-                // 已完成层：进度固定为 100%，不再更新动画
-                activeNodeProgress[nid] = 1.0;
-            } else if (activeEntry._isDelayer) {
-                var delProg = (ls._delayElapsed || 0) / Math.max((activeEntry._delayValue || 1), 0.001);
-                activeNodeProgress[nid] = Math.min(1, delProg);
-            } else if (activeEntry.state) {
-                var te = activeEntry.state.getCurrent(0);
-                if (te) {
-                    var animDur = (te.animation || te._animation || {}).duration || 1;
-                    // ★ 根据源节点的循环模式计算总进度比例
-                    var chainSrcProg = (activeEntry._chainNodeId != null) ? SMData.nodes.get(activeEntry._chainNodeId) : null;
-                    var loopModeProg = (chainSrcProg && chainSrcProg.loop !== false) ? (chainSrcProg._loopMode || null) : null;
-                    if (loopModeProg === 'time') {
-                        // 循环时间：总流逝时间 / 设定时间
-                        var totalTime = chainSrcProg._loopTime;
-                        if (!totalTime) totalTime = animDur / Math.abs(chainSrcProg._playbackSpeed || 1);
-                        activeNodeProgress[nid] = Math.min(1, (ls._loopTrack ? ls._loopTrack.totalElapsed : 0) / Math.max(totalTime, 0.001));
-                    } else if (loopModeProg === 'count') {
-                        // 循环次数：(已完成循环数×时长 + 当前循环内时间) / (总循环数×时长)
-                        var totalLoops = (chainSrcProg._loopCount !== undefined && chainSrcProg._loopCount !== -1) ? chainSrcProg._loopCount : 1;
-                        var curLoop = ls._loopTrack ? ls._loopTrack.currentLoop : 0;
-                        var trackInLoop = te.trackTime - curLoop * animDur;
-                        if (trackInLoop < 0) trackInLoop = 0;
-                        if (trackInLoop > animDur) trackInLoop = animDur;
-                        var totalProgress = (curLoop * animDur + trackInLoop) / (totalLoops * animDur);
-                        activeNodeProgress[nid] = Math.min(1, Math.max(0, totalProgress));
-                    } else {
-                        // 默认单次：当前时间 / 单次时长
-                        activeNodeProgress[nid] = Math.min(1, te.trackTime / Math.max(animDur, 0.001));
-                    }
-                }
-            }
-        }
-        // ★ 收集该层所有链骨架的节点 ID（用于非活跃节点置灰）
+        // 收集链上所有节点 ID 用于置灰
         if (ls._chainSkeletons) {
             for (var csi = 0; csi < ls._chainSkeletons.length; csi++) {
                 var cid = ls._chainSkeletons[csi]._chainNodeId;
@@ -2135,12 +2112,14 @@ SMTool._renderLayerPreview = function (layerNode, pp, now) {
         } else if (ls.nodeId != null) {
             allChainNodeIds.add(ls.nodeId);
         }
+        // ★★ 递归收集嵌套子层的活跃节点和进度（支持 A→B→C 任意深度）
+        SMTool._collectNestedActiveNodes(ls, activeNodeIds, activeNodeProgress, allChainNodeIds);
     }
 
-    // ★ 同步主画布节点高亮 + 进度条：活跃节点粉色发光+进度条，非活跃链节点置灰
+    // ★ 同步主画布节点高亮
     SMTool._updateLayerPlayingHighlights(activeNodeIds, allChainNodeIds, activeNodeProgress);
 
-    // ★★★ 实时刷新流面板分支节点高亮（每帧检测 chainIdx 变化） ★★★
+    // ★★★ 实时刷新流面板分支节点高亮
     var anyBranchChanged = false;
     for (var bi2 = 0; bi2 < list.length; bi2++) {
         var lsBi = list[bi2];
@@ -2150,55 +2129,190 @@ SMTool._renderLayerPreview = function (layerNode, pp, now) {
             lsBi._lastRptChainDone = !!lsBi._chainDone;
         }
     }
-    if (anyBranchChanged) {
-        SMTool._refreshFlowBranchHighlights();
-    }
+    if (anyBranchChanged) SMTool._refreshFlowBranchHighlights();
 
-    // ★★★ 栅栏同步：检查所有层是否都已完成 ★★★
+    // ★★★ 栅栏同步：检查所有层是否都已完成
     if (!pp._flowFrozen && list.length > 0) {
         var allDone = true;
         for (var j = 0; j < list.length; j++) {
             if (!list[j]._chainDone) { allDone = false; break; }
         }
         if (allDone) {
-            pp._allLayersCompletedOnce = true;  // ★ 标记：所有分支已完成过至少一轮
+            var treeCompleted = allDone;
+            if (pp._playbackTree) {
+                treeCompleted = SMTool._isPlaybackTreeCompleted(pp._playbackTree, pp._layerPlaybackState ? pp._layerPlaybackState.nodeStates : null);
+            }
+            if (!treeCompleted) return;
 
-            // ★★★ 自动重播：如果动画流正在播放，所有分支完成 → 从流起点重播 ★★★
+            pp._allLayersCompletedOnce = true;
+            if (pp._layerPlaybackState) pp._layerPlaybackState.treeCompleted = true;
+
+            // ★★★ 动画流推进
             var fb = SMData._fullPlayback;
             if (fb && fb.isPlaying && fb.activePathIdx >= 0) {
-                // 检查当前步骤是否为 layer hub（确认是流中的 layer 节点而非手动预览）
                 var fpath = SMData._fullPaths[fb.activePathIdx];
                 if (fpath && fb.currentStep < fpath.nodes.length) {
                     var fsn = fpath.nodes[fb.currentStep];
                     if (fsn && fsn._isLayerHub) {
-                        // ★ 停止层预览，从流起点重新播放
-                        fb.currentStep = 0;
-                        fb.isPlaying = false;
-                        if (fb._timer) { clearTimeout(fb._timer); fb._timer = null; }
-                        SMTool._clearAllProgressBars();
-                        // 重置所有节点到动画第一帧
-                        SMTool._resetAllToAnimFrame1();
-                        // 重新开始播放
-                        SMTool._startFullPlayback();
-                        return;  // ★ 不继续本帧渲染（预览即将重建）
+                        fb.currentStep++;
+                        if (fb.currentStep >= fpath.nodes.length) {
+                            fb.isPlaying = false; fb._stepped = false;
+                            if (fb._timer) { clearTimeout(fb._timer); fb._timer = null; }
+                            SMTool._clearAllProgressBars();
+                            SMTool._freezeAllNodes();
+                            SMTool._updateFullFlowPanel(document.getElementById('flpContent'), document.getElementById('flowPanel'));
+                            SMTool._setFullComponentFocus(SMData.selectedNode);
+                            SMTool._updateSel(); SMTool._updateStateRowColors();
+                        } else {
+                            SMTool._playFullStep();
+                        }
+                        return;
                     }
                 }
             }
 
-            // 未在流播放中 → 保持原有大循环行为（预览内循环）
+            // 未在流播放中 → 大循环
+            // ★★ 先保存所有骨架的当前位置（大循环不能丢失拖拽后的位置）
+            var savedPositions = {};
+            var _savePos = function (entry) {
+                if (!entry) return;
+                var chain = entry._chainSkeletons;
+                if (chain && chain.length > 0) {
+                    for (var sci = 0; sci < chain.length; sci++) {
+                        var csk = chain[sci];
+                        if (csk.skeleton && csk._chainNodeId != null) {
+                            savedPositions[csk._chainNodeId] = { x: csk.skeleton.x, y: csk.skeleton.y };
+                        }
+                    }
+                } else if (entry.skeleton && (entry._chainNodeId != null || entry.nodeId != null)) {
+                    var kid = entry._chainNodeId || entry.nodeId;
+                    savedPositions[kid] = { x: entry.skeleton.x, y: entry.skeleton.y };
+                }
+                if (entry._nestedLayerSkeletons) {
+                    for (var sni = 0; sni < entry._nestedLayerSkeletons.length; sni++) {
+                        _savePos(entry._nestedLayerSkeletons[sni]);
+                    }
+                }
+            };
+            for (var sk = 0; sk < list.length; sk++) { _savePos(list[sk]); }
+
             for (var k = 0; k < list.length; k++) {
                 list[k]._chainDone = false;
                 list[k]._chainIdx = 0;
                 list[k]._delayElapsed = 0;
+                list[k]._nestedSubActive = false;
+                list[k]._nestedLayerSkeletons = null;
+                list[k]._hidePermanent = false;
+                list[k]._hideRemaining = 0;
+                list[k]._pendingHide = undefined;
             }
+
+            // ★★ 恢复保存的位置
+            var _restorePos = function (entry) {
+                if (!entry) return;
+                var chain = entry._chainSkeletons;
+                if (chain && chain.length > 0) {
+                    for (var rci = 0; rci < chain.length; rci++) {
+                        var rcsk = chain[rci];
+                        if (rcsk.skeleton && rcsk._chainNodeId != null) {
+                            var rp = savedPositions[rcsk._chainNodeId];
+                            if (rp) { rcsk.skeleton.x = rp.x; rcsk.skeleton.y = rp.y; }
+                        }
+                    }
+                } else if (entry.skeleton && (entry._chainNodeId != null || entry.nodeId != null)) {
+                    var rkid = entry._chainNodeId || entry.nodeId;
+                    var rp2 = savedPositions[rkid];
+                    if (rp2) { entry.skeleton.x = rp2.x; entry.skeleton.y = rp2.y; }
+                }
+            };
+            for (var rk = 0; rk < list.length; rk++) { _restorePos(list[rk]); }
             pp._startupDelayFrames = 6;
-            pp._needsLayerRebuild = true;
             pp._needsLayerReinit = true;
+            // ★★ 不触发全量重建（_needsLayerRebuild=false），保留骨架位置偏移
             gl.clearColor(0, 0, 0, 0);
             gl.clearStencil(0);
             gl.clear(gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
             gl.flush();
         }
+    }
+};
+
+/**
+ * ★★ 递归收集嵌套子层的活跃节点 ID 和进度（支持 A→B→C→... 任意深度）
+ */
+SMTool._collectNestedActiveNodes = function (ls, activeNodeIds, activeNodeProgress, allChainNodeIds) {
+    if (!ls._nestedSubActive || !ls._nestedLayerSkeletons) return;
+
+    for (var ni = 0; ni < ls._nestedLayerSkeletons.length; ni++) {
+        var ns = ls._nestedLayerSkeletons[ni];
+        if (ns._hidden) continue;
+
+        // 收集链骨架的节点 ID
+        if (ns._chainSkeletons) {
+            for (var ci = 0; ci < ns._chainSkeletons.length; ci++) {
+                var cid = ns._chainSkeletons[ci]._chainNodeId;
+                if (cid != null) allChainNodeIds.add(cid);
+            }
+        }
+        if (ns.nodeId != null) allChainNodeIds.add(ns.nodeId);
+
+        // 活跃节点和进度
+        if (!ns._chainDone) {
+            var activeEntry = (ns._chainSkeletons && ns._chainSkeletons.length > 0)
+                ? ns._chainSkeletons[ns._chainIdx || 0]
+                : ns;
+            var nid = activeEntry._chainNodeId || activeEntry.nodeId;
+            if (nid != null) {
+                activeNodeIds.add(nid);
+                // 计算进度（与 _renderOneNormalLayer 一致）
+                if (activeEntry._isDelayer) {
+                    var delTotal = Math.max((activeEntry._delayValue || 1), 0.001);
+                    activeNodeProgress[nid] = Math.min(1, (ns._delayElapsed || 0) / delTotal);
+                } else if (activeEntry._isHider) {
+                    var hvHide2 = activeEntry._hideValue;
+                    if (hvHide2 === -1 || hvHide2 === 0) {
+                        activeNodeProgress[nid] = 1.0;
+                    } else {
+                        activeNodeProgress[nid] = Math.min(1, (ns._delayElapsed || 0) / Math.max(hvHide2, 0.001));
+                    }
+                } else if (activeEntry.state) {
+                    var te = activeEntry.state.getCurrent(0);
+                    if (te) {
+                        var anim = te.animation || te._animation || {};
+                        var animDur = anim.duration || 1;
+                        var srcNode = (activeEntry._chainNodeId != null) ? SMData.nodes.get(activeEntry._chainNodeId) : null;
+                        var speed = (srcNode && typeof srcNode._playbackSpeed === 'number' && srcNode._playbackSpeed !== 0) ? Math.abs(srcNode._playbackSpeed) : 1.0;
+                        var loopMode = (srcNode && srcNode.loop !== false) ? (srcNode._loopMode || null) : null;
+                        if (loopMode === 'time') {
+                            var loopTime = srcNode._loopTime;
+                            if (loopTime === undefined || loopTime === null) loopTime = animDur / speed;
+                            activeNodeProgress[nid] = Math.min(1, (ns._loopTrack ? ns._loopTrack.totalElapsed : 0) / Math.max(loopTime, 0.001));
+                        } else if (loopMode === 'count') {
+                            var loopCount = (srcNode._loopCount !== undefined && srcNode._loopCount !== -1) ? srcNode._loopCount : 1;
+                            var curLoop = ns._loopTrack ? ns._loopTrack.currentLoop : 0;
+                            var trackInLoop = te.trackTime - curLoop * animDur;
+                            if (trackInLoop < 0) trackInLoop = 0;
+                            activeNodeProgress[nid] = Math.min(1, Math.max(0, (curLoop * animDur + trackInLoop) / (loopCount * animDur)));
+                        } else {
+                            activeNodeProgress[nid] = Math.min(1, te.trackTime / Math.max(animDur, 0.001));
+                        }
+                    }
+                }
+            }
+        } else {
+            // 已完成层：进度 100%
+            var doneEntry = (ns._chainSkeletons && ns._chainSkeletons.length > 0)
+                ? ns._chainSkeletons[ns._chainIdx || 0]
+                : ns;
+            var doneNid = doneEntry._chainNodeId || doneEntry.nodeId;
+            if (doneNid != null) {
+                activeNodeIds.add(doneNid);
+                activeNodeProgress[doneNid] = 1.0;
+            }
+        }
+
+        // ★★ 递归收集更深层嵌套
+        SMTool._collectNestedActiveNodes(ns, activeNodeIds, activeNodeProgress, allChainNodeIds);
     }
 };
 
@@ -2285,6 +2399,28 @@ SMTool._updateLayerPlayingHighlights = function (activeNodeIds, allChainNodeIds,
     SMData._layerAllChainNodes = allChainNodeIds;
 };
 
+/** ★★ 递归更新嵌套子层的 MVP 矩阵（缩放继承） */
+SMTool._updateNestedMVPs = function (skeletons, cw, ch, zoom) {
+    if (!skeletons) return;
+    for (var ri = 0; ri < skeletons.length; ri++) {
+        var rls = skeletons[ri];
+        if (rls._chainSkeletons) {
+            for (var rci = 0; rci < rls._chainSkeletons.length; rci++) {
+                var rsk = rls._chainSkeletons[rci];
+                if (rsk.mvp) {
+                    rsk.mvp.ortho2d(cw / 2 - cw / (2 * zoom), ch / 2 - ch / (2 * zoom), cw / zoom, ch / zoom);
+                }
+            }
+        } else if (rls.mvp) {
+            rls.mvp.ortho2d(cw / 2 - cw / (2 * zoom), ch / 2 - ch / (2 * zoom), cw / zoom, ch / zoom);
+        }
+        // ★★ 递归更新嵌套子层
+        if (rls._nestedSubActive && rls._nestedLayerSkeletons) {
+            SMTool._updateNestedMVPs(rls._nestedLayerSkeletons, cw, ch, zoom);
+        }
+    }
+};
+
 /** 同步层级预览缩放 — 用标准 ortho 公式（与单节点一致）+ 统一 zoom */
 SMTool._syncLayerPreviewViewport = function (pp, newW, newH) {
     if (!pp._layerSkeletons) return;
@@ -2316,6 +2452,8 @@ SMTool._syncLayerPreviewViewport = function (pp, newW, newH) {
                 ls.mvp.ortho2d(cw / 2 - cw / (2 * zoom), ch / 2 - ch / (2 * zoom), cw / zoom, ch / zoom);
             }
         }
+        // ★★ 递归更新所有嵌套子层的 MVP（强制继承根节点缩放值）
+        SMTool._updateNestedMVPs(pp._layerSkeletons, cw, ch, zoom);
         SMTool._updateAnimPreviewZoomLabel(zoom);
         return;
     }
@@ -2370,6 +2508,8 @@ SMTool._syncLayerPreviewViewport = function (pp, newW, newH) {
             }
         }
     }
+    // ★★ 尺寸变化后也递归更新嵌套子层 MVP
+    SMTool._updateNestedMVPs(pp._layerSkeletons, cw, ch, zoom);
     SMTool._updateAnimPreviewZoomLabel(zoom);
 };
 
@@ -2685,35 +2825,61 @@ SMTool._resetLayerPosition = function (idx) {
 SMTool._onLayerPosMouseDown = function (e) {
     var pp = SMData._animPreview;
     if (!pp || pp._layerDragTargetIdx < 0 || !pp._layerSkeletons) return;
+
+    // ★★ 安全校验：索引必须在当前活跃层数组范围内
+    if (pp._layerDragTargetIdx >= pp._layerSkeletons.length) return;
     var ls = pp._layerSkeletons[pp._layerDragTargetIdx];
-    if (!ls || !ls._positionDragActive || !ls.skeleton) return;
+    if (!ls || !ls._positionDragActive) return;
+
+    // ★★ 收集该层所有可见骨架（含嵌套子层，递归），用于整体移位
+    var allSkeletons = [];
+    var _collectAll = function (entry) {
+        if (!entry) return;
+        // 主链骨架
+        var chain = entry._chainSkeletons;
+        if (chain && chain.length > 0) {
+            for (var ci = 0; ci < chain.length; ci++) {
+                if (chain[ci].skeleton) allSkeletons.push(chain[ci].skeleton);
+            }
+        } else if (entry.skeleton) {
+            allSkeletons.push(entry.skeleton);
+        }
+        // 递归收集嵌套子层
+        if (entry._nestedSubActive && entry._nestedLayerSkeletons) {
+            for (var ni = 0; ni < entry._nestedLayerSkeletons.length; ni++) {
+                _collectAll(entry._nestedLayerSkeletons[ni]);
+            }
+        }
+    };
+    _collectAll(ls);
+    if (allSkeletons.length === 0) return;
 
     var canvas = pp.canvas || document.getElementById('appCanvas');
     if (!canvas) return;
     var rect = canvas.getBoundingClientRect();
     if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) return;
 
+    // ★★ 阻止事件冒泡，防止触发画布级操作（退出动画流等）
     e.preventDefault();
+    e.stopPropagation();
     pp._layerDragActive = true;
     pp._layerDragStartX = e.clientX;
     pp._layerDragStartY = e.clientY;
-    // ★ 保存该层所有链骨架的起始位置（直接+间接动画节点一起移动）
     pp._layerDragStartPositions = [];
-    var chain = ls._chainSkeletons || [ls];
-    for (var ci = 0; ci < chain.length; ci++) {
-        if (chain[ci].skeleton) {
-            pp._layerDragStartPositions.push({ sk: chain[ci].skeleton, x: chain[ci].skeleton.x, y: chain[ci].skeleton.y });
-        }
+    for (var si = 0; si < allSkeletons.length; si++) {
+        pp._layerDragStartPositions.push({ sk: allSkeletons[si], x: allSkeletons[si].x, y: allSkeletons[si].y });
     }
 };
 
 // ★ 鼠标移动：拖拽层级位置（该层所有链骨架同步移动）
 SMTool._onLayerPosMouseMove = function (e) {
     var pp = SMData._animPreview;
-    if (!pp || !pp._layerDragActive || pp._layerDragTargetIdx < 0) return;
+    if (!pp || !pp._layerDragActive || pp._layerDragTargetIdx < 0 || !pp._layerSkeletons) return;
+    if (pp._layerDragTargetIdx >= pp._layerSkeletons.length) return;
     var ls = pp._layerSkeletons[pp._layerDragTargetIdx];
     if (!ls) return;
 
+    e.stopPropagation();
     var zoom = pp._contentZoom || 1.0;
     var dx = (e.clientX - pp._layerDragStartX) / zoom;
     var dy = (e.clientY - pp._layerDragStartY) / zoom;
@@ -2727,11 +2893,52 @@ SMTool._onLayerPosMouseMove = function (e) {
     }
 };
 
-// ★ 鼠标释放：结束拖拽
+// ★ 鼠标释放：结束拖拽并自动保存位置
 SMTool._onLayerPosMouseUp = function () {
     var pp = SMData._animPreview;
     if (!pp) return;
+    if (!pp._layerDragActive) { pp._layerDragActive = false; return; }
     pp._layerDragActive = false;
+
+    // ★★ 自动保存拖拽后的位置到 _layerData（递归处理嵌套层）
+    var idx = pp._layerDragTargetIdx;
+    if (idx >= 0 && pp._layerSkeletons && idx < pp._layerSkeletons.length) {
+        var ls = pp._layerSkeletons[idx];
+        if (ls && ls.layer) {
+            var layerNode = SMData.nodes.get(pp.nodeId);
+            if (layerNode && layerNode._layerData) {
+                var ld = layerNode._layerData;
+                if (!ld.layers[ls.layer]) ld.layers[ls.layer] = {};
+                ld.layers[ls.layer]._chainPositions = {};
+                // 递归保存所有骨架偏移
+                var _savePositions = function (entry, positionsMap) {
+                    if (!entry) return;
+                    var chain = entry._chainSkeletons;
+                    if (chain && chain.length > 0) {
+                        for (var ci = 0; ci < chain.length; ci++) {
+                            var csk = chain[ci];
+                            if (csk.skeleton && csk._chainNodeId != null) {
+                                var defX = csk._defaultSkX !== undefined ? csk._defaultSkX : csk.skeleton.x;
+                                var defY = csk._defaultSkY !== undefined ? csk._defaultSkY : csk.skeleton.y;
+                                positionsMap[csk._chainNodeId] = { offX: csk.skeleton.x - defX, offY: csk.skeleton.y - defY };
+                            }
+                        }
+                    } else if (entry.skeleton && entry._chainNodeId != null) {
+                        var defX2 = entry._defaultSkX !== undefined ? entry._defaultSkX : entry.skeleton.x;
+                        var defY2 = entry._defaultSkY !== undefined ? entry._defaultSkY : entry.skeleton.y;
+                        positionsMap[entry._chainNodeId] = { offX: entry.skeleton.x - defX2, offY: entry.skeleton.y - defY2 };
+                    }
+                    // 递归嵌套子层
+                    if (entry._nestedSubActive && entry._nestedLayerSkeletons) {
+                        for (var ni = 0; ni < entry._nestedLayerSkeletons.length; ni++) {
+                            _savePositions(entry._nestedLayerSkeletons[ni], positionsMap);
+                        }
+                    }
+                };
+                _savePositions(ls, ld.layers[ls.layer]._chainPositions);
+            }
+        }
+    }
 };
 
 // ★ 清除所有层级高亮、置灰遮罩和进度条（关闭预览时调用）
@@ -2752,6 +2959,19 @@ SMTool._clearAllLayerHighlights = function () {
     });
     SMData._layerPlayingNodes = null;
     SMData._layerAllChainNodes = null;
+    // ★★ 清理嵌套播放树状态
+    var pp = SMData._animPreview;
+    if (pp) {
+        pp._playbackTree = null;
+        pp._layerPlaybackState = null;
+        pp._subtreeCache = {};
+        if (pp._layerSkeletons) {
+            for (var si = 0; si < pp._layerSkeletons.length; si++) {
+                pp._layerSkeletons[si]._nestedSubActive = false;
+                pp._layerSkeletons[si]._nestedSwitchPending = false;
+            }
+        }
+    }
 };
 
 console.log('[LayerNode] 层级节点模块已加载');

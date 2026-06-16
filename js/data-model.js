@@ -147,7 +147,23 @@ var SMData = {
         _boundsOffset: null,  // {x, y} 骨架包围盒偏移
         _boundsSize: null,    // {x, y} 骨架包围盒尺寸
         _physParam: null,     // 物理参数
-        _lastTime: 0          // 上一帧时间
+        _lastTime: 0,         // 上一帧时间
+
+        // ★★ 嵌套并行播放状态（金字塔模型）
+        // activeTreeNodeId: 当前在浮窗面板中渲染的树节点 ID
+        // treeCompleted: 整棵播放树是否已全部完成
+        // nodeStates: { [treeNodeId]: { chainIdx, chainDone, delayElapsed, loopTrack } }
+        // parentStack: [{ treeNodeId, layerIdx, chainIdx }] 状态栈，子节点完成后恢复
+        _layerPlaybackState: {
+            activeTreeNodeId: null,
+            treeCompleted: false,
+            nodeStates: {},
+            parentStack: []
+        },
+
+        // ★★ 嵌套子树骨架缓存 { [nestedLayerNodeId]: { skeletons: [...], gl, glResources } }
+        _subtreeCache: {}
+
     },
 
     // ★ 每个动画文件的预览缩放值 { sourceFile: zoomNumber }
@@ -159,6 +175,11 @@ var SMData = {
 
     // ★ 组内编辑模式（双击组进入，存储正在编辑的组 ID，null=未进入）
     _groupEditMode: null,
+
+    // ★★ 嵌套并行播放树（金字塔模型）
+    // _playbackTree: { rootId, nodes: { [treeNodeId]: { id, type, layerSrcNodeId, children, parentId, completed, active } } }
+    // 类型：'chainLeaf'=链上的普通节点, 'layerSubtree'=链上的子并行播放节点
+    _playbackTree: null,
 
     // ★ 2D Canvas 缓存状态（避免每帧无效重绘）
     _lastViewZoom: 0,

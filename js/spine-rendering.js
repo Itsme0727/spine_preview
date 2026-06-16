@@ -1302,6 +1302,10 @@ SMTool._destroyAnimPreview = function () {
         pp._layerSkeletons = null;
     }
     pp._layerPreview = false;
+    // ★★ 清理嵌套播放树缓存
+    pp._subtreeCache = {};
+    pp._playbackTree = null;
+    pp._layerPlaybackState = null;
 
     // ★ 直接销毁预览专属纹理（独立 GL 上下文，不在共享缓存中）
     if (pp._glTextures) {
@@ -2864,16 +2868,14 @@ SMTool._renderLayerPreviewBoneImages = function (pp) {
         } catch (e) {}
     }
 
-    // ★ 遍历所有层，只渲染当前活跃链骨架的挂点图片（不是全部链骨架）
-    for (var li = 0; li < list.length; li++) {
-        var ls = list[li];
-        // 获取当前活跃的链骨架（_chainIdx 指向正在播放的那个）
-        var activeIdx = (ls._chainSkeletons && ls._chainSkeletons.length > 0) ? (ls._chainIdx || 0) : -1;
-        var skeletons = (activeIdx >= 0 && ls._chainSkeletons) ? [ls._chainSkeletons[activeIdx]] : (!ls._chainSkeletons ? [ls] : []);
+    // ★★ 递归渲染函数：处理一层（含嵌套子层）的所有骨架挂点图片
+    var _renderSkeletonBoneImages = function (layerEntry) {
+        // 获取当前活跃的链骨架
+        var activeIdx = (layerEntry._chainSkeletons && layerEntry._chainSkeletons.length > 0) ? (layerEntry._chainIdx || 0) : -1;
+        var skeletons = (activeIdx >= 0 && layerEntry._chainSkeletons) ? [layerEntry._chainSkeletons[activeIdx]] : (!layerEntry._chainSkeletons ? [layerEntry] : []);
         for (var ski = 0; ski < skeletons.length; ski++) {
             var skEntry = skeletons[ski];
             if (!skEntry || !skEntry.skeleton) continue;
-            // ★ 确保骨骼世界变换是最新的（防御链切换/屏障同步后位置已更新但 transform 未刷新的时序问题）
             skEntry.skeleton.updateWorldTransform(skEntry.physParam);
             var srcNode = SMData.nodes.get(skEntry._chainNodeId || skEntry.nodeId);
             if (!srcNode || !srcNode._boneScreenshots) continue;
@@ -2932,6 +2934,18 @@ SMTool._renderLayerPreviewBoneImages = function (pp) {
                 }
             }
         }
+
+        // ★★ 递归渲染嵌套子层的挂点图片（支持 A→B→C 任意深度）
+        if (layerEntry._nestedSubActive && layerEntry._nestedLayerSkeletons) {
+            for (var ni = 0; ni < layerEntry._nestedLayerSkeletons.length; ni++) {
+                _renderSkeletonBoneImages(layerEntry._nestedLayerSkeletons[ni]);
+            }
+        }
+    };
+
+    // ★ 遍历所有根层，递归渲染挂点图片
+    for (var li = 0; li < list.length; li++) {
+        _renderSkeletonBoneImages(list[li]);
     }
 
     SMTool._restoreGL(gl, saved);

@@ -990,7 +990,10 @@ SMTool._serializeData = function () {
             // ★ 层级节点数据（并行播放层数及每层连线信息）
             _layerData: n._layerData ? JSON.parse(JSON.stringify(n._layerData)) : null,
             // ★ 延时器节点数据
-            _delayValue: n._delayValue
+            _delayValue: n._delayValue,
+            // ★ 隐藏器节点数据
+            _hideValue: n._hideValue,
+            _hideDirection: n._hideDirection
         });
         result = nodesIter.next();
     }
@@ -1938,6 +1941,9 @@ SMTool._processImportJson = function (jsonText, fileHandle) {
             else if (nd.nodeType === 'layer') node._layerData = { layerCount: 2, layers: {} };
             // ★ 延时器节点数据
             node._delayValue = (nd._delayValue !== undefined ? nd._delayValue : 1.0);
+            // ★ 隐藏器节点数据
+            node._hideValue = (nd._hideValue !== undefined ? nd._hideValue : -1);
+            node._hideDirection = nd._hideDirection || 'left';
 
             SMData.nodes.set(nd.id, node);
             SMData.nextId = Math.max(SMData.nextId, nd.id + 1);

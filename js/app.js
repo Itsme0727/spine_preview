@@ -1458,19 +1458,6 @@ SMTool.init = function () {
         SMTool._updateSB();
     };
 
-    SMTool.ctxAddDelayer = function () {
-        var wp = SMTool.canvasToWorld(window.innerWidth / 2, window.innerHeight / 2);
-        SMTool.addDelayerNodeAt(wp.x, wp.y);
-        document.getElementById('ctxMenu').style.display = 'none';
-    };
-
-    // ★ 隐藏器节点
-    SMTool.addHiderNode = function () {
-        SMTool.addHiderNodeAt(
-            Math.random() * 200 - 100 + window.innerWidth / 2,
-            Math.random() * 200 - 100 + window.innerHeight / 2
-        );
-    };
     SMTool.addHiderNodeAt = function (wx, wy) {
         SMTool.pushUndo();
         var id = SMData.nextId++;
@@ -1490,9 +1477,10 @@ SMTool.init = function () {
         SMTool._updateSel();
         SMTool._updateSB();
     };
-    SMTool.ctxAddHider = function () {
+
+    SMTool.ctxAddDelayer = function () {
         var wp = SMTool.canvasToWorld(window.innerWidth / 2, window.innerHeight / 2);
-        SMTool.addHiderNodeAt(wp.x, wp.y);
+        SMTool.addDelayerNodeAt(wp.x, wp.y);
         document.getElementById('ctxMenu').style.display = 'none';
     };
 
