@@ -182,6 +182,41 @@ SMTool._createEl = function (node) {
                 '<div class="conn-dot output" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'delayer\',\'output\')" title="连线输出"></div>' +
             '</div>' +
             '<span class="scale-handle" onmousedown="event.stopPropagation();SMTool._onScaleStart(event,' + node.id + ')" title="拖拽缩放"><i class="scale-handle-icon"></i></span>';
+    } else if (node.nodeType === 'hider') {
+        el.classList.add('delayer-node', 'hider-node');
+        if (node._hideValue === undefined) node._hideValue = -1;
+        if (node._hideDirection === undefined) node._hideDirection = 'left';
+        var hideVal = node._hideValue;
+        var hideDir = node._hideDirection;
+        var dirLeftActive = (hideDir === 'left') ? ' active' : '';
+        var dirRightActive = (hideDir === 'right') ? ' active' : '';
+        el.innerHTML =
+            '<div class="header delayer-header" onmousedown="event.stopPropagation();SMTool._onHD(event,' + node.id + ')">' +
+                '<span class="delayer-title">🙈 隐藏器</span>' +
+                '<div class="btns">' +
+                    '<button onclick="event.stopPropagation();SMTool.deleteNode(' + node.id + ')" title="删除节点">✕</button>' +
+                '</div>' +
+            '</div>' +
+            '<div class="delayer-body">' +
+                '<div class="delayer-set-row">' +
+                    '<button class="delayer-step-btn" onclick="event.stopPropagation();SMTool._hiderStep(' + node.id + ',-0.1)">◀</button>' +
+                    '<input type="number" class="delayer-input" value="' + hideVal + '" step="1" ' +
+                        'onchange="event.stopPropagation();SMTool._hiderSet(' + node.id + ',parseInt(this.value)|| -1)" ' +
+                        'onclick="event.stopPropagation()" onkeydown="event.stopPropagation()">' +
+                    '<button class="delayer-step-btn" onclick="event.stopPropagation();SMTool._hiderStep(' + node.id + ',0.1)">▶</button>' +
+                    '<span class="delayer-unit">秒</span>' +
+                '</div>' +
+                '<div class="hider-mode-capsule" style="display:inline-flex;background:var(--node-bg);border-radius:14px;padding:2px;margin-top:4px;border:1px solid var(--border)">' +
+                    '<button class="hider-mode-btn' + dirLeftActive + '" data-dir="left" onclick="event.stopPropagation();SMTool._hiderSetDirection(' + node.id + ',\'left\')" style="border:none;background:' + (hideDir === 'left' ? 'var(--accent)' : 'transparent') + ';color:' + (hideDir === 'left' ? '#fff' : 'var(--text2)') + ';padding:3px 10px;border-radius:12px;cursor:pointer;font-size:11px;transition:all 0.2s">← 左隐藏</button>' +
+                    '<button class="hider-mode-btn' + dirRightActive + '" data-dir="right" onclick="event.stopPropagation();SMTool._hiderSetDirection(' + node.id + ',\'right\')" style="border:none;background:' + (hideDir === 'right' ? 'var(--accent)' : 'transparent') + ';color:' + (hideDir === 'right' ? '#fff' : 'var(--text2)') + ';padding:3px 10px;border-radius:12px;cursor:pointer;font-size:11px;transition:all 0.2s">→ 右隐藏</button>' +
+                '</div>' +
+                '<div class="hider-hint" style="color:var(--text2);font-size:11px;padding:4px 8px">-1=永久隐藏 0=不隐藏 N=隐藏N秒</div>' +
+            '</div>' +
+            '<div class="anim-bar" style="display:flex;justify-content:space-between">' +
+                '<div class="conn-dot input" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'hider\',\'input\')" title="连线输入"></div>' +
+                '<div class="conn-dot output" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'hider\',\'output\')" title="连线输出"></div>' +
+            '</div>' +
+            '<span class="scale-handle" onmousedown="event.stopPropagation();SMTool._onScaleStart(event,' + node.id + ')" title="拖拽缩放"><i class="scale-handle-icon"></i></span>';
     } else {
     el.innerHTML =
         SMTool._buildNodeIndicatorsHtml(node) +
@@ -658,6 +693,41 @@ SMTool._delayerSet = function (nid, val) {
         var inp = el.querySelector('.delayer-input');
         if (inp) inp.value = node._delayValue;
     }
+};
+
+// ★ 隐藏器数值控制
+SMTool._hiderStep = function (nid, delta) {
+    var node = SMData.nodes.get(nid);
+    if (!node || node.nodeType !== 'hider') return;
+    var val = (node._hideValue !== undefined ? node._hideValue : -1) + delta;
+    if (delta > 0) val = Math.ceil(val);
+    else val = Math.floor(val);
+    if (val < -1) val = -1;
+    node._hideValue = val;
+    var el = SMTool._getEl(nid);
+    if (el) {
+        var inp = el.querySelector('.delayer-input');
+        if (inp) inp.value = node._hideValue;
+    }
+};
+SMTool._hiderSet = function (nid, val) {
+    var node = SMData.nodes.get(nid);
+    if (!node || node.nodeType !== 'hider') return;
+    if (isNaN(val)) val = -1;
+    if (val < -1) val = -1;
+    node._hideValue = val;
+    var el = SMTool._getEl(nid);
+    if (el) {
+        var inp = el.querySelector('.delayer-input');
+        if (inp) inp.value = node._hideValue;
+    }
+};
+SMTool._hiderSetDirection = function (nid, dir) {
+    var node = SMData.nodes.get(nid);
+    if (!node || node.nodeType !== 'hider') return;
+    node._hideDirection = dir;
+    SMTool._createEl(node);  // 重建 DOM 刷新按钮状态
+    SMTool._updatePos(node);
 };
 
 // ---- 循环/单次切换 ----
@@ -4348,7 +4418,6 @@ SMTool._updateFullFlowPanel = function (content, panel) {
             var br = hubNode._branches[bi];
             var isFirst = (bi === 0);
             var isLast = (bi === totalBranches - 1);
-            // ★ 修正分支符号：首层 ┏（┗ 上翻），中层 ┣，末层 ┗，单层 ━
             var bullet;
             if (totalBranches === 1) {
                 bullet = '━';
@@ -4362,7 +4431,6 @@ SMTool._updateFullFlowPanel = function (content, panel) {
             h += '<div class="flp-layer-branch-row">';
             h += '<span class="flp-layer-branch-bullet">' + bullet + '</span>';
             h += '<span class="flp-layer-branch-label">L' + br.layer + '</span>';
-            // ★ 显示关联动画节点的文件名（优先使用解析后的动画节点）
             var brNodeName = '';
             var lookupId = br._resolvedAnimNodeId || (br.nodes.length > 0 ? br.nodes[0].id : null);
             if (lookupId) {
@@ -4382,20 +4450,43 @@ SMTool._updateFullFlowPanel = function (content, panel) {
                 var lsInfo = layerStates[br.layer];
                 for (var bni = 0; bni < br.nodes.length; bni++) {
                     var bn = br.nodes[bni];
-                    var bState = ' branch-state';
-                    if (isActivePath && stepIdx === pb.currentStep) {
-                        if (lsInfo) {
-                            if (lsInfo.chainDone || bni < lsInfo.chainIdx) bState += ' played';
-                            else if (bni === lsInfo.chainIdx) bState += ' current';
-                            else bState += ' upcoming';
+                    // ★ 检查是否为嵌套并行播放节点
+                    var bnNode = SMData.nodes.get(bn.id);
+                    var isNestedLayer = bnNode && bnNode.nodeType === 'layer';
+                    if (isNestedLayer) {
+                        // ★ 嵌套层节点：递归渲染子分支
+                        var nestedBranches = _getNestedLayerBranchesForDisplay(bn.id);
+                        if (nestedBranches && nestedBranches.length > 0) {
+                            // ★ 判断嵌套层是否当前活跃：预览面板显示该层节点时才用活跃高亮
+                            var isNestedActive = SMData._animPreview && SMData._animPreview.visible
+                                && SMData._animPreview.nodeId === bn.id;
+                            var nestedHub = { _branches: nestedBranches };
+                            h += '<span class="flp-full-state layer-hub-state" style="font-size:12px">📚 ' + SMTool._esc(_disp(bn.anim)) + '</span>';
+                            // ★ 递归渲染：若嵌套层活跃则正常高亮，否则子分支节点统归 upcoming
+                            if (isNestedActive) {
+                                h += _renderLayerBranchesInline(nestedHub, isActivePath, stepIdx);
+                            } else {
+                                h += _renderLayerBranchesInlineUpcoming(nestedHub);
+                            }
                         } else {
-                            if (bni === 0) bState += ' current';
-                            else bState += ' upcoming';
+                            h += '<span class="flp-full-state branch-state upcoming">📚 ' + SMTool._esc(_disp(bn.anim)) + ' (无连线)</span>';
                         }
-                    } else if (isActivePath && stepIdx < pb.currentStep) {
-                        bState += ' played';
+                    } else {
+                        var bState = ' branch-state';
+                        if (isActivePath && stepIdx === pb.currentStep) {
+                            if (lsInfo) {
+                                if (lsInfo.chainDone || bni < lsInfo.chainIdx) bState += ' played';
+                                else if (bni === lsInfo.chainIdx) bState += ' current';
+                                else bState += ' upcoming';
+                            } else {
+                                if (bni === 0) bState += ' current';
+                                else bState += ' upcoming';
+                            }
+                        } else if (isActivePath && stepIdx < pb.currentStep) {
+                            bState += ' played';
+                        }
+                        h += '<span class="flp-full-state' + bState + '" data-br-layer="' + br.layer + '" data-br-idx="' + bni + '">' + SMTool._esc(_disp(bn.anim)) + '</span>';
                     }
-                    h += '<span class="flp-full-state' + bState + '" data-br-layer="' + br.layer + '" data-br-idx="' + bni + '">' + SMTool._esc(_disp(bn.anim)) + '</span>';
                     if (bni < br.nodes.length - 1) {
                         h += '<span class="flp-full-arrow" style="font-size:13px;margin:0 2px;opacity:0.6;">→</span>';
                     }
@@ -4405,6 +4496,138 @@ SMTool._updateFullFlowPanel = function (content, panel) {
         }
         h += '</div>';
         return h;
+    }
+
+    // ★ 辅助：渲染层枢纽子分支（全部标记为 upcoming，用于未激活的嵌套层节点）
+    function _renderLayerBranchesInlineUpcoming(hubNode) {
+        var h = '';
+        if (!hubNode._branches || hubNode._branches.length === 0) return h;
+        h += '<div class="flp-layer-branches-inline">';
+        var totalBranches = hubNode._branches.length;
+        for (var bi = 0; bi < totalBranches; bi++) {
+            var br = hubNode._branches[bi];
+            var bullet;
+            if (totalBranches === 1) { bullet = '━'; }
+            else if (bi === 0) { bullet = '┏'; }
+            else if (bi === totalBranches - 1) { bullet = '┗'; }
+            else { bullet = '┣'; }
+            h += '<div class="flp-layer-branch-row">';
+            h += '<span class="flp-layer-branch-bullet">' + bullet + '</span>';
+            h += '<span class="flp-layer-branch-label">L' + br.layer + '</span>';
+            if (br._cycleClose) {
+                h += '<span class="flp-full-state branch-state cycle-close">↩ 闭环</span>';
+            } else if (br.nodes.length === 0) {
+                h += '<span class="flp-full-state branch-state" style="opacity:0.5">（空）</span>';
+            } else {
+                for (var bni = 0; bni < br.nodes.length; bni++) {
+                    var bn = br.nodes[bni];
+                    var bnNode2 = SMData.nodes.get(bn.id);
+                    var isNested2 = bnNode2 && bnNode2.nodeType === 'layer';
+                    if (isNested2) {
+                        var nestedBr2 = _getNestedLayerBranchesForDisplay(bn.id);
+                        if (nestedBr2 && nestedBr2.length > 0) {
+                            h += '<span class="flp-full-state layer-hub-state" style="font-size:12px">📚 ' + SMTool._esc(_disp(bn.anim)) + '</span>';
+                            h += _renderLayerBranchesInlineUpcoming({ _branches: nestedBr2 });
+                        } else {
+                            h += '<span class="flp-full-state branch-state upcoming">📚 ' + SMTool._esc(_disp(bn.anim)) + '</span>';
+                        }
+                    } else {
+                        h += '<span class="flp-full-state branch-state upcoming">' + SMTool._esc(_disp(bn.anim)) + '</span>';
+                    }
+                    if (bni < br.nodes.length - 1) {
+                        h += '<span class="flp-full-arrow" style="font-size:13px;margin:0 2px;opacity:0.6;">→</span>';
+                    }
+                }
+            }
+            h += '</div>';
+        }
+        h += '</div>';
+        return h;
+    }
+
+    // ★ 辅助：获取嵌套层节点的子分支展示数据
+    function _getNestedLayerBranchesForDisplay(layerNodeId) {
+        var layerNode = SMData.nodes.get(layerNodeId);
+        if (!layerNode || layerNode.nodeType !== 'layer') return null;
+        var ld = SMTool._layerData(layerNode);
+        var branches = [];
+        // 收集层节点的所有出边
+        var connMap = {};
+        for (var ci = 0; ci < SMData.connections.length; ci++) {
+            var c = SMData.connections[ci];
+            if (c.fromNode !== layerNodeId) continue;
+            var ln = c._layerNum || 0;
+            if (!ln && typeof c.fromState === 'string' && c.fromState.indexOf('layer_') === 0) {
+                ln = parseInt(c.fromState.replace('layer_', '')) || 0;
+            }
+            if (ln >= 1 && ln <= (ld.layerCount || 2)) {
+                if (!connMap[ln]) connMap[ln] = [];
+                connMap[ln].push(c);
+            }
+        }
+        // 按层号构建分支
+        var layerNums = Object.keys(connMap).map(Number).sort(function(a,b){return a-b;});
+        for (var li = 0; li < layerNums.length; li++) {
+            var lnum = layerNums[li];
+            var conns = connMap[lnum];
+            var branchNodes = [];
+            for (var cj = 0; cj < conns.length; cj++) {
+                var toNode = SMData.nodes.get(conns[cj].toNode);
+                if (!toNode) continue;
+                // 沿链追踪节点
+                var chainIds = SMTool._buildChainFromNode(conns[cj].toNode);
+                for (var cni = 0; cni < chainIds.length; cni++) {
+                    var chainNode = SMData.nodes.get(chainIds[cni]);
+                    if (!chainNode) continue;
+                    var animName = '';
+                    if (chainNode.nodeType === 'spine') {
+                        animName = chainNode.currentAnim || (chainNode.animations && chainNode.animations[0] ? chainNode.animations[0].name : chainNode.name);
+                    } else if (chainNode.nodeType === 'delayer') {
+                        animName = '⏱ ' + (chainNode._delayValue || 1) + 's';
+                    } else if (chainNode.nodeType === 'layer') {
+                        animName = '📚 并行播放';
+                    } else {
+                        animName = chainNode.name || '';
+                    }
+                    branchNodes.push({ id: chainIds[cni], anim: animName });
+                }
+            }
+            var srcFileName = '';
+            if (branchNodes.length > 0) {
+                var firstBn = SMData.nodes.get(branchNodes[0].id);
+                if (firstBn) srcFileName = firstBn.sourceFile || firstBn.name || '';
+            }
+            branches.push({
+                layer: lnum,
+                nodes: branchNodes,
+                _resolvedAnimNodeId: branchNodes.length > 0 ? branchNodes[0].id : null,
+                _cycleClose: false
+            });
+        }
+        // ★ 也检查 _layerData 回退
+        for (var lj = 1; lj <= (ld.layerCount || 2); lj++) {
+            var exists = false;
+            for (var bk = 0; bk < branches.length; bk++) {
+                if (branches[bk].layer === lj) { exists = true; break; }
+            }
+            if (!exists && ld.layers && ld.layers[lj] && ld.layers[lj].animNodeId) {
+                var infoNode = SMData.nodes.get(ld.layers[lj].animNodeId);
+                if (infoNode) {
+                    var chain2 = SMTool._buildChainFromNode(ld.layers[lj].animNodeId);
+                    var bns2 = [];
+                    for (var cni2 = 0; cni2 < chain2.length; cni2++) {
+                        var cn2 = SMData.nodes.get(chain2[cni2]);
+                        if (!cn2) continue;
+                        var an2 = cn2.nodeType === 'spine' ? (cn2.currentAnim || (cn2.animations && cn2.animations[0] ? cn2.animations[0].name : cn2.name)) :
+                            cn2.nodeType === 'delayer' ? '⏱ ' + (cn2._delayValue || 1) + 's' :
+                            cn2.nodeType === 'layer' ? '📚 并行播放' : (cn2.name || '');
+                        bns2.push({ id: chain2[cni2], anim: an2 });
+                    }
+                    branches.push({ layer: lj, nodes: bns2, _resolvedAnimNodeId: bns2.length > 0 ? bns2[0].id : null, _cycleClose: false });
+                }
+            }
+        }
+        return branches.length > 0 ? branches : null;
     }
 
     var html = '<div class="flp-full-layout">';
@@ -5095,8 +5318,8 @@ SMTool._applyStepToMainNode = function (stepNode) {
     SMTool._pauseAllNodesExcept(stepNode.id);
 
     var spineNode = SMData.nodes.get(stepNode.id);
-    // ★ 延时器节点：无骨架，直接返回节点引用
-    if (spineNode && spineNode.nodeType === 'delayer') {
+    // ★ 延时器/隐藏器节点：无骨架，直接返回节点引用
+    if (spineNode && (spineNode.nodeType === 'delayer' || spineNode.nodeType === 'hider')) {
         return spineNode;
     }
     if (spineNode && spineNode.state && spineNode.skeleton) {
@@ -5126,10 +5349,14 @@ SMTool._applyStepToMainNode = function (stepNode) {
                 spineNode.currentAnim = animName;
                 // ★ 应用轨道配置到状态
                 SMTool._applyTracksToState(spineNode);
-                // ★ 动画组播放：强制不循环，停留在最后一帧
-                for (var ti = 0; ti < 5; ti++) {
-                    var e = spineNode.state.getCurrent(ti);
-                    if (e) e.loop = false;
+                // ★ 动画组播放：若节点显式配置了循环模式（次数/时间），则让动画自然循环，
+                //    由流定时器（timerDelay）控制推进；无循环模式则强制不循环，停在最后一帧
+                var hasLoopMode = spineNode.loop !== false && spineNode._loopMode;
+                if (!hasLoopMode) {
+                    for (var ti = 0; ti < 5; ti++) {
+                        var e = spineNode.state.getCurrent(ti);
+                        if (e) e.loop = false;
+                    }
                 }
                 // ★ 立即应用第一帧，消除 setup pose 闪烁
                 spineNode.state.update(0);
@@ -5316,6 +5543,9 @@ SMTool._playFullStep = function () {
     var duration = 1000; // 默认1秒
     if (spineNode && spineNode.nodeType === 'delayer') {
         duration = (spineNode._delayValue || 1.0) * 1000;
+    } else if (spineNode && spineNode.nodeType === 'hider') {
+        var hv = (spineNode._hideValue !== undefined) ? spineNode._hideValue : -1;
+        duration = (hv === -1 || hv === 0) ? 0 : hv * 1000;
     } else if (spineNode && spineNode.skeletonData) {
         for (var di = 0; di < spineNode.skeletonData.animations.length; di++) {
             if (spineNode.skeletonData.animations[di].name === stepNode.anim) {

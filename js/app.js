@@ -1464,6 +1464,38 @@ SMTool.init = function () {
         document.getElementById('ctxMenu').style.display = 'none';
     };
 
+    // ★ 隐藏器节点
+    SMTool.addHiderNode = function () {
+        SMTool.addHiderNodeAt(
+            Math.random() * 200 - 100 + window.innerWidth / 2,
+            Math.random() * 200 - 100 + window.innerHeight / 2
+        );
+    };
+    SMTool.addHiderNodeAt = function (wx, wy) {
+        SMTool.pushUndo();
+        var id = SMData.nextId++;
+        var node = new SpineNodeData(id);
+        node.nodeType = 'hider';
+        node.name = '隐藏器';
+        node.x = wx; node.y = wy;
+        node.width = 280;
+        node._hideValue = -1;
+        node._hideDirection = 'left';
+        SMData.nodes.set(id, node);
+        SMTool._createEl(node);
+        SMTool._updatePos(node);
+        SMData.selectedNodes.clear();
+        SMData.selectedNodes.add(id);
+        SMData.selectedNode = id;
+        SMTool._updateSel();
+        SMTool._updateSB();
+    };
+    SMTool.ctxAddHider = function () {
+        var wp = SMTool.canvasToWorld(window.innerWidth / 2, window.innerHeight / 2);
+        SMTool.addHiderNodeAt(wp.x, wp.y);
+        document.getElementById('ctxMenu').style.display = 'none';
+    };
+
     // 右键菜单：添加入口/出口
     SMTool.ctxAddEntry = function () {
         var wp = SMTool.canvasToWorld(window.innerWidth / 2, window.innerHeight / 2);

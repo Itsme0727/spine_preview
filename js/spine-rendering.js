@@ -1418,10 +1418,15 @@ SMTool._applyPreviewTracks = function (pp, previewState, stateData, skeletonData
     pp.animName = sourceNode.currentAnim || (tracks.length > 0 ? tracks[0].animName : '');
 
     // ▲ flow 播放时强制不循环（flow 控制节奏）；非 flow 时跟随节点自身循环设置
+    // ★ 但若源节点显式配置了循环模式（次数/时间），则让动画自然循环播放，
+    //    由动画流定时器（timerDelay）控制何时推进到下一步，避免画面冻结。
     if (SMData._fullPlayback && SMData._fullPlayback.isPlaying) {
-        for (var ti = 0; ti < 5; ti++) {
-            var e = previewState.getCurrent(ti);
-            if (e) e.loop = false;
+        var hasLoopMode = sourceNode.loop !== false && sourceNode._loopMode;
+        if (!hasLoopMode) {
+            for (var ti = 0; ti < 5; ti++) {
+                var e = previewState.getCurrent(ti);
+                if (e) e.loop = false;
+            }
         }
     }
 

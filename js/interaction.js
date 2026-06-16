@@ -1640,6 +1640,11 @@ SMTool._showCtxMenu = function (e) {
         item0d.textContent = '⏱ 添加延时器节点';
         item0d.onclick = function () { SMTool.addDelayerNodeAt(wp.x, wp.y); menu3.style.display = 'none'; };
         menu3.appendChild(item0d);
+        var item0e = document.createElement('div');
+        item0e.className = 'ctx-item ctx-text-node';
+        item0e.textContent = '🙈 添加隐藏器节点';
+        item0e.onclick = function () { SMTool.addHiderNodeAt(wp.x, wp.y); menu3.style.display = 'none'; };
+        menu3.appendChild(item0e);
         var sep0 = document.createElement('div');
         sep0.className = 'ctx-sep';
         sep0.style.cssText = 'height:1px;background:var(--border);margin:4px 8px';

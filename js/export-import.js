@@ -722,6 +722,38 @@ SMTool._loadCompanionImagesFromZip = function (fileMap) {
                 }
             }
         }
+        // ★ 皮肤截图引用
+        if (n._skinShotRefs && n.nodeType === 'spine') {
+            var skinNames = Object.keys(n._skinShotRefs);
+            for (var sk = 0; sk < skinNames.length; sk++) {
+                var skn = skinNames[sk];
+                var skRefList = n._skinShotRefs[skn];
+                var skArr = Array.isArray(skRefList) ? skRefList : (skRefList ? [skRefList] : []);
+                for (var sr = 0; sr < skArr.length; sr++) {
+                    var skRefPath = skArr[sr];
+                    if (!skRefPath) continue;
+                    var skKey = skRefPath.replace(/\\/g, '/').toLowerCase();
+                    if (!fileRefs[skKey]) fileRefs[skKey] = [];
+                    fileRefs[skKey].push({ node: n, boneName: skn, idx: sr, type: 'skin' });
+                }
+            }
+        }
+        // ★ 插槽截图引用
+        if (n._slotShotRefs && n.nodeType === 'spine') {
+            var slotNames = Object.keys(n._slotShotRefs);
+            for (var sl = 0; sl < slotNames.length; sl++) {
+                var sln = slotNames[sl];
+                var slRefList = n._slotShotRefs[sln];
+                var slArr = Array.isArray(slRefList) ? slRefList : (slRefList ? [slRefList] : []);
+                for (var slr = 0; slr < slArr.length; slr++) {
+                    var slRefPath = slArr[slr];
+                    if (!slRefPath) continue;
+                    var slKey = slRefPath.replace(/\\/g, '/').toLowerCase();
+                    if (!fileRefs[slKey]) fileRefs[slKey] = [];
+                    fileRefs[slKey].push({ node: n, boneName: sln, idx: slr, type: 'slot' });
+                }
+            }
+        }
         if (n._nodeShotRefs && n._nodeShotRefs.length > 0 && (n.nodeType === 'spine' || n.nodeType === 'entry')) {
             for (var ni = 0; ni < n._nodeShotRefs.length; ni++) {
                 var rp = n._nodeShotRefs[ni];
@@ -806,7 +838,18 @@ SMTool._loadCompanionImagesFromZip = function (fileMap) {
                             if (ref.type === 'nodeImage') {
                                 if (!ref.node._nodeImages) ref.node._nodeImages = [];
                                 ref.node._nodeImages[ref.idx] = newShotId;
+                            } else if (ref.type === 'skin') {
+                                if (!ref.node._skinScreenshots) ref.node._skinScreenshots = {};
+                                if (!ref.node._skinScreenshots[ref.boneName]) ref.node._skinScreenshots[ref.boneName] = [];
+                                if (!Array.isArray(ref.node._skinScreenshots[ref.boneName])) ref.node._skinScreenshots[ref.boneName] = [ref.node._skinScreenshots[ref.boneName]];
+                                ref.node._skinScreenshots[ref.boneName][ref.idx] = newShotId;
+                            } else if (ref.type === 'slot') {
+                                if (!ref.node._slotScreenshots) ref.node._slotScreenshots = {};
+                                if (!ref.node._slotScreenshots[ref.boneName]) ref.node._slotScreenshots[ref.boneName] = [];
+                                if (!Array.isArray(ref.node._slotScreenshots[ref.boneName])) ref.node._slotScreenshots[ref.boneName] = [ref.node._slotScreenshots[ref.boneName]];
+                                ref.node._slotScreenshots[ref.boneName][ref.idx] = newShotId;
                             } else {
+                                // ★ bone (default)
                                 if (!ref.node._boneScreenshots) ref.node._boneScreenshots = {};
                                 if (!ref.node._boneScreenshots[ref.boneName]) ref.node._boneScreenshots[ref.boneName] = [];
                                 if (!Array.isArray(ref.node._boneScreenshots[ref.boneName])) ref.node._boneScreenshots[ref.boneName] = [ref.node._boneScreenshots[ref.boneName]];
@@ -1056,6 +1099,16 @@ SMTool.exportAsZip = function () {
             var bns = Object.keys(node._boneScreenshots);
             for (var bi2 = 0; bi2 < bns.length; bi2++) collectShots(node._boneScreenshots[bns[bi2]]);
         }
+        // ★ 收集 _skinScreenshots
+        if (node._skinScreenshots && node.nodeType === 'spine') {
+            var skns = Object.keys(node._skinScreenshots);
+            for (var ski = 0; ski < skns.length; ski++) collectShots(node._skinScreenshots[skns[ski]]);
+        }
+        // ★ 收集 _slotScreenshots
+        if (node._slotScreenshots && node.nodeType === 'spine') {
+            var slns = Object.keys(node._slotScreenshots);
+            for (var sli = 0; sli < slns.length; sli++) collectShots(node._slotScreenshots[slns[sli]]);
+        }
         rn = nodesIter.next();
     }
 
@@ -1085,6 +1138,36 @@ SMTool.exportAsZip = function () {
                 for (var sk = 0; sk < arr2.length; sk++) {
                     var sid2 = arr2[sk];
                     node2._boneShotRefs[bn2][sk] = (typeof sid2 === 'number' && shotFileName[sid2]) ? shotFileName[sid2] : '';
+                }
+            }
+        }
+        // ★ 重建 _skinShotRefs
+        if (node2._skinScreenshots && node2.nodeType === 'spine') {
+            if (!node2._skinShotRefs) node2._skinShotRefs = {};
+            var skns2 = Object.keys(node2._skinScreenshots);
+            for (var skj = 0; skj < skns2.length; skj++) {
+                var skn2 = skns2[skj];
+                var skShots = node2._skinScreenshots[skn2];
+                var skArr = Array.isArray(skShots) ? skShots : (skShots ? [skShots] : []);
+                if (!node2._skinShotRefs[skn2]) node2._skinShotRefs[skn2] = [];
+                for (var ssk = 0; ssk < skArr.length; ssk++) {
+                    var skSid = skArr[ssk];
+                    node2._skinShotRefs[skn2][ssk] = (typeof skSid === 'number' && shotFileName[skSid]) ? shotFileName[skSid] : '';
+                }
+            }
+        }
+        // ★ 重建 _slotShotRefs
+        if (node2._slotScreenshots && node2.nodeType === 'spine') {
+            if (!node2._slotShotRefs) node2._slotShotRefs = {};
+            var slns2 = Object.keys(node2._slotScreenshots);
+            for (var slj = 0; slj < slns2.length; slj++) {
+                var sln2 = slns2[slj];
+                var slShots = node2._slotScreenshots[sln2];
+                var slArr = Array.isArray(slShots) ? slShots : (slShots ? [slShots] : []);
+                if (!node2._slotShotRefs[sln2]) node2._slotShotRefs[sln2] = [];
+                for (var ssl = 0; ssl < slArr.length; ssl++) {
+                    var slSid = slArr[ssl];
+                    node2._slotShotRefs[sln2][ssl] = (typeof slSid === 'number' && shotFileName[slSid]) ? shotFileName[slSid] : '';
                 }
             }
         }
