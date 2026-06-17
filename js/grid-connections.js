@@ -230,24 +230,36 @@ SMTool._renderConnections = function () {
         var rectY = my - th / 2;
 
         // 存储标签矩形区域供 hover 检测（屏幕坐标，用于 mouse 匹配）
+        // ★ 含关闭按钮区域（加大尺寸，方便点击）
+        var closeSize = Math.round(72 * z * extraScale);
+        var closeX = rectX + tw - closeSize - 2;
+        var closeY = rectY + 2;
         if (!SMData._labelRects) SMData._labelRects = [];
         SMData._labelRects.push({
             connId: conn.id,
             x: rectX, y: rectY, w: tw, h: th,
             rawLabel: rawLabel,
-            truncated: truncated
+            truncated: truncated,
+            closeX: closeX, closeY: closeY, closeW: closeSize, closeH: closeSize
         });
 
-        ctx.fillStyle = '#282830';  // 深色背景
-        var br = Math.round(21 * z * extraScale);  // 圆角随缩放
+        ctx.fillStyle = '#282830';
+        var br = Math.round(21 * z * extraScale);
         SMTool._roundRect(ctx, rectX, rectY, tw, th, br);
         ctx.fill();
         ctx.strokeStyle = connColor;
-        ctx.lineWidth = Math.max(1.5, 2 * z);  // 线宽随缩放
+        ctx.lineWidth = Math.max(1.5, 2 * z);
         SMTool._roundRect(ctx, rectX, rectY, tw, th, br);
         ctx.stroke();
 
-        ctx.fillStyle = '#ffffff';  // 白色文字
+        // ★ 删除图标（右上角 ×）
+        ctx.fillStyle = 'rgba(255,255,255,0.5)';
+        ctx.font = Math.round(48 * z * extraScale) + 'px "Segoe UI",system-ui,sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('×', closeX + closeSize / 2, closeY + closeSize / 2);
+
+        ctx.fillStyle = '#ffffff';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         for (var li2 = 0; li2 < lines.length; li2++) {

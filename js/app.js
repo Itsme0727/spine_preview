@@ -516,6 +516,14 @@ SMTool.init = function () {
 
     // 键盘
     window.addEventListener('keydown', function (e) { SMTool._onKD(e); });
+    // ★ 空格键释放 → 停止平移
+    window.addEventListener('keyup', function (e) {
+        if (e.key === ' ' && SMData._spacePanning) {
+            SMData._spacePanning = false;
+            SMData.isPanning = false;
+            SMTool.gridCanvas.style.cursor = SMData.connectMode ? 'crosshair' : 'default';
+        }
+    });
 
     // 全局粘贴事件（图片 → 自动添加到当前聚焦骨骼的截图区）
     window.addEventListener('paste', function (e) {
@@ -1468,6 +1476,31 @@ SMTool.init = function () {
         node.width = 280;
         node._hideValue = -1;
         node._hideDirection = 'left';
+        SMData.nodes.set(id, node);
+        SMTool._createEl(node);
+        SMTool._updatePos(node);
+        SMData.selectedNodes.clear();
+        SMData.selectedNodes.add(id);
+        SMData.selectedNode = id;
+        SMTool._updateSel();
+        SMTool._updateSB();
+    };
+
+    // ★ 大循环播放节点
+    SMTool.addLoopNode = function () {
+        SMTool.addLoopNodeAt(
+            Math.random() * 200 - 100 + window.innerWidth / 2,
+            Math.random() * 200 - 100 + window.innerHeight / 2
+        );
+    };
+    SMTool.addLoopNodeAt = function (wx, wy) {
+        SMTool.pushUndo();
+        var id = SMData.nextId++;
+        var node = new SpineNodeData(id);
+        node.nodeType = 'loop';
+        node.name = '大循环播放';
+        node.x = wx; node.y = wy;
+        node.width = 280;
         SMData.nodes.set(id, node);
         SMTool._createEl(node);
         SMTool._updatePos(node);

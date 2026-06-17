@@ -217,6 +217,23 @@ SMTool._createEl = function (node) {
                 '<div class="conn-dot output" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'hider\',\'output\')" title="连线输出"></div>' +
             '</div>' +
             '<span class="scale-handle" onmousedown="event.stopPropagation();SMTool._onScaleStart(event,' + node.id + ')" title="拖拽缩放"><i class="scale-handle-icon"></i></span>';
+    } else if (node.nodeType === 'loop') {
+        el.classList.add('delayer-node', 'loop-node');
+        el.innerHTML =
+            '<div class="header delayer-header" onmousedown="event.stopPropagation();SMTool._onHD(event,' + node.id + ')">' +
+                '<span class="delayer-title">🔁 大循环播放</span>' +
+                '<div class="btns">' +
+                    '<button onclick="event.stopPropagation();SMTool.deleteNode(' + node.id + ')" title="删除节点">✕</button>' +
+                '</div>' +
+            '</div>' +
+            '<div class="delayer-body" style="padding:8px 12px;color:var(--text2);font-size:12px">' +
+                '触发后强制从动画流源头重新播放' +
+            '</div>' +
+            '<div class="anim-bar" style="display:flex;justify-content:space-between">' +
+                '<div class="conn-dot input" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'loop\',\'input\')" title="连线输入"></div>' +
+                '<div class="conn-dot output" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'loop\',\'output\')" title="连线输出"></div>' +
+            '</div>' +
+            '<span class="scale-handle" onmousedown="event.stopPropagation();SMTool._onScaleStart(event,' + node.id + ')" title="拖拽缩放"><i class="scale-handle-icon"></i></span>';
     } else {
     el.innerHTML =
         SMTool._buildNodeIndicatorsHtml(node) +
@@ -5318,8 +5335,8 @@ SMTool._applyStepToMainNode = function (stepNode) {
     SMTool._pauseAllNodesExcept(stepNode.id);
 
     var spineNode = SMData.nodes.get(stepNode.id);
-    // ★ 延时器/隐藏器节点：无骨架，直接返回节点引用
-    if (spineNode && (spineNode.nodeType === 'delayer' || spineNode.nodeType === 'hider')) {
+    // ★ 延时器/隐藏器/大循环节点：无骨架，直接返回节点引用
+    if (spineNode && (spineNode.nodeType === 'delayer' || spineNode.nodeType === 'hider' || spineNode.nodeType === 'loop')) {
         return spineNode;
     }
     if (spineNode && spineNode.state && spineNode.skeleton) {
@@ -5507,13 +5524,23 @@ SMTool._playFullStep = function () {
         pb.isPlaying = false;
         pb._stepped = false;
         SMTool._clearAllProgressBars();
-        // ★ 播放完毕：冻结所有节点
         SMTool._freezeAllNodes();
         SMTool._updateFullFlowPanel(document.getElementById('flpContent'), document.getElementById('flowPanel'));
         SMTool._setFullComponentFocus(SMData.selectedNode);
         SMTool._updateSel();
         SMTool._updateStateRowColors();
         return;
+    }
+
+    // ★ 大循环播放节点：强制跳回源头步骤 0
+    if (stepNode.id) {
+        var loopSpineNode = SMData.nodes.get(stepNode.id);
+        if (loopSpineNode && loopSpineNode.nodeType === 'loop') {
+            pb.currentStep = 0;
+            SMTool._clearAllProgressBars();
+            SMTool._playFullStep();
+            return;
+        }
     }
 
     // 暂停其他所有动画节点，仅播放当前步骤的节点
@@ -5539,13 +5566,15 @@ SMTool._playFullStep = function () {
     SMTool._updateStateRowColors();
     // 不再调用 _updateEl — 避免每步切换时重建节点 DOM 导致卡顿
 
-    // 获取动画时长来自动推进（先取原始时长，再按倍速调整）
-    var duration = 1000; // 默认1秒
+    // 获取动画时长来自动推进
+    var duration = 1000;
     if (spineNode && spineNode.nodeType === 'delayer') {
         duration = (spineNode._delayValue || 1.0) * 1000;
     } else if (spineNode && spineNode.nodeType === 'hider') {
         var hv = (spineNode._hideValue !== undefined) ? spineNode._hideValue : -1;
         duration = (hv === -1 || hv === 0) ? 0 : hv * 1000;
+    } else if (spineNode && spineNode.nodeType === 'loop') {
+        duration = 0;  // ★ 大循环节点：立即触发
     } else if (spineNode && spineNode.skeletonData) {
         for (var di = 0; di < spineNode.skeletonData.animations.length; di++) {
             if (spineNode.skeletonData.animations[di].name === stepNode.anim) {
@@ -5624,27 +5653,10 @@ SMTool._playFullStep = function () {
             }
             SMTool._playFullStep();
         } else {
-            // ★ 播放完毕：先将当前步骤动画推进到最后一帧，再冻结
-            if (spineNode && spineNode.state && spineNode.skeleton) {
-                try {
-                    var lastEntry = spineNode.state.getCurrent(0);
-                    if (lastEntry) {
-                        var lastDur = (lastEntry.animation && lastEntry.animation.duration) ||
-                                       (lastEntry._animation && lastEntry._animation.duration) || 0;
-                        lastEntry.trackTime = lastDur;
-                    }
-                    spineNode.state.apply(spineNode.skeleton);
-                    spineNode.skeleton.updateWorldTransform(spineNode._physParam);
-                } catch (e) {}
-            }
-            pb.isPlaying = false;
-            pb._stepped = false;
+            // ★ 播放到末尾 → 自动大循环：从头重新播放（浮窗+画布同步）
+            pb.currentStep = 0;
             SMTool._clearAllProgressBars();
-            SMTool._freezeAllNodes();
-            SMTool._updateFullFlowPanel(document.getElementById('flpContent'), document.getElementById('flowPanel'));
-            SMTool._setFullComponentFocus(SMData.selectedNode);
-            SMTool._updateSel();
-            SMTool._updateStateRowColors();
+            SMTool._playFullStep();
         }
     }, timerDelay);
 };

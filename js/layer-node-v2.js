@@ -1153,6 +1153,31 @@ SMTool._showLayerPreview = function (layerNode) {
                 });
             }
         }
+        // ★★ 链上无真实骨架但该层有嵌套子并行节点：创建虚拟占位条目
+        if (chainSkeletons.length === 0 && pp._playbackTree) {
+            var _hasSubLayer = false, _subLayerId = null, _subTree = null;
+            for (var tli0 = 0; tli0 < pp._playbackTree.layers.length; tli0++) {
+                if (pp._playbackTree.layers[tli0].layerNum === item.layer) {
+                    if (pp._playbackTree.layers[tli0].subLayerNodeId) {
+                        _hasSubLayer = true;
+                        _subLayerId = pp._playbackTree.layers[tli0].subLayerNodeId;
+                        _subTree = pp._playbackTree.layers[tli0].subLayerTree;
+                    }
+                    break;
+                }
+            }
+            if (_hasSubLayer) {
+                chainSkeletons.push({
+                    _chainNodeId: item.node.id,
+                    _isVirtualLayer: true,
+                    _chainAnimName: '',
+                    skeleton: null, state: null, shader: null, batcher: null,
+                    skeletonRenderer: null, physParam: null, mvp: null,
+                    premultipliedAlpha: false, aspectInfo: null
+                });
+                chainIds = [item.node.id];
+            }
+        }
         if (chainSkeletons.length > 0) {
             // 使用链首骨架作为主渲染骨架
             var firstSk = chainSkeletons[0];
@@ -1264,8 +1289,10 @@ SMTool._showLayerPreview = function (layerNode) {
                     csk._defaultSkX = defX;
                     csk._defaultSkY = defY;
                     // ★★ 容器模型：最终位置 = 默认居中 + 容器偏移 + 个体微调偏移
+                    // 若有 _containerOffset 则以其为准，忽略旧 _chainPositions 防止双重叠加
                     var containerOff = (savedData && savedData._containerOffset) ? savedData._containerOffset : { offX: 0, offY: 0 };
-                    var cp = (chainPositions && csk._chainNodeId != null) ? chainPositions[csk._chainNodeId] : null;
+                    var hasCO = savedData && savedData._containerOffset;
+                    var cp = (!hasCO && chainPositions && csk._chainNodeId != null) ? chainPositions[csk._chainNodeId] : null;
                     csk.skeleton.x = defX + containerOff.offX + (cp ? (cp.offX || 0) : 0);
                     csk.skeleton.y = defY + containerOff.offY + (cp ? (cp.offY || 0) : 0);
                 }
@@ -1901,6 +1928,21 @@ SMTool._normalizeLayerMVP = function (ls, pp) {
 SMTool._renderOneNormalLayer = function (ls, dt, frozen, gl, WGL, pp) {
     var result = { activeNodeId: null, activeProgress: -1, chainDone: ls._chainDone || false };
 
+    // ★★ 虚拟层节点（layer→layer 直接连线，无 spine 骨架）：立即激活嵌套子树
+    if (ls._isVirtualLayer) {
+        if (ls._nestedLayerNodeId && !ls._nestedSubActive) {
+            var subCache = SMTool._ensureSubtreeSkeletons(ls._nestedLayerNodeId, pp, { offX: ls._containerOffX || 0, offY: ls._containerOffY || 0 });
+            if (subCache && subCache.skeletons.length > 0) {
+                ls._nestedLayerSkeletons = subCache.skeletons;
+                ls._nestedSubActive = true;
+            } else {
+                ls._chainDone = true;
+                result.chainDone = true;
+            }
+        }
+        return result;
+    }
+
     // ── 无链骨架的简单层 ──
     if (!ls._chainSkeletons || ls._chainSkeletons.length === 0) {
         if (ls._hidden) return result;
@@ -2172,13 +2214,10 @@ SMTool._renderLayerPreview = function (layerNode, pp, now) {
                     if (fsn && fsn._isLayerHub) {
                         fb.currentStep++;
                         if (fb.currentStep >= fpath.nodes.length) {
-                            fb.isPlaying = false; fb._stepped = false;
-                            if (fb._timer) { clearTimeout(fb._timer); fb._timer = null; }
+                            // ★ 播放到末尾 → 自动大循环
+                            fb.currentStep = 0;
                             SMTool._clearAllProgressBars();
-                            SMTool._freezeAllNodes();
-                            SMTool._updateFullFlowPanel(document.getElementById('flpContent'), document.getElementById('flowPanel'));
-                            SMTool._setFullComponentFocus(SMData.selectedNode);
-                            SMTool._updateSel(); SMTool._updateStateRowColors();
+                            SMTool._playFullStep();
                         } else {
                             SMTool._playFullStep();
                         }
@@ -2774,27 +2813,61 @@ SMTool._confirmLayerPosition = function (idx) {
     if (!pp || !pp._layerSkeletons || idx >= pp._layerSkeletons.length) return;
     var ls = pp._layerSkeletons[idx];
 
-    // ★★ 容器模型：基于拖拽起始位置计算偏移量，保存为 _containerOffset
+    // ★★ 容器模型：优先用 _defaultSkX 绝对参考（简单链已验证完美），找不到锚点时用拖拽增量叠加
     var layerNode = SMData.nodes.get(pp.nodeId);
-    var positions = pp._layerDragStartPositions;
-    if (layerNode && layerNode._layerData && ls.layer && positions && positions.length > 0) {
+    if (layerNode && layerNode._layerData && ls.layer) {
         var ld = layerNode._layerData;
         if (!ld.layers[ls.layer]) ld.layers[ls.layer] = {};
-        // ★ 找第一个有实际位移的骨架计算容器偏移
-        for (var pi = 0; pi < positions.length; pi++) {
-            var p = positions[pi];
-            if (p.sk && typeof p.sk.x === 'number') {
-                ld.layers[ls.layer]._containerOffset = {
-                    offX: p.sk.x - p.x,
-                    offY: p.sk.y - p.y
-                };
-                delete ld.layers[ls.layer].posOffX;
-                delete ld.layers[ls.layer].posOffY;
-                // ★★ 清除子树缓存，确保嵌套层下次按新偏移重建
-                pp._subtreeCache = {};
-                break;
+        // 递归搜索有 _defaultSkX 的真实骨架（含嵌套子树）
+        var _findAnchor = function(entry) {
+            if (!entry) return null;
+            var ch = entry._chainSkeletons;
+            if (ch && ch.length > 0) {
+                for (var cj = 0; cj < ch.length; cj++) {
+                    if (ch[cj].skeleton && ch[cj]._defaultSkX !== undefined) return ch[cj];
+                }
             }
+            if (entry.skeleton && entry._defaultSkX !== undefined) return entry;
+            if (entry._nestedLayerSkeletons) {
+                for (var nj = 0; nj < entry._nestedLayerSkeletons.length; nj++) {
+                    var found = _findAnchor(entry._nestedLayerSkeletons[nj]);
+                    if (found) return found;
+                }
+            }
+            return null;
+        };
+        var anchorSkel = _findAnchor(ls);
+        if (anchorSkel) {
+            // ★ 路径A（简单链/有真实骨架）：绝对居中参考法
+            ld.layers[ls.layer]._containerOffset = {
+                offX: anchorSkel.skeleton.x - anchorSkel._defaultSkX,
+                offY: anchorSkel.skeleton.y - anchorSkel._defaultSkY
+            };
+        } else {
+            // ★ 路径B（虚拟层 layer→layer）：拖拽增量叠加已有偏移
+            var positions = pp._layerDragStartPositions;
+            var dragOffX = 0, dragOffY = 0;
+            if (positions && positions.length > 0) {
+                for (var pi = 0; pi < positions.length; pi++) {
+                    if (positions[pi].sk && typeof positions[pi].sk.x === 'number') {
+                        dragOffX = positions[pi].sk.x - positions[pi].x;
+                        dragOffY = positions[pi].sk.y - positions[pi].y;
+                        break;
+                    }
+                }
+            }
+            var oldOff = ld.layers[ls.layer]._containerOffset || { offX: 0, offY: 0 };
+            ld.layers[ls.layer]._containerOffset = {
+                offX: oldOff.offX + dragOffX,
+                offY: oldOff.offY + dragOffY
+            };
         }
+        delete ld.layers[ls.layer].posOffX;
+        delete ld.layers[ls.layer].posOffY;
+        delete ld.layers[ls.layer]._chainPositions;
+        ls._containerOffX = ld.layers[ls.layer]._containerOffset.offX;
+        ls._containerOffY = ld.layers[ls.layer]._containerOffset.offY;
+        pp._subtreeCache = {};
     }
     ls._positionDragActive = false;
     pp._layerDragTargetIdx = -1;
@@ -2925,30 +2998,62 @@ SMTool._onLayerPosMouseUp = function () {
     if (!pp._layerDragActive) { pp._layerDragActive = false; return; }
     pp._layerDragActive = false;
 
-    // ★★ 容器模型：基于拖拽起始位置计算偏移量（不依赖 _defaultSkX，兼容延时器/隐藏器）
+    // ★★ 容器模型：优先 _defaultSkX 绝对参考，找不到锚点则拖拽增量叠加
     var idx = pp._layerDragTargetIdx;
     if (idx >= 0 && pp._layerSkeletons && idx < pp._layerSkeletons.length) {
         var ls = pp._layerSkeletons[idx];
-        var positions = pp._layerDragStartPositions;
-        if (ls && ls.layer && positions && positions.length > 0) {
+        if (ls && ls.layer) {
             var layerNode = SMData.nodes.get(pp.nodeId);
             if (layerNode && layerNode._layerData) {
                 var ld = layerNode._layerData;
                 if (!ld.layers[ls.layer]) ld.layers[ls.layer] = {};
-                // ★ 找第一个有实际位移的骨架计算容器偏移
-                for (var pi = 0; pi < positions.length; pi++) {
-                    var p = positions[pi];
-                    if (p.sk && typeof p.sk.x === 'number') {
-                        var offX = p.sk.x - p.x;
-                        var offY = p.sk.y - p.y;
-                        ld.layers[ls.layer]._containerOffset = { offX: offX, offY: offY };
-                        delete ld.layers[ls.layer].posOffX;
-                        delete ld.layers[ls.layer].posOffY;
-                        // ★★ 清除子树缓存，确保嵌套层下次按新偏移重建
-                        pp._subtreeCache = {};
-                        break;
+                var _findAnchor = function(entry) {
+                    if (!entry) return null;
+                    var ch = entry._chainSkeletons;
+                    if (ch && ch.length > 0) {
+                        for (var cj = 0; cj < ch.length; cj++) {
+                            if (ch[cj].skeleton && ch[cj]._defaultSkX !== undefined) return ch[cj];
+                        }
                     }
+                    if (entry.skeleton && entry._defaultSkX !== undefined) return entry;
+                    if (entry._nestedLayerSkeletons) {
+                        for (var nj = 0; nj < entry._nestedLayerSkeletons.length; nj++) {
+                            var found = _findAnchor(entry._nestedLayerSkeletons[nj]);
+                            if (found) return found;
+                        }
+                    }
+                    return null;
+                };
+                var anchorSkel = _findAnchor(ls);
+                if (anchorSkel) {
+                    ld.layers[ls.layer]._containerOffset = {
+                        offX: anchorSkel.skeleton.x - anchorSkel._defaultSkX,
+                        offY: anchorSkel.skeleton.y - anchorSkel._defaultSkY
+                    };
+                } else {
+                    var positions = pp._layerDragStartPositions;
+                    var dragOffX = 0, dragOffY = 0;
+                    if (positions && positions.length > 0) {
+                        for (var pi = 0; pi < positions.length; pi++) {
+                            if (positions[pi].sk && typeof positions[pi].sk.x === 'number') {
+                                dragOffX = positions[pi].sk.x - positions[pi].x;
+                                dragOffY = positions[pi].sk.y - positions[pi].y;
+                                break;
+                            }
+                        }
+                    }
+                    var oldOff = ld.layers[ls.layer]._containerOffset || { offX: 0, offY: 0 };
+                    ld.layers[ls.layer]._containerOffset = {
+                        offX: oldOff.offX + dragOffX,
+                        offY: oldOff.offY + dragOffY
+                    };
                 }
+                delete ld.layers[ls.layer].posOffX;
+                delete ld.layers[ls.layer].posOffY;
+                delete ld.layers[ls.layer]._chainPositions;
+                ls._containerOffX = ld.layers[ls.layer]._containerOffset.offX;
+                ls._containerOffY = ld.layers[ls.layer]._containerOffset.offY;
+                pp._subtreeCache = {};
             }
         }
     }

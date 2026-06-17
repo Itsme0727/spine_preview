@@ -907,6 +907,19 @@ SMTool._onMU = function (e) {
 
 // ---- 键盘 ----
 SMTool._onKD = function (e) {
+    // ★ 空格键按下 → 启动平移（等同鼠标中键）
+    if (e.key === ' ' && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+        e.preventDefault();
+        if (!SMData._spacePanning) {
+            SMData._spacePanning = true;
+            SMData.isPanning = true;
+            SMData.panStart = { x: SMData._mx || 0, y: SMData._my || 0 };
+            SMData.viewStart = { x: SMData.view.x, y: SMData.view.y };
+            SMTool.gridCanvas.style.cursor = 'grab';
+        }
+        return;
+    }
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
 
     // Ctrl+C：复制选中的所有节点及它们之间的连线
@@ -1529,6 +1542,23 @@ SMTool._checkConditionClick = function (mx, my) {
         var distLabel = Math.sqrt((mx - lx) * (mx - lx) + (my - ly) * (my - ly));
 
         if (distLabel < 30) {
+            // ★ 优先检测：是否点击了删除图标（×）
+            if (SMData._labelRects) {
+                for (var lri = 0; lri < SMData._labelRects.length; lri++) {
+                    var lr = SMData._labelRects[lri];
+                    if (lr.connId === c.id && lr.closeX !== undefined) {
+                        if (mx >= lr.closeX && mx <= lr.closeX + lr.closeW &&
+                            my >= lr.closeY && my <= lr.closeY + lr.closeH) {
+                            // 点击了删除图标 → 清除条件文字，保留连线
+                            c.condition = '';
+                            SMData.selectedConnection = null;
+                            SMTool._updateSB();
+                            SMTool._updateFlowPanel();
+                            return true;
+                        }
+                    }
+                }
+            }
             // 点击了标签 → 选中连线 + 弹出条件编辑器
             SMData.selectedConnection = c.id;
             SMTool._updateStateRowColors();
@@ -1645,6 +1675,11 @@ SMTool._showCtxMenu = function (e) {
         item0e.textContent = '🙈 添加隐藏器节点';
         item0e.onclick = function () { SMTool.addHiderNodeAt(wp.x, wp.y); menu3.style.display = 'none'; };
         menu3.appendChild(item0e);
+        var item0f = document.createElement('div');
+        item0f.className = 'ctx-item ctx-text-node';
+        item0f.textContent = '🔁 大循环播放节点';
+        item0f.onclick = function () { SMTool.addLoopNodeAt(wp.x, wp.y); menu3.style.display = 'none'; };
+        menu3.appendChild(item0f);
         var sep0 = document.createElement('div');
         sep0.className = 'ctx-sep';
         sep0.style.cssText = 'height:1px;background:var(--border);margin:4px 8px';

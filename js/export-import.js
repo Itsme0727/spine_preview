@@ -1995,10 +1995,18 @@ SMTool._processImportJson = function (jsonText, fileHandle) {
         if (d.flowMode) SMTool.setFlowMode(d.flowMode);
         if (d.renderMode) SMTool.setRenderMode(d.renderMode);
 
-        SMTool._updateAllPos(true);
-        SMData._forceRedraw = true;  // ★ 导入后强制重绘连线画布，确保曲线端点匹配节点位置
-        SMTool._updateSB();
-        SMTool._updateStateRowColors();
+        // ★ 延迟刷新位置，等待浏览器完成 DOM 布局（否则连线端点偏移）
+        setTimeout(function () {
+            SMTool._updateAllPos(true);
+            SMData._forceRedraw = true;
+            SMTool._updateSB();
+            SMTool._updateStateRowColors();
+        }, 100);
+        // ★ 二次延迟刷新，捕获异步 Spine 加载后的节点尺寸变化
+        setTimeout(function () {
+            SMTool._updateAllPos(true);
+            SMData._forceRedraw = true;
+        }, 600);
         SMTool._updateFloatPanel();
         // 🔒 [LOCK-L] 并行播放面板刷新及时性 — 导入后必须刷新层级节点显示
         // ★ 刷新所有层级节点盒子文字（连线/层数据已恢复）
