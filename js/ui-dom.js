@@ -3250,10 +3250,73 @@ SMTool._hideAnimPreview = function () {
     }
 };
 
-// ★ 暂停/继续浮窗预览播放（适用于单节点预览和并行播放模式）
+// ★ 刷新从头播放（浮窗右下角 ↺ 按钮）
+SMTool._restartPreview = function () {
+    var pp = SMData._animPreview;
+    if (!pp || !pp.visible) return;
+
+    // 解除冻结状态
+    if (pp._flowFrozen) {
+        pp._flowFrozen = false;
+        SMTool._unfreezeAllNodes();
+        var pauseBtn = document.getElementById('appPauseBtn');
+        if (pauseBtn) { pauseBtn.classList.remove('paused'); pauseBtn.textContent = '⏸'; pauseBtn.title = '暂停播放'; }
+    }
+
+    // ★ 单节点预览：重新初始化动画，从第0帧开始
+    if (pp.skeleton && pp.state && !pp._layerSkeletons) {
+        if (pp._singleLoopTimer) { clearTimeout(pp._singleLoopTimer); pp._singleLoopTimer = null; }
+        pp.state.clearTracks();
+        pp._lastTime = 0;
+        var srcNode = SMData.nodes.get(pp.nodeId);
+        if (srcNode && srcNode.nodeType === 'spine') {
+            SMTool._initAnimPreview(srcNode);
+        }
+    }
+
+    // ★ 层级预览：重置所有层的播放链，强制从头构建
+    if (pp._layerSkeletons) {
+        for (var i = 0; i < pp._layerSkeletons.length; i++) {
+            var ls = pp._layerSkeletons[i];
+            ls._chainIdx = 0;
+            ls._chainDone = false;
+            ls._chainElapsed = 0;
+            ls._delayElapsed = 0;
+            ls._nestedSubActive = false;
+            ls._nestedLayerSkeletons = null;
+            ls._hidePermanent = false;
+            ls._hideRemaining = 0;
+            ls._pendingHide = undefined;
+            ls._loopTrack = { currentLoop: 0, totalElapsed: 0 };
+        }
+        pp._subtreeCache = {};
+        pp._needsLayerReinit = true;
+        pp._startupDelayFrames = 6;
+        // ★ 清除自动循环定时器
+        if (pp._loopRestartTimer) { clearTimeout(pp._loopRestartTimer); pp._loopRestartTimer = null; }
+    }
+
+    // ★ 动画流：强制回到步骤0，从头播放
+    var fb = SMData._fullPlayback;
+    if (fb && fb.activePathIdx >= 0) {
+        fb.currentStep = 0;
+        fb._stepped = false;
+        fb.isPlaying = true;
+        if (fb._timer) { clearTimeout(fb._timer); fb._timer = null; }
+        SMTool._clearAllProgressBars();
+        SMTool._playFullStep();
+    }
+};
+
+// ★ 暂停/继续浮窗预览播放（仅暂停/继续，绝不触发重播）
 SMTool._togglePreviewPause = function () {
     var pp = SMData._animPreview;
     if (!pp || !pp.visible) return;
+
+    // ★ 防抖锁：250ms 内忽略重复点击，杜绝快速连点触发意外行为
+    var now = Date.now();
+    if (pp._pauseToggleLock && now - pp._pauseToggleLock < 250) return;
+    pp._pauseToggleLock = now;
 
     var btn = document.getElementById('appPauseBtn');
     var isPaused = pp._flowFrozen;
@@ -3261,7 +3324,6 @@ SMTool._togglePreviewPause = function () {
     if (isPaused) {
         // ★ 继续播放：解除预览冻结 + 恢复所有 Spine 节点动画
         pp._flowFrozen = false;
-        // 恢复所有主画布动画节点（timeScale 从 0 恢复为 1）
         SMTool._unfreezeAllNodes();
         if (btn) {
             btn.classList.remove('paused');
@@ -3271,7 +3333,6 @@ SMTool._togglePreviewPause = function () {
     } else {
         // ★ 暂停播放：冻结预览 + 冻结所有 Spine 节点在最后一帧
         pp._flowFrozen = true;
-        // 冻结所有主画布动画节点（timeScale=0，保留当前帧）
         SMTool._freezeAllNodes();
         if (btn) {
             btn.classList.add('paused');
@@ -3295,7 +3356,7 @@ SMTool._initAnimPreviewPanel = function () {
     panel.addEventListener('mousedown', function (e) {
         if (e.target.closest('.app-close')) return;
         if (e.target.closest('.app-resize-handle')) return;
-        if (SMData._animPreview && SMData._animPreview._layerDragTargetIdx >= 0) return;
+        if (SMData._animPreview && SMData._animPreview._layerPosMode && SMData._animPreview._layerPosMode.active) return;
         e.preventDefault();
         e.stopPropagation();
         var rect = panel.getBoundingClientRect();

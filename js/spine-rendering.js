@@ -1143,6 +1143,38 @@ SMTool._renderAnimPreview = function (now) {
     if (!pp._flowFrozen) {
         pp.state.update(dt * previewSpeed);
     }
+
+    // ★ 单节点动画播完后延迟 1 秒自动从头重播
+    if (!pp._flowFrozen && pp.state && !pp._layerSkeletons) {
+        var trackEntry = pp.state.getCurrent(0);
+        var isComplete = false;
+        if (trackEntry) {
+            try {
+                if (typeof trackEntry.isComplete === 'function') {
+                    isComplete = trackEntry.isComplete();
+                } else if (trackEntry.isComplete !== undefined) {
+                    isComplete = !!trackEntry.isComplete;
+                }
+            } catch (e) { isComplete = false; }
+        }
+        if (isComplete) {
+            if (!pp._singleLoopTimer) {
+                pp._singleLoopTimer = setTimeout(function () {
+                    pp._singleLoopTimer = null;
+                    var srcNode = SMData.nodes.get(pp.nodeId);
+                    if (srcNode && srcNode.nodeType === 'spine') {
+                        SMTool._initAnimPreview(srcNode);
+                    }
+                }, 1000);
+            }
+        } else {
+            if (pp._singleLoopTimer) {
+                clearTimeout(pp._singleLoopTimer);
+                pp._singleLoopTimer = null;
+            }
+        }
+    }
+
     pp.state.apply(pp.skeleton);
     pp.skeleton.updateWorldTransform(pp._physParam);
 
@@ -1302,6 +1334,10 @@ SMTool._destroyAnimPreview = function () {
         pp._layerSkeletons = null;
     }
     pp._layerPreview = false;
+    pp._layerPosMode = null;
+    // ★ 清理自动循环定时器
+    if (pp._singleLoopTimer) { clearTimeout(pp._singleLoopTimer); pp._singleLoopTimer = null; }
+    if (pp._loopRestartTimer) { clearTimeout(pp._loopRestartTimer); pp._loopRestartTimer = null; }
     // ★★ 清理嵌套播放树缓存
     pp._subtreeCache = {};
     pp._playbackTree = null;

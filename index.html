@@ -7,7 +7,7 @@
     <meta http-equiv="Expires" content="0" />
     <title>Spine Animation State Machine</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link rel="stylesheet" href="css/styles.css?v=20260617">
+    <link rel="stylesheet" href="css/styles.css?v=20260618">
 </head>
 <body>
     <!-- ===== 画布层 ===== -->
@@ -219,7 +219,8 @@
                 <span class="app-zoom-label" id="appZoomLabel">100%</span>
                 <button class="app-zoom-reset" id="appZoomReset" title="恢复 100%" onclick="SMTool._resetAnimPreviewZoom()">1:1</button>
             </div>
-            <!-- 暂停/继续播放按钮（右下角） -->
+            <!-- 刷新从头播放按钮 + 暂停/继续播放按钮（右下角） -->
+            <button class="app-restart-btn" id="appRestartBtn" onclick="SMTool._restartPreview()" title="刷新从头播放">↺</button>
             <button class="app-pause-btn" id="appPauseBtn" onclick="SMTool._togglePreviewPause()" title="暂停 / 继续播放">⏸</button>
         </div>
         <div class="app-resize-handle"></div>

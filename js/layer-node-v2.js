@@ -985,10 +985,8 @@ SMTool._showLayerPreview = function (layerNode) {
     }
 
     // 销毁旧预览
-    // ★ 保存当前层的位置拖拽激活状态（barrier 重新初始化后恢复）
-    var savedDragIdx = pp._layerDragTargetIdx;
-    var savedDragLayer = (savedDragIdx >= 0 && pp._layerSkeletons && savedDragIdx < pp._layerSkeletons.length)
-        ? pp._layerSkeletons[savedDragIdx].layer : -1;
+    // ★ 保存当前层的位置修改模式状态（barrier 重新初始化后恢复）
+    var savedPosMode = pp._layerPosMode ? { active: pp._layerPosMode.active, selectedIndices: pp._layerPosMode.selectedIndices ? new Set(pp._layerPosMode.selectedIndices) : new Set(), _preEditOffsets: pp._layerPosMode._preEditOffsets ? JSON.parse(JSON.stringify(pp._layerPosMode._preEditOffsets)) : {} } : null;
     SMTool._destroyAnimPreview();
     panel.style.display = 'flex';
     pp.visible = true;
@@ -1325,18 +1323,24 @@ SMTool._showLayerPreview = function (layerNode) {
     }
 
     pp._layerSkeletons = layerSkeletons;
-    // ★ 恢复之前激活的位置拖拽模式（barrier 重新初始化后保持激活状态）
-    if (savedDragLayer >= 0) {
+    // ★ 恢复之前激活的位置修改模式（barrier 重新初始化后保持激活状态）
+    if (savedPosMode && savedPosMode.active && savedPosMode.selectedIndices && savedPosMode.selectedIndices.size > 0) {
+        pp._layerPosMode = savedPosMode;
+        // ★ 重新保存各层骨架位置快照（barrier 重建后骨架对象已更新）
         for (var sdi = 0; sdi < layerSkeletons.length; sdi++) {
-            if (layerSkeletons[sdi].layer === savedDragLayer) {
-                pp._layerDragTargetIdx = sdi;
-                layerSkeletons[sdi]._positionDragActive = true;
-                if (layerSkeletons[sdi].skeleton) {
-                    layerSkeletons[sdi]._savedSkX = layerSkeletons[sdi].skeleton.x;
-                    layerSkeletons[sdi]._savedSkY = layerSkeletons[sdi].skeleton.y;
+            layerSkeletons[sdi]._preEditSkelPositions = [];
+            var _collectSkels2 = function (entry) {
+                if (!entry) return;
+                var chain = entry._chainSkeletons;
+                if (chain && chain.length > 0) {
+                    for (var cj = 0; cj < chain.length; cj++) {
+                        if (chain[cj].skeleton) layerSkeletons[sdi]._preEditSkelPositions.push({ sk: chain[cj].skeleton, x: chain[cj].skeleton.x, y: chain[cj].skeleton.y });
+                    }
+                } else if (entry.skeleton) {
+                    layerSkeletons[sdi]._preEditSkelPositions.push({ sk: entry.skeleton, x: entry.skeleton.x, y: entry.skeleton.y });
                 }
-                break;
-            }
+            };
+            _collectSkels2(layerSkeletons[sdi]);
         }
     }
     pp.skeleton = null;
@@ -2177,6 +2181,9 @@ SMTool._renderLayerPreview = function (layerNode, pp, now) {
     // ★ 同步主画布节点高亮
     SMTool._updateLayerPlayingHighlights(activeNodeIds, allChainNodeIds, activeNodeProgress);
 
+    // ★ 实时刷新层级列表当前播放节点名
+    SMTool._updateLayerListCurrentNodes();
+
     // ★★★ 实时刷新流面板分支节点高亮
     var anyBranchChanged = false;
     for (var bi2 = 0; bi2 < list.length; bi2++) {
@@ -2226,76 +2233,79 @@ SMTool._renderLayerPreview = function (layerNode, pp, now) {
                 }
             }
 
-            // 未在流播放中 → 大循环
-            // ★★ 先保存所有骨架的当前位置（大循环不能丢失拖拽后的位置）
-            var savedPositions = {};
-            var _savePos = function (entry) {
-                if (!entry) return;
-                var chain = entry._chainSkeletons;
-                if (chain && chain.length > 0) {
-                    for (var sci = 0; sci < chain.length; sci++) {
-                        var csk = chain[sci];
-                        if (csk.skeleton && csk._chainNodeId != null) {
-                            savedPositions[csk._chainNodeId] = { x: csk.skeleton.x, y: csk.skeleton.y };
+            // 未在流播放中 → 大循环（延迟 1 秒后自动从头开始）
+            if (!pp._loopRestartTimer) {
+                pp._loopRestartTimer = setTimeout(function () {
+                    pp._loopRestartTimer = null;
+                    // ★★ 先保存所有骨架的当前位置（大循环不能丢失拖拽后的位置）
+                    var savedPositions = {};
+                    var _savePos = function (entry) {
+                        if (!entry) return;
+                        var chain = entry._chainSkeletons;
+                        if (chain && chain.length > 0) {
+                            for (var sci = 0; sci < chain.length; sci++) {
+                                var csk = chain[sci];
+                                if (csk.skeleton && csk._chainNodeId != null) {
+                                    savedPositions[csk._chainNodeId] = { x: csk.skeleton.x, y: csk.skeleton.y };
+                                }
+                            }
+                        } else if (entry.skeleton && (entry._chainNodeId != null || entry.nodeId != null)) {
+                            var kid = entry._chainNodeId || entry.nodeId;
+                            savedPositions[kid] = { x: entry.skeleton.x, y: entry.skeleton.y };
                         }
-                    }
-                } else if (entry.skeleton && (entry._chainNodeId != null || entry.nodeId != null)) {
-                    var kid = entry._chainNodeId || entry.nodeId;
-                    savedPositions[kid] = { x: entry.skeleton.x, y: entry.skeleton.y };
-                }
-                if (entry._nestedLayerSkeletons) {
-                    for (var sni = 0; sni < entry._nestedLayerSkeletons.length; sni++) {
-                        _savePos(entry._nestedLayerSkeletons[sni]);
-                    }
-                }
-            };
-            for (var sk = 0; sk < list.length; sk++) { _savePos(list[sk]); }
+                        if (entry._nestedLayerSkeletons) {
+                            for (var sni = 0; sni < entry._nestedLayerSkeletons.length; sni++) {
+                                _savePos(entry._nestedLayerSkeletons[sni]);
+                            }
+                        }
+                    };
+                    for (var sk = 0; sk < list.length; sk++) { _savePos(list[sk]); }
 
-            for (var k = 0; k < list.length; k++) {
-                list[k]._chainDone = false;
-                list[k]._chainIdx = 0;
-                list[k]._delayElapsed = 0;
-                list[k]._nestedSubActive = false;
-                list[k]._nestedLayerSkeletons = null;
-                list[k]._hidePermanent = false;
-                list[k]._hideRemaining = 0;
-                list[k]._pendingHide = undefined;
+                    for (var k = 0; k < list.length; k++) {
+                        list[k]._chainDone = false;
+                        list[k]._chainIdx = 0;
+                        list[k]._delayElapsed = 0;
+                        list[k]._nestedSubActive = false;
+                        list[k]._nestedLayerSkeletons = null;
+                        list[k]._hidePermanent = false;
+                        list[k]._hideRemaining = 0;
+                        list[k]._pendingHide = undefined;
+                    }
+                    // ★★ 清除嵌套子树缓存，强制下次按最新 _containerOffset 重建
+                    pp._subtreeCache = {};
+
+                    // ★★ 恢复保存的位置（递归恢复嵌套子树）
+                    var _restorePos = function (entry) {
+                        if (!entry) return;
+                        var chain = entry._chainSkeletons;
+                        if (chain && chain.length > 0) {
+                            for (var rci = 0; rci < chain.length; rci++) {
+                                var rcsk = chain[rci];
+                                if (rcsk.skeleton && rcsk._chainNodeId != null) {
+                                    var rp = savedPositions[rcsk._chainNodeId];
+                                    if (rp) { rcsk.skeleton.x = rp.x; rcsk.skeleton.y = rp.y; }
+                                }
+                            }
+                        } else if (entry.skeleton && (entry._chainNodeId != null || entry.nodeId != null)) {
+                            var rkid = entry._chainNodeId || entry.nodeId;
+                            var rp2 = savedPositions[rkid];
+                            if (rp2) { entry.skeleton.x = rp2.x; entry.skeleton.y = rp2.y; }
+                        }
+                        if (entry._nestedLayerSkeletons) {
+                            for (var sni = 0; sni < entry._nestedLayerSkeletons.length; sni++) {
+                                _restorePos(entry._nestedLayerSkeletons[sni]);
+                            }
+                        }
+                    };
+                    for (var rk = 0; rk < list.length; rk++) { _restorePos(list[rk]); }
+                    pp._startupDelayFrames = 6;
+                    pp._needsLayerReinit = true;
+                    gl.clearColor(0, 0, 0, 0);
+                    gl.clearStencil(0);
+                    gl.clear(gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
+                    gl.flush();
+                }, 1000);
             }
-            // ★★ 清除嵌套子树缓存，强制下次按最新 _containerOffset 重建
-            pp._subtreeCache = {};
-
-            // ★★ 恢复保存的位置（递归恢复嵌套子树）
-            var _restorePos = function (entry) {
-                if (!entry) return;
-                var chain = entry._chainSkeletons;
-                if (chain && chain.length > 0) {
-                    for (var rci = 0; rci < chain.length; rci++) {
-                        var rcsk = chain[rci];
-                        if (rcsk.skeleton && rcsk._chainNodeId != null) {
-                            var rp = savedPositions[rcsk._chainNodeId];
-                            if (rp) { rcsk.skeleton.x = rp.x; rcsk.skeleton.y = rp.y; }
-                        }
-                    }
-                } else if (entry.skeleton && (entry._chainNodeId != null || entry.nodeId != null)) {
-                    var rkid = entry._chainNodeId || entry.nodeId;
-                    var rp2 = savedPositions[rkid];
-                    if (rp2) { entry.skeleton.x = rp2.x; entry.skeleton.y = rp2.y; }
-                }
-                // ★★ 递归恢复嵌套子树骨架位置
-                if (entry._nestedLayerSkeletons) {
-                    for (var sni = 0; sni < entry._nestedLayerSkeletons.length; sni++) {
-                        _restorePos(entry._nestedLayerSkeletons[sni]);
-                    }
-                }
-            };
-            for (var rk = 0; rk < list.length; rk++) { _restorePos(list[rk]); }
-            pp._startupDelayFrames = 6;
-            pp._needsLayerReinit = true;
-            // ★★ 不触发全量重建（_needsLayerRebuild=false），保留骨架位置偏移
-            gl.clearColor(0, 0, 0, 0);
-            gl.clearStencil(0);
-            gl.clear(gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
-            gl.flush();
         }
     }
 };
@@ -2730,48 +2740,127 @@ SMTool._toggleLayerList = function () {
     }
 };
 
-// ★ 构建层级列表内容
+// ★ 获取某层当前播放的节点显示名（用于层级列表实时显示）
+SMTool._getLayerCurNodeName = function (ls) {
+    if (!ls) return '';
+    var activeSkel = null;
+    // 从链中找到当前活跃的骨架
+    if (ls._chainSkeletons && ls._chainSkeletons.length > 0) {
+        var idx = (typeof ls._chainIdx === 'number' && ls._chainIdx >= 0 && ls._chainIdx < ls._chainSkeletons.length) ? ls._chainIdx : 0;
+        activeSkel = ls._chainSkeletons[idx];
+    } else {
+        activeSkel = ls;
+    }
+    if (!activeSkel) return '';
+    var nid = activeSkel._chainNodeId || ls.nodeId;
+    if (nid == null) return '';
+    var node = SMData.nodes.get(nid);
+    if (!node) return '';
+    // ★ 动画节点：显示 currentAnim（动画状态名）；延时器：显示延时值；隐藏器：显示隐藏值
+    if (node.nodeType === 'spine') {
+        return node.currentAnim || (node.animations && node.animations.length > 0 ? node.animations[0].name : node.name || '');
+    } else if (node.nodeType === 'delayer') {
+        return '⏱ 延时 ' + (node._delayValue || 1.0).toFixed(1) + 's';
+    } else if (node.nodeType === 'hider') {
+        var hv = (node._hideValue !== undefined) ? node._hideValue : -1;
+        return '🙈 隐藏 ' + (hv === -1 ? '永久' : hv + 's');
+    } else if (node.nodeType === 'layer') {
+        return '📚 ' + (node.name || '并行播放');
+    }
+    return node.name || '';
+};
+
+// ★ 实时更新层级列表中每层的当前播放节点名（由 _renderLayerPreview 每帧调用）
+SMTool._updateLayerListCurrentNodes = function () {
+    var pp = SMData._animPreview;
+    if (!pp || !pp._layerSkeletons) return;
+    // ★ 仅当层级列表面板可见时才更新 DOM
+    var listEl = document.getElementById('appLayerList');
+    if (!listEl || listEl.style.display === 'none') return;
+
+    for (var i = 0; i < pp._layerSkeletons.length; i++) {
+        var name = SMTool._getLayerCurNodeName(pp._layerSkeletons[i]);
+        var el = document.getElementById('allCurNode-' + i);
+        if (el && el.textContent !== name) {
+            el.textContent = name;
+        }
+    }
+};
 SMTool._buildLayerList = function () {
     var content = document.getElementById('allListContent');
     if (!content) return;
     var pp = SMData._animPreview;
     if (!pp || !pp._layerSkeletons) { content.innerHTML = '<div style="padding:12px;color:var(--text2);font-size:12px">无层级数据</div>'; return; }
 
-    var html = '';
+    // ★ 初始化位置模式状态
+    if (!pp._layerPosMode) pp._layerPosMode = { active: false, selectedIndices: new Set(), _preEditOffsets: {} };
+
+    var posMode = pp._layerPosMode;
+    var isPosActive = posMode.active;
+    var selSet = posMode.selectedIndices;
+
+    // ★ 构建顶部工具栏 HTML（四方向箭头图标用CSS绘制）
+    var toolbarHtml = '<div class="all-pos-toolbar">' +
+        '<button class="all-pos-tool-btn' + (isPosActive ? ' active' : '') + '" id="allPosToolBtn" ' +
+            'onclick="SMTool._toggleLayerPosMode()" title="' + (isPosActive ? '退出位置修改模式' : '进入位置修改模式（可Shift多选层，在预览面板拖拽移动）') + '">' +
+            '<span class="all-pos-tool-icon"><i class="arr-t"></i><i class="arr-b"></i><i class="arr-l"></i><i class="arr-r"></i></span>' +
+        '</button>' +
+        '<div class="all-pos-tool-actions' + (isPosActive ? ' show' : '') + '" id="allPosToolActions">' +
+            '<button class="pos-ok" onclick="SMTool._confirmAllLayerPositions()">✓ 确定</button>' +
+            '<button class="pos-cancel" onclick="SMTool._cancelAllLayerPositions()">✗ 取消</button>' +
+            '<button class="pos-reset" onclick="SMTool._resetAllLayerPositions()">↺ 默认</button>' +
+        '</div>' +
+    '</div>';
+
+    // ★ 构建每层 HTML（无单独的位置图标）
+    var html = toolbarHtml;
     for (var i = 0; i < pp._layerSkeletons.length; i++) {
         var ls = pp._layerSkeletons[i];
         var layerNum = ls.layer || (i + 1);
         var fileName = '';
-        // 从链首骨架获取源文件名
-        if (ls._chainSkeletons && ls._chainSkeletons.length > 0) {
-            var first = ls._chainSkeletons[0];
-            var srcNode = SMData.nodes.get(first._chainNodeId || ls.nodeId);
-            if (srcNode && srcNode.sourceFile) fileName = srcNode.sourceFile;
+        // ★ 沿下游连线追溯找到第一个 Spine 动画节点，获取其源文件名
+        if (ls.nodeId != null) {
+            var resolved = SMTool._resolveAnimNodeDownstream(ls.nodeId);
+            var displayNode = resolved.animNode;
+            if (displayNode && displayNode.nodeType === 'spine' && displayNode.sourceFile) {
+                fileName = displayNode.sourceFile;
+            }
         }
-        if (!fileName && ls.nodeId != null) {
-            var sn = SMData.nodes.get(ls.nodeId);
-            if (sn && sn.sourceFile) fileName = sn.sourceFile;
+        // 兜底：如果追溯失败，尝试从链首骨架获取
+        if (!fileName && ls._chainSkeletons && ls._chainSkeletons.length > 0) {
+            for (var ci = 0; ci < ls._chainSkeletons.length; ci++) {
+                var cNode = SMData.nodes.get(ls._chainSkeletons[ci]._chainNodeId);
+                if (cNode && cNode.nodeType === 'spine' && cNode.sourceFile) {
+                    fileName = cNode.sourceFile;
+                    break;
+                }
+            }
         }
         fileName = fileName || ('层' + layerNum);
 
         var isHidden = ls._hidden;
-        var isPosActive = ls._positionDragActive;
-        html += '<div class="all-item' + (isHidden ? ' hidden-layer' : '') + '">' +
-            '<div class="all-item-row1">' +
-                '<span class="all-item-layer">L' + layerNum + '</span>' +
-                '<span class="all-item-file" title="' + SMTool._esc(fileName) + '">' + SMTool._esc(fileName) + '</span>' +
+        var isSelected = isPosActive && selSet.has(i);
+        // ★ 获取当前播放的节点名称
+        var curNodeName = SMTool._getLayerCurNodeName(ls);
+        html += '<div class="all-item' + (isHidden ? ' hidden-layer' : '') + (isSelected ? ' selected' : '') + (isPosActive ? ' pos-mode-hover' : '') + '" ' +
+            'data-layer-idx="' + i + '" ' +
+            'onclick="SMTool._onLayerItemClick(event,' + i + ')" title="' + (isPosActive ? '点击选择/取消层（Shift+点击范围连选）' : '') + '">' +
+            '<div class="all-item-left">' +
+                '<div class="all-item-row1">' +
+                    '<span class="all-item-layer">L' + layerNum + '</span>' +
+                    '<span class="all-item-file" title="' + SMTool._esc(fileName) + '">' + SMTool._esc(fileName) + '</span>' +
+                '</div>' +
+                '<div class="all-item-row2">' +
+                    '<button class="all-btn' + (isHidden ? '' : ' active') + '" onclick="event.stopPropagation();SMTool._toggleLayerVisibility(' + i + ')" title="' + (isHidden ? '显示' : '隐藏') + '层级">👁</button>' +
+                '</div>' +
             '</div>' +
-            '<div class="all-item-row2">' +
-                '<button class="all-btn' + (isHidden ? '' : ' active') + '" onclick="SMTool._toggleLayerVisibility(' + i + ')" title="' + (isHidden ? '显示' : '隐藏') + '层级">👁</button>' +
-                '<button class="all-btn' + (isPosActive ? ' active' : '') + '" id="allPosBtn-' + i + '" onclick="SMTool._toggleLayerPositionDrag(' + i + ')" title="拖拽移动层级位置">📍</button>' +
-            '</div>' +
-            '<div class="all-pos-actions' + (isPosActive ? ' show' : '') + '" id="allPosActions-' + i + '">' +
-                '<button class="pos-ok" onclick="SMTool._confirmLayerPosition(' + i + ')">✓ 确定</button>' +
-                '<button class="pos-cancel" onclick="SMTool._cancelLayerPosition(' + i + ')">✗ 取消</button>' +
-                '<button class="pos-reset" onclick="SMTool._resetLayerPosition(' + i + ')">↺ 默认</button>' +
-            '</div>' +
+            '<span class="all-item-cur-node" id="allCurNode-' + i + '">' + SMTool._esc(curNodeName) + '</span>' +
         '</div>';
     }
+    // ★ 底部选中数量提示（位置模式激活时显示）
+    html += '<div class="all-pos-footer' + (isPosActive && selSet.size > 0 ? ' show' : '') + '" id="allPosFooter">' +
+        (isPosActive && selSet.size > 0 ? '📍 已选 ' + selSet.size + ' 层 — 在预览面板拖拽移动' : '') +
+    '</div>';
     content.innerHTML = html;
 };
 
@@ -2784,204 +2873,329 @@ SMTool._toggleLayerVisibility = function (idx) {
     SMTool._buildLayerList();
 };
 
-// ★ 切换层级位置拖拽模式
-SMTool._toggleLayerPositionDrag = function (idx) {
+// ★ 层级列表项点击（位置模式下 shift范围连选，普通模式下无操作）
+SMTool._onLayerItemClick = function (e, idx) {
     var pp = SMData._animPreview;
     if (!pp || !pp._layerSkeletons || idx >= pp._layerSkeletons.length) return;
-    var ls = pp._layerSkeletons[idx];
-    // 关闭其他层的拖拽模式
-    for (var i = 0; i < pp._layerSkeletons.length; i++) {
-        if (i !== idx) pp._layerSkeletons[i]._positionDragActive = false;
-    }
-    ls._positionDragActive = !ls._positionDragActive;
-    if (ls._positionDragActive) {
-        // 进入拖拽模式：保存当前位置
-        if (ls.skeleton) {
-            ls._savedSkX = ls.skeleton.x;
-            ls._savedSkY = ls.skeleton.y;
+    var posMode = pp._layerPosMode;
+    if (!posMode || !posMode.active) return; // 非位置模式不处理
+
+    e.stopPropagation();
+    if (!posMode.selectedIndices) posMode.selectedIndices = new Set();
+    var selSet = posMode.selectedIndices;
+
+    if (e.shiftKey && typeof posMode._lastClickedIdx === 'number' && posMode._lastClickedIdx >= 0) {
+        // ★ Shift+点击：范围连选（从上次点击的索引到当前点击的索引之间的所有层）
+        var from = Math.min(posMode._lastClickedIdx, idx);
+        var to = Math.max(posMode._lastClickedIdx, idx);
+        for (var i = from; i <= to; i++) {
+            selSet.add(i);
         }
-        pp._layerDragTargetIdx = idx;
+    } else if (e.shiftKey) {
+        // Shift但无上次索引 → 当作切换当前项
+        if (selSet.has(idx)) {
+            selSet.delete(idx);
+        } else {
+            selSet.add(idx);
+        }
     } else {
-        pp._layerDragTargetIdx = -1;
+        // 普通点击：单选（如果仅此一项已选中则取消，否则替换为仅选此项）
+        if (selSet.size === 1 && selSet.has(idx)) {
+            selSet.clear();
+        } else {
+            selSet.clear();
+            selSet.add(idx);
+        }
+    }
+    // ★ 记录最后点击的索引（用于下次Shift范围连选）
+    posMode._lastClickedIdx = idx;
+    SMTool._buildLayerList();
+};
+
+// ★ 切换全局位置修改模式
+SMTool._toggleLayerPosMode = function () {
+    var pp = SMData._animPreview;
+    if (!pp || !pp._layerSkeletons) return;
+    if (!pp._layerPosMode) pp._layerPosMode = { active: false, selectedIndices: new Set(), _preEditOffsets: {} };
+
+    var posMode = pp._layerPosMode;
+    if (posMode.active) {
+        // 退出位置模式（不保存，等同于取消）
+        SMTool._cancelAllLayerPositions();
+    } else {
+        // 进入位置模式
+        posMode.active = true;
+        if (!posMode.selectedIndices) posMode.selectedIndices = new Set();
+        posMode.selectedIndices.clear();
+        if (!posMode._preEditOffsets) posMode._preEditOffsets = {};
+
+        // ★ 保存所有层的进入前偏移（用于取消时恢复）
+        var layerNode = SMData.nodes.get(pp.nodeId);
+        posMode._preEditOffsets = {};
+        for (var i = 0; i < pp._layerSkeletons.length; i++) {
+            var ls = pp._layerSkeletons[i];
+            var layerNum = ls.layer || (i + 1);
+            var curOff = { offX: 0, offY: 0 };
+            if (layerNode && layerNode._layerData && layerNode._layerData.layers[layerNum] && layerNode._layerData.layers[layerNum]._containerOffset) {
+                curOff.offX = layerNode._layerData.layers[layerNum]._containerOffset.offX || 0;
+                curOff.offY = layerNode._layerData.layers[layerNum]._containerOffset.offY || 0;
+            }
+            posMode._preEditOffsets[i] = curOff;
+            // ★ 保存当前骨架的实际位置（用于取消时精确定位恢复）
+            ls._preEditSkelPositions = [];
+            var _collectSkels = function (entry) {
+                if (!entry) return;
+                var chain = entry._chainSkeletons;
+                if (chain && chain.length > 0) {
+                    for (var cj = 0; cj < chain.length; cj++) {
+                        if (chain[cj].skeleton) ls._preEditSkelPositions.push({ sk: chain[cj].skeleton, x: chain[cj].skeleton.x, y: chain[cj].skeleton.y });
+                    }
+                } else if (entry.skeleton) {
+                    ls._preEditSkelPositions.push({ sk: entry.skeleton, x: entry.skeleton.x, y: entry.skeleton.y });
+                }
+            };
+            _collectSkels(ls);
+        }
+        pp._layerDragTargetIdx = -1; // 清空旧的单层拖拽目标
     }
     SMTool._buildLayerList();
 };
 
-// ★ 确定位置（保存该层的容器偏移量——整体移动所有链骨架）
-SMTool._confirmLayerPosition = function (idx) {
+// ★ 确定所有选中层的位置（写入 _containerOffset 到 layerData，持久化到 JSON）
+SMTool._confirmAllLayerPositions = function () {
     var pp = SMData._animPreview;
-    if (!pp || !pp._layerSkeletons || idx >= pp._layerSkeletons.length) return;
-    var ls = pp._layerSkeletons[idx];
+    if (!pp || !pp._layerSkeletons) return;
+    var posMode = pp._layerPosMode;
+    if (!posMode || !posMode.active) return;
 
-    // ★★ 容器模型：优先用 _defaultSkX 绝对参考（简单链已验证完美），找不到锚点时用拖拽增量叠加
     var layerNode = SMData.nodes.get(pp.nodeId);
-    if (layerNode && layerNode._layerData && ls.layer) {
-        var ld = layerNode._layerData;
-        if (!ld.layers[ls.layer]) ld.layers[ls.layer] = {};
-        // 递归搜索有 _defaultSkX 的真实骨架（含嵌套子树）
-        var _findAnchor = function(entry) {
-            if (!entry) return null;
-            var ch = entry._chainSkeletons;
-            if (ch && ch.length > 0) {
-                for (var cj = 0; cj < ch.length; cj++) {
-                    if (ch[cj].skeleton && ch[cj]._defaultSkX !== undefined) return ch[cj];
-                }
+    var selSet = posMode.selectedIndices;
+
+    // 如果没有选中任何层，则保存所有层
+    var targetIndices = (selSet && selSet.size > 0) ? Array.from(selSet) : [];
+    if (targetIndices.length === 0) {
+        for (var i = 0; i < pp._layerSkeletons.length; i++) targetIndices.push(i);
+    }
+
+    // ★ 辅助：递归查找锚点骨架
+    var _findAnchor = function (entry) {
+        if (!entry) return null;
+        var ch = entry._chainSkeletons;
+        if (ch && ch.length > 0) {
+            for (var cj = 0; cj < ch.length; cj++) {
+                if (ch[cj].skeleton && ch[cj]._defaultSkX !== undefined) return ch[cj];
             }
-            if (entry.skeleton && entry._defaultSkX !== undefined) return entry;
-            if (entry._nestedLayerSkeletons) {
-                for (var nj = 0; nj < entry._nestedLayerSkeletons.length; nj++) {
-                    var found = _findAnchor(entry._nestedLayerSkeletons[nj]);
-                    if (found) return found;
-                }
+        }
+        if (entry.skeleton && entry._defaultSkX !== undefined) return entry;
+        if (entry._nestedLayerSkeletons) {
+            for (var nj = 0; nj < entry._nestedLayerSkeletons.length; nj++) {
+                var found = _findAnchor(entry._nestedLayerSkeletons[nj]);
+                if (found) return found;
             }
-            return null;
-        };
-        var anchorSkel = _findAnchor(ls);
-        if (anchorSkel) {
-            // ★ 路径A（简单链/有真实骨架）：绝对居中参考法
-            ld.layers[ls.layer]._containerOffset = {
-                offX: anchorSkel.skeleton.x - anchorSkel._defaultSkX,
-                offY: anchorSkel.skeleton.y - anchorSkel._defaultSkY
-            };
-        } else {
-            // ★ 路径B（虚拟层 layer→layer）：拖拽增量叠加已有偏移
-            var positions = pp._layerDragStartPositions;
-            var dragOffX = 0, dragOffY = 0;
-            if (positions && positions.length > 0) {
-                for (var pi = 0; pi < positions.length; pi++) {
-                    if (positions[pi].sk && typeof positions[pi].sk.x === 'number') {
-                        dragOffX = positions[pi].sk.x - positions[pi].x;
-                        dragOffY = positions[pi].sk.y - positions[pi].y;
-                        break;
+        }
+        return null;
+    };
+
+    for (var ti = 0; ti < targetIndices.length; ti++) {
+        var idx = targetIndices[ti];
+        if (idx >= pp._layerSkeletons.length) continue;
+        var ls = pp._layerSkeletons[idx];
+        var layerNum = ls.layer || (idx + 1);
+
+        if (layerNode && layerNode._layerData) {
+            var ld = layerNode._layerData;
+            if (!ld.layers[layerNum]) ld.layers[layerNum] = {};
+
+            var anchorSkel = _findAnchor(ls);
+            if (anchorSkel) {
+                ld.layers[layerNum]._containerOffset = {
+                    offX: anchorSkel.skeleton.x - anchorSkel._defaultSkX,
+                    offY: anchorSkel.skeleton.y - anchorSkel._defaultSkY
+                };
+            } else {
+                // 兜底：用拖拽增量
+                var positions = pp._layerDragStartPositions;
+                var dragOffX = 0, dragOffY = 0;
+                if (positions && positions.length > 0) {
+                    for (var pi = 0; pi < positions.length; pi++) {
+                        if (positions[pi].sk && typeof positions[pi].sk.x === 'number') {
+                            dragOffX = positions[pi].sk.x - positions[pi].x;
+                            dragOffY = positions[pi].sk.y - positions[pi].y;
+                            break;
+                        }
                     }
                 }
+                var oldOff = ld.layers[layerNum]._containerOffset || { offX: 0, offY: 0 };
+                ld.layers[layerNum]._containerOffset = {
+                    offX: oldOff.offX + dragOffX,
+                    offY: oldOff.offY + dragOffY
+                };
             }
-            var oldOff = ld.layers[ls.layer]._containerOffset || { offX: 0, offY: 0 };
-            ld.layers[ls.layer]._containerOffset = {
-                offX: oldOff.offX + dragOffX,
-                offY: oldOff.offY + dragOffY
-            };
+            delete ld.layers[layerNum].posOffX;
+            delete ld.layers[layerNum].posOffY;
+            delete ld.layers[layerNum]._chainPositions;
+            ls._containerOffX = ld.layers[layerNum]._containerOffset.offX;
+            ls._containerOffY = ld.layers[layerNum]._containerOffset.offY;
         }
-        delete ld.layers[ls.layer].posOffX;
-        delete ld.layers[ls.layer].posOffY;
-        delete ld.layers[ls.layer]._chainPositions;
-        ls._containerOffX = ld.layers[ls.layer]._containerOffset.offX;
-        ls._containerOffY = ld.layers[ls.layer]._containerOffset.offY;
-        pp._subtreeCache = {};
     }
-    ls._positionDragActive = false;
+    pp._subtreeCache = {};
+
+    // ★ 退出位置模式
+    posMode.active = false;
+    posMode.selectedIndices.clear();
     pp._layerDragTargetIdx = -1;
+    SMTool._buildLayerList();
+    document.getElementById('sbStatus').textContent = '✅ 已保存 ' + targetIndices.length + ' 层的位置';
+    setTimeout(function () { document.getElementById('sbStatus').textContent = ''; }, 2000);
+};
+
+// ★ 取消所有选中层的位置修改（恢复到进入模式前的位置）
+SMTool._cancelAllLayerPositions = function () {
+    var pp = SMData._animPreview;
+    if (!pp || !pp._layerSkeletons) return;
+    var posMode = pp._layerPosMode;
+    if (!posMode) { pp._layerDragTargetIdx = -1; SMTool._buildLayerList(); return; }
+
+    // ★ 恢复所有层骨架到进入模式前的位置
+    for (var i = 0; i < pp._layerSkeletons.length; i++) {
+        var ls = pp._layerSkeletons[i];
+        if (ls._preEditSkelPositions) {
+            for (var pi = 0; pi < ls._preEditSkelPositions.length; pi++) {
+                var sp = ls._preEditSkelPositions[pi];
+                sp.sk.x = sp.x;
+                sp.sk.y = sp.y;
+            }
+        }
+    }
+
+    posMode.active = false;
+    if (posMode.selectedIndices) posMode.selectedIndices.clear();
+    pp._layerDragTargetIdx = -1;
+    pp._layerDragActive = false;
     SMTool._buildLayerList();
 };
 
-// ★ 取消位置（恢复该层所有链骨架到拖拽前的位置）
-SMTool._cancelLayerPosition = function (idx) {
+// ★ 恢复所有选中层的默认位置（清除容器偏移，回到初始居中）
+SMTool._resetAllLayerPositions = function () {
     var pp = SMData._animPreview;
-    if (!pp || !pp._layerSkeletons || idx >= pp._layerSkeletons.length) return;
-    var ls = pp._layerSkeletons[idx];
-    var positions = pp._layerDragStartPositions;
-    if (positions) {
-        for (var pi = 0; pi < positions.length; pi++) {
-            positions[pi].sk.x = positions[pi].x;
-            positions[pi].sk.y = positions[pi].y;
-        }
-    }
-    ls._positionDragActive = false;
-    pp._layerDragTargetIdx = -1;
-    SMTool._buildLayerList();
-};
+    if (!pp || !pp._layerSkeletons) return;
+    var posMode = pp._layerPosMode;
+    if (!posMode || !posMode.active) return;
 
-// ★ 恢复默认位置（清除该层的容器偏移）
-SMTool._resetLayerPosition = function (idx) {
-    var pp = SMData._animPreview;
-    if (!pp || !pp._layerSkeletons || idx >= pp._layerSkeletons.length) return;
-    var ls = pp._layerSkeletons[idx];
-    // 恢复所有链骨架到默认居中位置
-    var chain = ls._chainSkeletons || [ls];
-    for (var ci = 0; ci < chain.length; ci++) {
-        var csk = chain[ci];
-        if (csk.skeleton && csk._defaultSkX !== undefined) {
-            csk.skeleton.x = csk._defaultSkX;
-            csk.skeleton.y = csk._defaultSkY;
-        }
-    }
-    // ★★ 清除工程中保存的容器偏移（保留个体 _chainPositions 以支持子节点微调）
     var layerNode = SMData.nodes.get(pp.nodeId);
-    if (layerNode && layerNode._layerData && ls.layer) {
-        var ld = layerNode._layerData;
-        if (ld.layers[ls.layer]) {
-            delete ld.layers[ls.layer]._containerOffset;
-            delete ld.layers[ls.layer].posOffX;
-            delete ld.layers[ls.layer].posOffY;
-            // ★ 注意：不清除 _chainPositions（可能被子节点独立调整过）
+    var selSet = posMode.selectedIndices;
+
+    // 如果没有选中任何层，则重置所有层
+    var targetIndices = (selSet && selSet.size > 0) ? Array.from(selSet) : [];
+    if (targetIndices.length === 0) {
+        for (var i = 0; i < pp._layerSkeletons.length; i++) targetIndices.push(i);
+    }
+
+    for (var ti = 0; ti < targetIndices.length; ti++) {
+        var idx = targetIndices[ti];
+        if (idx >= pp._layerSkeletons.length) continue;
+        var ls = pp._layerSkeletons[idx];
+        var layerNum = ls.layer || (idx + 1);
+
+        // 恢复所有链骨架到默认居中位置
+        var _resetChain = function (entry) {
+            if (!entry) return;
+            var chain = entry._chainSkeletons;
+            if (chain && chain.length > 0) {
+                for (var cj = 0; cj < chain.length; cj++) {
+                    if (chain[cj].skeleton && chain[cj]._defaultSkX !== undefined) {
+                        chain[cj].skeleton.x = chain[cj]._defaultSkX;
+                        chain[cj].skeleton.y = chain[cj]._defaultSkY;
+                    }
+                }
+            } else if (entry.skeleton && entry._defaultSkX !== undefined) {
+                entry.skeleton.x = entry._defaultSkX;
+                entry.skeleton.y = entry._defaultSkY;
+            }
+        };
+        _resetChain(ls);
+
+        // 清除工程中的容器偏移
+        if (layerNode && layerNode._layerData && layerNode._layerData.layers[layerNum]) {
+            delete layerNode._layerData.layers[layerNum]._containerOffset;
+            delete layerNode._layerData.layers[layerNum].posOffX;
+            delete layerNode._layerData.layers[layerNum].posOffY;
         }
     }
+
+    pp._subtreeCache = {};
     SMTool._buildLayerList();
+    document.getElementById('sbStatus').textContent = '↺ 已恢复 ' + targetIndices.length + ' 层到默认位置';
+    setTimeout(function () { document.getElementById('sbStatus').textContent = ''; }, 2000);
 };
 
-// ★ 鼠标按下：开始拖拽层级位置（保存该层所有链骨架的起始位置）
+// ★ 鼠标按下：开始拖拽所有选中层的位置（位置修改模式下）
 SMTool._onLayerPosMouseDown = function (e) {
     var pp = SMData._animPreview;
-    if (!pp || pp._layerDragTargetIdx < 0 || !pp._layerSkeletons) return;
+    if (!pp || !pp._layerSkeletons) return;
+    var posMode = pp._layerPosMode;
+    if (!posMode || !posMode.active) return;
 
-    // ★★ 安全校验：索引必须在当前活跃层数组范围内
-    if (pp._layerDragTargetIdx >= pp._layerSkeletons.length) return;
-    var ls = pp._layerSkeletons[pp._layerDragTargetIdx];
-    if (!ls || !ls._positionDragActive) return;
-
-    // ★★ 收集该层所有可见骨架（含嵌套子层，递归），用于整体移位
-    var allSkeletons = [];
-    var _collectAll = function (entry) {
-        if (!entry) return;
-        // 主链骨架
-        var chain = entry._chainSkeletons;
-        if (chain && chain.length > 0) {
-            for (var ci = 0; ci < chain.length; ci++) {
-                if (chain[ci].skeleton) allSkeletons.push(chain[ci].skeleton);
-            }
-        } else if (entry.skeleton) {
-            allSkeletons.push(entry.skeleton);
-        }
-        // 递归收集嵌套子层
-        if (entry._nestedSubActive && entry._nestedLayerSkeletons) {
-            for (var ni = 0; ni < entry._nestedLayerSkeletons.length; ni++) {
-                _collectAll(entry._nestedLayerSkeletons[ni]);
-            }
-        }
-    };
-    _collectAll(ls);
-    if (allSkeletons.length === 0) return;
+    var selSet = posMode.selectedIndices;
+    // 没有选中任何层 → 不响应拖拽
+    if (!selSet || selSet.size === 0) return;
 
     var canvas = pp.canvas || document.getElementById('appCanvas');
     if (!canvas) return;
     var rect = canvas.getBoundingClientRect();
     if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) return;
 
-    // ★★ 阻止事件冒泡，防止触发画布级操作（退出动画流等）
+    // ★★ 收集所有选中层的所有可见骨架（含嵌套子层，递归），用于整体移位
+    var allPositions = []; // [{ sk, x, y }]
+    var selArr = Array.from(selSet);
+    for (var si = 0; si < selArr.length; si++) {
+        var idx = selArr[si];
+        if (idx >= pp._layerSkeletons.length) continue;
+        var ls = pp._layerSkeletons[idx];
+
+        var _collectAll = function (entry) {
+            if (!entry) return;
+            var chain = entry._chainSkeletons;
+            if (chain && chain.length > 0) {
+                for (var cj = 0; cj < chain.length; cj++) {
+                    if (chain[cj].skeleton) allPositions.push({ sk: chain[cj].skeleton, x: chain[cj].skeleton.x, y: chain[cj].skeleton.y });
+                }
+            } else if (entry.skeleton) {
+                allPositions.push({ sk: entry.skeleton, x: entry.skeleton.x, y: entry.skeleton.y });
+            }
+            // 递归收集嵌套子层
+            if (entry._nestedSubActive && entry._nestedLayerSkeletons) {
+                for (var nj = 0; nj < entry._nestedLayerSkeletons.length; nj++) {
+                    _collectAll(entry._nestedLayerSkeletons[nj]);
+                }
+            }
+        };
+        _collectAll(ls);
+    }
+
+    if (allPositions.length === 0) return;
+
+    // ★★ 阻止事件冒泡，防止触发画布级操作
     e.preventDefault();
     e.stopPropagation();
     pp._layerDragActive = true;
     pp._layerDragStartX = e.clientX;
     pp._layerDragStartY = e.clientY;
-    pp._layerDragStartPositions = [];
-    for (var si = 0; si < allSkeletons.length; si++) {
-        pp._layerDragStartPositions.push({ sk: allSkeletons[si], x: allSkeletons[si].x, y: allSkeletons[si].y });
-    }
+    pp._layerDragStartPositions = allPositions;
 };
 
-// ★ 鼠标移动：拖拽层级位置（该层所有链骨架同步移动）
+// ★ 鼠标移动：拖拽所有选中层的位置（同步移动）
 SMTool._onLayerPosMouseMove = function (e) {
     var pp = SMData._animPreview;
-    if (!pp || !pp._layerDragActive || pp._layerDragTargetIdx < 0 || !pp._layerSkeletons) return;
-    if (pp._layerDragTargetIdx >= pp._layerSkeletons.length) return;
-    var ls = pp._layerSkeletons[pp._layerDragTargetIdx];
-    if (!ls) return;
+    if (!pp || !pp._layerDragActive) return;
+    var posMode = pp._layerPosMode;
+    if (!posMode || !posMode.active) return;
 
     e.stopPropagation();
     var zoom = pp._contentZoom || 1.0;
     var dx = (e.clientX - pp._layerDragStartX) / zoom;
     var dy = (e.clientY - pp._layerDragStartY) / zoom;
-    // ★ 将该层所有链骨架移动相同的位移量
+    // ★ 将所有选中层的骨架移动相同的位移量
     var positions = pp._layerDragStartPositions;
     if (positions) {
         for (var pi = 0; pi < positions.length; pi++) {
@@ -2991,72 +3205,13 @@ SMTool._onLayerPosMouseMove = function (e) {
     }
 };
 
-// ★ 鼠标释放：结束拖拽并自动保存位置（容器模型）
+// ★ 鼠标释放：结束拖拽（不自动保存，由确认/取消按钮控制）
 SMTool._onLayerPosMouseUp = function () {
     var pp = SMData._animPreview;
     if (!pp) return;
     if (!pp._layerDragActive) { pp._layerDragActive = false; return; }
     pp._layerDragActive = false;
-
-    // ★★ 容器模型：优先 _defaultSkX 绝对参考，找不到锚点则拖拽增量叠加
-    var idx = pp._layerDragTargetIdx;
-    if (idx >= 0 && pp._layerSkeletons && idx < pp._layerSkeletons.length) {
-        var ls = pp._layerSkeletons[idx];
-        if (ls && ls.layer) {
-            var layerNode = SMData.nodes.get(pp.nodeId);
-            if (layerNode && layerNode._layerData) {
-                var ld = layerNode._layerData;
-                if (!ld.layers[ls.layer]) ld.layers[ls.layer] = {};
-                var _findAnchor = function(entry) {
-                    if (!entry) return null;
-                    var ch = entry._chainSkeletons;
-                    if (ch && ch.length > 0) {
-                        for (var cj = 0; cj < ch.length; cj++) {
-                            if (ch[cj].skeleton && ch[cj]._defaultSkX !== undefined) return ch[cj];
-                        }
-                    }
-                    if (entry.skeleton && entry._defaultSkX !== undefined) return entry;
-                    if (entry._nestedLayerSkeletons) {
-                        for (var nj = 0; nj < entry._nestedLayerSkeletons.length; nj++) {
-                            var found = _findAnchor(entry._nestedLayerSkeletons[nj]);
-                            if (found) return found;
-                        }
-                    }
-                    return null;
-                };
-                var anchorSkel = _findAnchor(ls);
-                if (anchorSkel) {
-                    ld.layers[ls.layer]._containerOffset = {
-                        offX: anchorSkel.skeleton.x - anchorSkel._defaultSkX,
-                        offY: anchorSkel.skeleton.y - anchorSkel._defaultSkY
-                    };
-                } else {
-                    var positions = pp._layerDragStartPositions;
-                    var dragOffX = 0, dragOffY = 0;
-                    if (positions && positions.length > 0) {
-                        for (var pi = 0; pi < positions.length; pi++) {
-                            if (positions[pi].sk && typeof positions[pi].sk.x === 'number') {
-                                dragOffX = positions[pi].sk.x - positions[pi].x;
-                                dragOffY = positions[pi].sk.y - positions[pi].y;
-                                break;
-                            }
-                        }
-                    }
-                    var oldOff = ld.layers[ls.layer]._containerOffset || { offX: 0, offY: 0 };
-                    ld.layers[ls.layer]._containerOffset = {
-                        offX: oldOff.offX + dragOffX,
-                        offY: oldOff.offY + dragOffY
-                    };
-                }
-                delete ld.layers[ls.layer].posOffX;
-                delete ld.layers[ls.layer].posOffY;
-                delete ld.layers[ls.layer]._chainPositions;
-                ls._containerOffX = ld.layers[ls.layer]._containerOffset.offX;
-                ls._containerOffY = ld.layers[ls.layer]._containerOffset.offY;
-                pp._subtreeCache = {};
-            }
-        }
-    }
+    // ★ 不再自动保存，位置修改由 confirm/cancel 按钮控制
 };
 
 // ★ 清除所有层级高亮、置灰遮罩和进度条（关闭预览时调用）
