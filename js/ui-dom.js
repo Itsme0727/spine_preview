@@ -866,7 +866,9 @@ SMTool._setLoopMode = function (nid, mode) {
 SMTool._setLoopValue = function (nid, val) {
     var node = SMData.nodes.get(nid);
     if (!node) return;
-    var mode = node._loopMode || 'count';
+    // ★ 自动设置循环模式（用户修改循环值即隐含选择模式，解决 _loopMode 默认为 null 导致 check 失败）
+    if (!node._loopMode) node._loopMode = 'count';
+    var mode = node._loopMode;
     if (mode === 'count') {
         var count = parseInt(val);
         if (isNaN(count)) count = 1;
@@ -5108,7 +5110,7 @@ SMTool._pauseFullPlayback = function () {
     SMData._fullPlayback.isPlaying = false;
     if (SMData._fullPlayback._timer) { clearTimeout(SMData._fullPlayback._timer); SMData._fullPlayback._timer = null; }
     // 冻结当前进度条（不清除，保持可见）
-    var bars = document.querySelectorAll('.spine-node .anim-progress-bar.playing');
+    var bars = document.querySelectorAll('.spine-node .anim-progress-bar.playing, .spine-node .anim-progress-bar.infinite-loop');
     for (var i = 0; i < bars.length; i++) {
         bars[i].classList.add('paused');
     }
@@ -5429,7 +5431,7 @@ SMTool._applyStepToMainNode = function (stepNode) {
                 SMTool._applyTracksToState(spineNode);
                 // ★ 动画组播放：若节点显式配置了循环模式（次数/时间），则让动画自然循环，
                 //    由流定时器（timerDelay）控制推进；无循环模式则强制不循环，停在最后一帧
-                var hasLoopMode = spineNode.loop !== false && spineNode._loopMode;
+                var hasLoopMode = spineNode.loop !== false && !!(spineNode._loopMode || (spineNode._loopCount !== undefined && spineNode._loopCount !== 1));
                 if (!hasLoopMode) {
                     for (var ti = 0; ti < 5; ti++) {
                         var e = spineNode.state.getCurrent(ti);
@@ -5652,8 +5654,9 @@ SMTool._playFullStep = function () {
 
     // ★ 根据循环模式计算实际等待时长
     var timerDelay;
-    if (spineNode && spineNode.loop !== false && spineNode._loopMode) {
-        if (spineNode._loopMode === 'time') {
+    var effLoopMode = spineNode && spineNode.loop !== false ? (spineNode._loopMode || ((spineNode._loopCount !== undefined && spineNode._loopCount !== 1) ? 'count' : null)) : null;
+    if (effLoopMode) {
+        if (effLoopMode === 'time') {
             // 循环时间模式：直接使用设定的时间（秒）
             var loopTime = spineNode._loopTime;
             if (loopTime === undefined || loopTime === null) {
@@ -5670,7 +5673,7 @@ SMTool._playFullStep = function () {
                 if (infBar) {
                     infBar.style.setProperty('--progress-duration', duration + 'ms');
                     void infBar.offsetWidth;
-                    infBar.classList.add('playing');
+                    infBar.classList.add('infinite-loop');
                 }
                 return; // ★ 不设 setTimeout，永不自动推进
             }
@@ -5724,9 +5727,9 @@ SMTool._playFullStep = function () {
 
 // 清除所有节点的进度条动画
 SMTool._clearAllProgressBars = function () {
-    var bars = document.querySelectorAll('.spine-node .anim-progress-bar.playing, .spine-node .anim-progress-bar.paused');
+    var bars = document.querySelectorAll('.spine-node .anim-progress-bar.playing, .spine-node .anim-progress-bar.paused, .spine-node .anim-progress-bar.infinite-loop');
     for (var i = 0; i < bars.length; i++) {
-        bars[i].classList.remove('playing', 'paused');
+        bars[i].classList.remove('playing', 'paused', 'infinite-loop');
     }
 };
 

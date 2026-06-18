@@ -487,33 +487,38 @@ SMTool._loop = function (now) {
         if (isInLayerChain && !isLayerActive) {
             shouldAnimate = false;
         }
-        if (shouldAnimate) {
-            var spd = (typeof node._playbackSpeed === 'number' && node._playbackSpeed !== 1.0) ? node._playbackSpeed : 1.0;
-            node.state.update(dt * spd);
-            node.state.apply(node.skeleton);
 
-            // ★ 事件帧气泡：用本地循环时间（trackTime % duration）检测跨帧
-            SMTool._ensureEventFrames(node);
-            if (node._eventFrames && node._eventFrames.length > 0) {
-                var trackEntry = node.state.getCurrent(0);
-                if (trackEntry) {
-                    var anim = trackEntry.animation || trackEntry._animation;
-                    var duration = anim ? anim.duration : 1;
-                    // trackTime 跨循环累加，取模得到当前循环内的时间
-                    var rawTime = trackEntry.trackTime;
-                    var curTime = rawTime % Math.max(duration, 0.001);
-                    var prevTime = node._lastEventCheckTime || 0;
-                    // 检测循环：当前本地时间 < 上次 说明动画已重新开始
-                    if (curTime < prevTime - 0.001) prevTime = 0;
-                    for (var efi = 0; efi < node._eventFrames.length; efi++) {
-                        var ef = node._eventFrames[efi];
-                        if (ef.time >= prevTime && ef.time <= curTime) {
-                            SMTool._showEventBubble(node, ef);
-                        }
+        // ★★ 始终更新时间轴（轻量操作，不做骨骼变换），确保事件帧检测不受渲染模式限制
+        var spd = (typeof node._playbackSpeed === 'number' && node._playbackSpeed !== 1.0) ? node._playbackSpeed : 1.0;
+        node.state.update(dt * spd);
+
+        // ★ 事件帧气泡：始终检测飘动（不受 renderMode / 选中状态影响）
+        //    显隐仅由左上角「💬 特效」按钮控制（CSS #app.hide-bubbles .event-bubble）
+        SMTool._ensureEventFrames(node);
+        if (node._eventFrames && node._eventFrames.length > 0) {
+            var trackEntry = node.state.getCurrent(0);
+            if (trackEntry) {
+                var anim = trackEntry.animation || trackEntry._animation;
+                var evDuration = anim ? anim.duration : 1;
+                // trackTime 跨循环累加，取模得到当前循环内的时间
+                var rawTime = trackEntry.trackTime;
+                var curTime = rawTime % Math.max(evDuration, 0.001);
+                var prevTime = node._lastEventCheckTime || 0;
+                // 检测循环：当前本地时间 < 上次 说明动画已重新开始
+                if (curTime < prevTime - 0.001) prevTime = 0;
+                for (var efi = 0; efi < node._eventFrames.length; efi++) {
+                    var ef = node._eventFrames[efi];
+                    if (ef.time >= prevTime && ef.time <= curTime) {
+                        SMTool._showEventBubble(node, ef);
                     }
-                    node._lastEventCheckTime = curTime;
                 }
+                node._lastEventCheckTime = curTime;
             }
+        }
+
+        if (shouldAnimate) {
+            // ★ 仅对动画节点应用骨骼变换（时间更新已在上方完成）
+            node.state.apply(node.skeleton);
         }
         node.skeleton.updateWorldTransform(node._physParam);
 
@@ -1461,7 +1466,7 @@ SMTool._applyPreviewTracks = function (pp, previewState, stateData, skeletonData
     // ★ 但若源节点显式配置了循环模式（次数/时间），则让动画自然循环播放，
     //    由动画流定时器（timerDelay）控制何时推进到下一步，避免画面冻结。
     if (SMData._fullPlayback && SMData._fullPlayback.isPlaying) {
-        var hasLoopMode = sourceNode.loop !== false && sourceNode._loopMode;
+        var hasLoopMode = sourceNode.loop !== false && !!(sourceNode._loopMode || (sourceNode._loopCount !== undefined && sourceNode._loopCount !== 1));
         if (!hasLoopMode) {
             for (var ti = 0; ti < 5; ti++) {
                 var e = previewState.getCurrent(ti);

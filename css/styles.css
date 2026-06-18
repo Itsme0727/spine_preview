@@ -403,6 +403,10 @@ body {
     opacity: 1;
     animation: animBarProgressFill var(--progress-duration, 1s) linear forwards;
 }
+.spine-node .anim-bar .anim-progress-bar.infinite-loop {
+    opacity: 1;
+    animation: animBarProgressFill var(--progress-duration, 1s) linear infinite;
+}
 .spine-node .anim-bar .anim-progress-bar.paused {
     animation-play-state: paused;
 }
@@ -4480,43 +4484,43 @@ body {
 
 /* ===== 事件帧气泡提示（节点右侧浮窗，跟随节点移动） ===== */
 @keyframes eventBubbleFloat {
-    0%   { opacity: 0; margin-top: 20px; }
+    0%   { opacity: 0; margin-top: 40px; }
     12%  { opacity: 1; margin-top: 0; }
-    60%  { opacity: 1; margin-top: -14px; }
-    100% { opacity: 0; margin-top: -40px; }
+    60%  { opacity: 1; margin-top: -28px; }
+    100% { opacity: 0; margin-top: -80px; }
 }
 .event-bubble {
     position: absolute;
-    left: calc(100% + 2px);
+    left: calc(100% + 4px);
     top: 50%;
     z-index: 20;
     pointer-events: none;
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    gap: 8px;
-    padding: 22px 32px;
+    gap: 16px;
+    padding: 44px 64px;
     background: rgba(24, 24, 30, 0.95);
-    border: 2px solid #a855f7;
-    border-left: 5px solid #a855f7;
-    border-radius: 0 16px 16px 0;
-    font-size: 26px;
+    border: 4px solid #a855f7;
+    border-left: 10px solid #a855f7;
+    border-radius: 0 32px 32px 0;
+    font-size: 52px;
     white-space: nowrap;
-    box-shadow: 6px 6px 28px rgba(0,0,0,0.6), 0 0 18px rgba(168,85,247,0.4);
+    box-shadow: 12px 12px 56px rgba(0,0,0,0.6), 0 0 36px rgba(168,85,247,0.4);
     animation: eventBubbleFloat 1.5s ease-out forwards;
 }
 .event-bubble .event-bubble-name {
     color: #a855f7;
     font-weight: 700;
-    font-size: 30px;
-    letter-spacing: 0.5px;
+    font-size: 60px;
+    letter-spacing: 1px;
 }
 .event-bubble .event-bubble-time {
     color: #ddd;
-    font-size: 20px;
+    font-size: 40px;
     background: rgba(255,255,255,0.12);
-    padding: 4px 14px;
-    border-radius: 6px;
+    padding: 8px 28px;
+    border-radius: 12px;
 }
 
 /* ===== 调试模式 ===== */

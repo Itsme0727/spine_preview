@@ -1231,7 +1231,9 @@ SMTool._showLayerPreview = function (layerNode) {
                         if (ce) {
                             var srcNode2 = SMData.nodes.get(chainSkeletons[cli]._chainNodeId);
                             // 源节点启用了循环且设置了循环模式 → 链骨架也循环
-                            if (srcNode2 && srcNode2.loop !== false && srcNode2._loopMode) {
+                            // ★ 循环判断：显式设置了循环模式 或 循环次数≠默认1（含-1无限循环）
+                            var hasLoopCfg = srcNode2 && srcNode2.loop !== false && !!(srcNode2._loopMode || (srcNode2._loopCount !== undefined && srcNode2._loopCount !== 1));
+                            if (hasLoopCfg) {
                                 ce.loop = true;
                             } else {
                                 ce.loop = false;
@@ -1832,7 +1834,8 @@ SMTool._advanceLayerChain = function (ls, dt, frozen) {
             var anim = entry.animation || entry._animation;
             if (anim) {
                 var animDur = anim.duration || 1;
-                var loopMode = (chainSrc && chainSrc.loop !== false) ? (chainSrc._loopMode || null) : null;
+                // ★ 循环模式：显式设置了 _loopMode 或 _loopCount≠默认1（含-1无限循环）
+                var loopMode = (chainSrc && chainSrc.loop !== false) ? (chainSrc._loopMode || ((chainSrc._loopCount !== undefined && chainSrc._loopCount !== 1) ? 'count' : null)) : null;
                 // ★★ 强制动画内部循环：循环时间/次数模式下，track 必须 loop=true 才能持续播放
                 if (loopMode && !entry.loop) { entry.loop = true; }
                 if (!ls._loopTrack) ls._loopTrack = { currentLoop: 0, totalElapsed: 0 };
@@ -2003,7 +2006,7 @@ SMTool._renderOneNormalLayer = function (ls, dt, frozen, gl, WGL, pp) {
                 if (nextAnim) {
                     // ★★ 根据源节点的循环模式决定动画是否内部循环
                     var nextSrc = (next._chainNodeId != null) ? SMData.nodes.get(next._chainNodeId) : null;
-                    var nextLoop = (nextSrc && nextSrc.loop !== false && nextSrc._loopMode) ? true : false;
+                    var nextLoop = (nextSrc && nextSrc.loop !== false && !!(nextSrc._loopMode || (nextSrc._loopCount !== undefined && nextSrc._loopCount !== 1))) ? true : false;
                     next.state.setAnimation(0, nextAnim, nextLoop);
                     next.state.update(0);
                     next.state.apply(next.skeleton);
@@ -2101,7 +2104,8 @@ SMTool._renderOneNormalLayer = function (ls, dt, frozen, gl, WGL, pp) {
                 // 获取源节点信息
                 var srcNode = (activeEntry._chainNodeId != null) ? SMData.nodes.get(activeEntry._chainNodeId) : null;
                 var speed = (srcNode && typeof srcNode._playbackSpeed === 'number' && srcNode._playbackSpeed !== 0) ? Math.abs(srcNode._playbackSpeed) : 1.0;
-                var loopMode = (srcNode && srcNode.loop !== false) ? (srcNode._loopMode || null) : null;
+                // ★ 循环模式：显式设置了 _loopMode 或 _loopCount≠默认1（含-1无限循环）
+                var loopMode = (srcNode && srcNode.loop !== false) ? (srcNode._loopMode || ((srcNode._loopCount !== undefined && srcNode._loopCount !== 1) ? 'count' : null)) : null;
 
                 if (loopMode === 'time') {
                     // 循环时间模式：totalElapsed / loopTime
@@ -2355,7 +2359,8 @@ SMTool._collectNestedActiveNodes = function (ls, activeNodeIds, activeNodeProgre
                         var animDur = anim.duration || 1;
                         var srcNode = (activeEntry._chainNodeId != null) ? SMData.nodes.get(activeEntry._chainNodeId) : null;
                         var speed = (srcNode && typeof srcNode._playbackSpeed === 'number' && srcNode._playbackSpeed !== 0) ? Math.abs(srcNode._playbackSpeed) : 1.0;
-                        var loopMode = (srcNode && srcNode.loop !== false) ? (srcNode._loopMode || null) : null;
+                        // ★ 循环模式：显式设置了 _loopMode 或 _loopCount≠默认1（含-1无限循环）
+                        var loopMode = (srcNode && srcNode.loop !== false) ? (srcNode._loopMode || ((srcNode._loopCount !== undefined && srcNode._loopCount !== 1) ? 'count' : null)) : null;
                         if (loopMode === 'time') {
                             var loopTime = srcNode._loopTime;
                             if (loopTime === undefined || loopTime === null) loopTime = animDur / speed;

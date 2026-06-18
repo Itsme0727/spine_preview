@@ -448,6 +448,11 @@ var SpineNodeData = (function () {
         // track 0 是底层基础动画，track 1/2/... 依次叠加混合
         this.tracks = [];
 
+        // ★ 循环控制（-1=无限循环，N次=N次循环，Ns=N秒循环）
+        this._loopMode = null;       // 'count' | 'time' | null（未设置）
+        this._loopCount = 1;         // 循环次数（-1=无限）
+        this._loopTime = null;       // 循环时间（秒）
+
         // ★ 脏标记：为 true 时需要在下一帧重新渲染（位置/动画/皮肤变化时置 true）
         this._dirty = true;
         // ★ 上一帧的屏幕位置缓存（用于检测是否需要重绘）

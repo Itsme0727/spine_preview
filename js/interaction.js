@@ -138,13 +138,13 @@ SMTool._onMD = function (e) {
     // 中键/右键 → 平移；Alt+左键 → 若点组内节点则穿透选单个，否则平移
     if (e.button === 2) {
         SMTool._onPanStart(e);
-        SMTool.gridCanvas.style.cursor = 'grab';
+        document.body.style.cursor = 'move';
         return;
     }
     if (e.button === 1) {
         e.preventDefault();
         SMTool._onPanStart(e);
-        SMTool.gridCanvas.style.cursor = 'grab';
+        document.body.style.cursor = 'move';
         return;
     }
     if (e.button === 0 && e.altKey) {
@@ -162,9 +162,17 @@ SMTool._onMD = function (e) {
         } else {
             e.preventDefault();
             SMTool._onPanStart(e);
-            SMTool.gridCanvas.style.cursor = 'grab';
+            document.body.style.cursor = 'move';
             return;
         }
+    }
+
+    // ★ 空格+左键 → 平移画布（等同鼠标中键拖拽）
+    if (e.button === 0 && SMData._spacePanning) {
+        e.preventDefault();
+        SMTool._onPanStart(e);
+        document.body.style.cursor = 'move';
+        return;
     }
 
     // 左键 — 画布点击
@@ -902,21 +910,19 @@ SMTool._onMU = function (e) {
     SMData.multiDragOffsets.clear();
     SMData._snapLines = [];
     SMTool._commitDragUndo();
+    document.body.style.cursor = '';
     SMTool.gridCanvas.style.cursor = SMData.connectMode ? 'crosshair' : 'default';
 };
 
 // ---- 键盘 ----
 SMTool._onKD = function (e) {
-    // ★ 空格键按下 → 启动平移（等同鼠标中键）
+    // ★ 空格键按下 → 标记待平移状态（需配合左键点击拖拽画布）
     if (e.key === ' ' && !e.ctrlKey && !e.altKey && !e.shiftKey) {
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
         e.preventDefault();
         if (!SMData._spacePanning) {
             SMData._spacePanning = true;
-            SMData.isPanning = true;
-            SMData.panStart = { x: SMData._mx || 0, y: SMData._my || 0 };
-            SMData.viewStart = { x: SMData.view.x, y: SMData.view.y };
-            SMTool.gridCanvas.style.cursor = 'grab';
+            document.body.style.cursor = 'move';
         }
         return;
     }

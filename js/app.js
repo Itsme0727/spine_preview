@@ -521,6 +521,7 @@ SMTool.init = function () {
         if (e.key === ' ' && SMData._spacePanning) {
             SMData._spacePanning = false;
             SMData.isPanning = false;
+            document.body.style.cursor = '';
             SMTool.gridCanvas.style.cursor = SMData.connectMode ? 'crosshair' : 'default';
         }
     });
