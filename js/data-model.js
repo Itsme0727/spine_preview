@@ -438,15 +438,30 @@ var SpineNodeData = (function () {
         this._debugCanvasW = 0;     // 调试模式：裁剪区域宽度（0=使用默认 _canvasWidth）
         this._debugCanvasH = 0;     // 调试模式：裁剪区域高度（0=使用默认 _canvasHeight）
 
-        // ---- 多轨道动画混合 ----
-        // tracks: [{ animName, alpha, mixBlend, enabled, loop }]
-        //   animName  - 动画名称（空字符串表示无动画）
-        //   alpha     - 混合透明度 0.0~1.0（1.0 = 完全不透明）
-        //   mixBlend  - 混合模式: 'setup'|'first'|'replace'|'add'（仅 4.x 有效，3.8 忽略）
-        //   enabled   - 是否启用此轨道
-        //   loop      - 是否循环播放
-        // track 0 是底层基础动画，track 1/2/... 依次叠加混合
+        // ---- 多轨道叠加系统 (Track System) ----
+        // ★ Spine Runtime 核心概念:
+        //   Track（轨道）= 一个独立的动画播放器，每个 Track 维护自己的播放状态
+        //   Mix（混合过渡）= 同一 Track 内动画切换时的平滑过渡算法 (Idle → Run)
+        //   多 Track = 多个动画同时存在 (Run + Attack + Blink)
+        //   高编号 Track 拥有更高优先级，覆盖低编号 Track 对相同骨骼的影响
+        //
+        // tracks: [{ animName, alpha, mixBlend, enabled, loop, mixDuration }]
+        //   animName    - 动画名称
+        //   alpha       - 该轨道输出透明度 0.0~1.0（不影响同级 Track 切换）
+        //   mixBlend    - 该轨道的混合叠加模式:
+        //       'replace' = 替换（默认，适合基础动作 Track0）
+        //       'add'     = 叠加（适合 T1+ 的局部动画叠加）
+        //       'first'   = 首帧姿势混合
+        //       'setup'   = 从绑定姿态混合
+        //   enabled     - 是否启用此轨道
+        //   loop        - 是否循环播放
+        //   mixDuration - 该轨道切换到新动画时的过渡时间（秒），0=立即切换，>0=平滑过渡
         this.tracks = [];
+
+        // ★ 同轨动画切换过渡表: { "fromAnim→toAnim": durationSeconds }
+        //    例如: { "Idle→Run": 0.2, "Run→Jump": 0.15 }
+        //    由 _applyMixTable() 同步到 Spine Runtime 的 AnimationStateData
+        this._mixTable = {};
 
         // ★ 循环控制（-1=无限循环，N次=N次循环，Ns=N秒循环）
         this._loopMode = null;       // 'count' | 'time' | null（未设置）
@@ -491,6 +506,41 @@ SMTool._mixBlendValue = function (blendName) {
     return MAP[blendName] !== undefined ? MAP[blendName] : 2;
 };
 
+// ★ 将节点的过渡表应用到 Spine Runtime AnimationStateData
+//    调用 stateData.setMix(fromAnim, toAnim, duration) 设置同轨动画切换过渡
+SMTool._applyMixTable = function (node) {
+    if (!node.state || !node.state.data) return;
+    var sd = node.state.data;  // AnimationStateData
+    var table = node._mixTable || {};
+
+    // 遍历转换表，设置每对动画的过渡时间
+    var keys = Object.keys(table);
+    for (var ki = 0; ki < keys.length; ki++) {
+        var key = keys[ki];
+        var parts = key.split('→');
+        if (parts.length === 2) {
+            var from = parts[0].trim();
+            var to = parts[1].trim();
+            var dur = parseFloat(table[key]) || 0;
+            if (from && to && dur >= 0) {
+                sd.setMix(from, to, dur);
+            }
+        }
+    }
+};
+
+// ★ 设置单个动画对的过渡时间（同时更新 _mixTable 和 Runtime）
+SMTool._setTrackMix = function (node, fromAnim, toAnim, duration) {
+    if (!fromAnim || !toAnim) return;
+    var key = fromAnim + '→' + toAnim;
+    if (!node._mixTable) node._mixTable = {};
+    node._mixTable[key] = duration;
+    // 同步到 Runtime
+    if (node.state && node.state.data) {
+        node.state.data.setMix(fromAnim, toAnim, duration);
+    }
+};
+
 // 将节点的轨道配置应用到 Spine AnimationState
 SMTool._applyTracksToState = function (node) {
     if (!node.state || !node.skeletonData) return;
@@ -502,7 +552,12 @@ SMTool._applyTracksToState = function (node) {
     var state = node.state;
     var is4x = (node._spineVer === '4.3' || node._spineVer === '4.2');
 
+    // ★ 先应用过渡表，确保同轨动画切换有平滑过渡
+    SMTool._applyMixTable(node);
+
     state.clearTracks();
+
+    var prevAnim = {};  // 记录每个轨道上一次的动画名，用于后续设置过渡
 
     for (var ti = 0; ti < node.tracks.length; ti++) {
         var track = node.tracks[ti];
@@ -523,6 +578,13 @@ SMTool._applyTracksToState = function (node) {
             if (is4x && track.mixBlend) {
                 entry.mixBlend = SMTool._mixBlendValue(track.mixBlend);
             }
+            // ★ 设置该轨道的切换过渡时间（mixDuration 控制从上一个动画过渡到当前动画的时间）
+            if (track.mixDuration !== undefined && track.mixDuration > 0 && prevAnim[ti]) {
+                entry.mixDuration = track.mixDuration;
+                // 同时注册到过渡表，下次切换到其他动画时也能过渡
+                SMTool._setTrackMix(node, prevAnim[ti], track.animName, track.mixDuration);
+            }
+            prevAnim[ti] = track.animName;
         }
     }
 

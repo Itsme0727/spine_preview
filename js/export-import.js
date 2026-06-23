@@ -948,6 +948,7 @@ SMTool._serializeData = function () {
             premultipliedAlpha: n.premultipliedAlpha,
             loop: n.loop,
             tracks: n.tracks,
+            _mixTable: n._mixTable || {},  // ★ 同轨动画切换过渡表
             _srcSkelJson: n._srcSkelJson,
             _srcSkelBinBase64: n._srcSkelBinBase64,
             _srcAtlasText: n._srcAtlasText,
@@ -1839,6 +1840,7 @@ SMTool._processImportJson = function (jsonText, fileHandle) {
             node._stateDesc = nd._stateDesc || '';
             node.loop = (nd.loop !== undefined ? nd.loop : true);
             node.tracks = nd.tracks || [];
+            node._mixTable = nd._mixTable || {};  // ★ 恢复同轨动画切换过渡表
             node._customScale = (nd._customScale !== undefined ? nd._customScale : 1.0);
             node._playbackSpeed = (nd._playbackSpeed !== undefined ? nd._playbackSpeed : 1.0);
             node._loopMode = nd._loopMode || null;

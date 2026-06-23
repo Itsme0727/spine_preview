@@ -1212,6 +1212,49 @@ body {
     font-weight: 600;
     color: var(--text2);
 }
+.track-panel-hint {
+    font-size: 22px;
+    color: var(--text2);
+    cursor: help;
+    margin-left: 4px;
+    opacity: 0.5;
+    transition: opacity 0.2s;
+}
+.track-panel-hint:hover { opacity: 1; color: var(--accent); }
+
+/* 轨道概念说明条 */
+.track-concept-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    margin-bottom: 6px;
+    background: rgba(74, 158, 255, 0.08);
+    border-radius: 6px;
+    font-size: 20px;
+    color: var(--text2);
+    border: 1px solid rgba(74, 158, 255, 0.12);
+}
+.track-concept-item {
+    color: var(--text);
+    font-weight: 500;
+}
+.track-concept-item b { color: var(--accent); }
+
+/* T0/T1 分隔线 */
+.track-separator {
+    text-align: center;
+    padding: 4px 0;
+    margin: 2px 0 6px;
+    color: var(--text2);
+    font-size: 20px;
+    opacity: 0.5;
+    border-bottom: 1px dashed rgba(255,255,255,0.06);
+}
+.track-separator span {
+    background: rgba(0,0,0,0.3);
+    padding: 0 10px;
+}
 .track-add-btn {
     background: rgba(74, 158, 255, 0.15);
     border: 1px solid rgba(74, 158, 255, 0.3);
@@ -1250,9 +1293,19 @@ body {
     font-size: 24px;
     font-weight: 700;
     color: var(--accent2);
-    min-width: 36px;
-    text-align: center;
+    min-width: 100px;
+    text-align: left;
     flex-shrink: 0;
+    line-height: 1.2;
+}
+.track-label b {
+    font-size: 26px;
+}
+.track-label small {
+    display: block;
+    font-size: 18px;
+    font-weight: 400;
+    color: var(--text2);
 }
 
 .track-anim-select {
@@ -1373,6 +1426,11 @@ body {
 
 /* 轨道混合过渡时间 */
 .track-mix-wrap { display:flex; align-items:center; gap:2px; flex-shrink:0; }
+.track-mix-label {
+    font-size: 18px;
+    color: var(--text2);
+    opacity: 0.7;
+}
 .track-mix-input {
     width:44px; background:var(--input-bg); border:1px solid var(--border);
     color:var(--text); padding:3px 4px; border-radius:4px; font-size:20px;

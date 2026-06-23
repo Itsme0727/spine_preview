@@ -426,11 +426,23 @@ SMTool._buildTrackPanelHtml = function (node) {
 
     var is4x = (node._spineVer === '4.3' || node._spineVer === '4.2');
     var MAX_TRACKS = 5;
+
+    // ── 面板标题 ──
     var html = '<div class="track-panel-header">' +
-        '<span class="track-panel-title">🎬 轨道混合</span>' +
+        '<span class="track-panel-title">🎬 多轨道叠加</span>' +
+        '<span class="track-panel-hint" title="Track = 独立播放器 | Mix = 同轨切换过渡 | 多轨 = 同时播放">ⓘ</span>' +
         (node.tracks.length < MAX_TRACKS
-            ? '<button class="track-add-btn" onclick="event.stopPropagation();SMTool._addTrack(' + node.id + ')" title="添加轨道">+ 轨道</button>'
+            ? '<button class="track-add-btn" onclick="event.stopPropagation();SMTool._addTrack(' + node.id + ')" title="添加叠加轨道">+ 轨道</button>'
             : '') +
+        '</div>';
+
+    // ── 概念说明条（首次展开时可见） ──
+    html += '<div class="track-concept-bar">' +
+        '<span class="track-concept-item"><b>T0</b> 基础动作</span>' +
+        '<span>→</span>' +
+        '<span class="track-concept-item"><b>T1+</b> 叠加动作</span>' +
+        '<span>→</span>' +
+        '<span class="track-concept-item">高轨覆盖低轨</span>' +
         '</div>';
 
     for (var ti = 0; ti < node.tracks.length; ti++) {
@@ -448,35 +460,51 @@ SMTool._buildTrackPanelHtml = function (node) {
         var isEnabled = track.enabled !== false;
         var checkedAttr = isEnabled ? ' checked' : '';
 
-        // 混合模式选择器（仅 4.x 显示）
+        // 混合模式选择器（blend mode: replace/add/first/setup）
         var blendHtml = '';
-        if (is4x) {
-            var blends = ['replace', 'add', 'first', 'setup'];
-            var blendLabels = { 'replace': '替换', 'add': '叠加', 'first': '首帧', 'setup': '初始' };
-            blendHtml = '<select class="track-blend-select" onchange="event.stopPropagation();SMTool._onTrackBlendChange(' + node.id + ',' + ti + ',this.value)" title="混合模式">';
-            for (var bi = 0; bi < blends.length; bi++) {
-                var bv = blends[bi];
-                var bsel = (track.mixBlend === bv || (!track.mixBlend && bv === 'replace')) ? ' selected' : '';
-                blendHtml += '<option value="' + bv + '"' + bsel + '>' + (blendLabels[bv] || bv) + '</option>';
-            }
-            blendHtml += '</select>';
+        var blends = ['replace', 'add', 'first', 'setup'];
+        var blendLabels = { 'replace': '替换', 'add': '叠加', 'first': '首帧', 'setup': '初始' };
+        var blendTitle = ti === 0
+            ? '替换=同轨切换（适合基础动作）'
+            : '叠加=融合到下层（适合附加动作）';
+        blendHtml = '<select class="track-blend-select" onchange="event.stopPropagation();SMTool._onTrackBlendChange(' + node.id + ',' + ti + ',this.value)" title="' + blendTitle + '">';
+        for (var bi = 0; bi < blends.length; bi++) {
+            var bv = blends[bi];
+            var defaultBlend = (ti === 0) ? 'replace' : 'add';
+            var bsel = (track.mixBlend === bv || (!track.mixBlend && bv === defaultBlend)) ? ' selected' : '';
+            blendHtml += '<option value="' + bv + '"' + bsel + '>' + (blendLabels[bv] || bv) + '</option>';
         }
+        blendHtml += '</select>';
 
-        // 循环按钮 + 混合过渡时间
+        // 轨道标签
+        var trackLabels = ['基础动作', '叠加动作', '特殊效果', '附加T3', '附加T4'];
+        var trackLabel = trackLabels[ti] || ('轨道' + ti);
+        var trackLabelTitle = ti === 0
+            ? 'Track 0: 底层基础动作（如 Idle/Run/Jump），同一轨道内切换动画通过 Mix 过渡'
+            : 'Track ' + ti + ': 叠加动作，覆盖低轨道相同的骨骼属性';
+
         var loopLabel = track.loop !== false ? '🔄' : '▶️';
         var loopTitle = track.loop !== false ? '循环中（点击切换为单次）' : '单次播放（点击切换为循环）';
         var mixDurVal = (track.mixDuration !== undefined ? track.mixDuration : 0);
 
         var disabledClass = isEnabled ? '' : ' track-disabled';
 
+        // ★ T0 和 T1 之间插入分隔线
+        if (ti === 1) {
+            html += '<div class="track-separator"><span>── 叠加层 ──</span></div>';
+        }
+
         html += '<div class="track-row' + disabledClass + '" data-track="' + ti + '">' +
-            '<span class="track-label">T' + ti + '</span>' +
+            '<span class="track-label" title="' + trackLabelTitle + '">' +
+                '<b>T' + ti + '</b> <small>' + trackLabel + '</small>' +
+            '</span>' +
             '<select class="track-anim-select" onchange="event.stopPropagation();SMTool._onTrackAnimChange(' + node.id + ',' + ti + ',this.value)"' + (isEnabled ? '' : ' disabled') + '>' + animOpts + '</select>' +
             '<div class="track-alpha-wrap">' +
-                '<input type="range" class="track-alpha-slider" min="0" max="100" value="' + alphaPct + '" oninput="event.stopPropagation();SMTool._onTrackAlphaChange(' + node.id + ',' + ti + ',this.value)" title="透明度">' +
+                '<input type="range" class="track-alpha-slider" min="0" max="100" value="' + alphaPct + '" oninput="event.stopPropagation();SMTool._onTrackAlphaChange(' + node.id + ',' + ti + ',this.value)" title="该轨道输出不透明度">' +
                 '<span class="track-alpha-val">' + alphaPct + '%</span>' +
             '</div>' +
-            '<div class="track-mix-wrap" title="动画切换过渡时间（秒）">' +
+            '<div class="track-mix-wrap" title="同轨道切换动画时的过渡时间（秒）&#10;0=立即切换，>0=平滑过渡">' +
+                '<span class="track-mix-label">过渡</span>' +
                 '<input type="number" class="track-mix-input" value="' + mixDurVal + '" min="0" max="5" step="0.1" ' +
                 'onchange="event.stopPropagation();SMTool._onTrackMixDurationChange(' + node.id + ',' + ti + ',this.value)" ' +
                 (isEnabled ? '' : 'disabled') + '>' +
@@ -486,11 +514,11 @@ SMTool._buildTrackPanelHtml = function (node) {
             '<button class="track-loop-btn' + (track.loop !== false ? ' active' : '') + '" ' +
                 'onclick="event.stopPropagation();SMTool._onTrackLoopToggle(' + node.id + ',' + ti + ')" ' +
                 'title="' + loopTitle + '">' + loopLabel + '</button>' +
-            '<label class="track-enable" title="启用/禁用">' +
+            '<label class="track-enable" title="启用/禁用此轨道">' +
                 '<input type="checkbox"' + checkedAttr + ' onchange="event.stopPropagation();SMTool._onTrackEnableToggle(' + node.id + ',' + ti + ',this.checked)">' +
             '</label>' +
             (ti > 0
-                ? '<button class="track-delete-btn" onclick="event.stopPropagation();SMTool._removeTrack(' + node.id + ',' + ti + ')" title="删除轨道">✕</button>'
+                ? '<button class="track-delete-btn" onclick="event.stopPropagation();SMTool._removeTrack(' + node.id + ',' + ti + ')" title="删除此轨道">✕</button>'
                 : '<span class="track-delete-spacer"></span>') +
         '</div>';
     }
@@ -538,7 +566,7 @@ SMTool._removeTrack = function (nid, trackIdx) {
     SMTool._refreshTrackPanel(node);
 };
 
-// 轨道动画切换（含混合过渡）
+// 轨道动画切换（使用 Spine Runtime 原生过渡，不清空其他轨道）
 SMTool._onTrackAnimChange = function (nid, trackIdx, animName) {
     var node = SMData.nodes.get(nid);
     if (!node || !node.state) return;
@@ -548,11 +576,29 @@ SMTool._onTrackAnimChange = function (nid, trackIdx, animName) {
     var oldAnim = track.animName;
     track.animName = animName;
 
-    // 混合过渡时间：通过 AnimationStateData.setMix 实现 crossfade
+    // ★ 同轨切换过渡: 通过 AnimationStateData.setMix + TrackEntry.mixDuration 实现 crossfade
     var mixDur = (track.mixDuration !== undefined && track.mixDuration > 0) ? track.mixDuration : 0;
-    if (mixDur > 0 && oldAnim && oldAnim !== animName) {
-        try { node.state.data.setMix(oldAnim, animName, mixDur); }
-        catch (e) { try { node.state.data.defaultMix = mixDur; } catch (e2) {} }
+    if (oldAnim && oldAnim !== animName && mixDur > 0) {
+        // 注册到 _mixTable + Runtime AnimationStateData
+        SMTool._setTrackMix(node, oldAnim, animName, mixDur);
+        // 反向过渡也设置相同值，确保来回切换都有过渡
+        try { node.state.data.setMix(animName, oldAnim, mixDur); } catch(e) {}
+    }
+
+    // ★ 关键: 只切换目标轨道，不清除其他轨道（让多轨叠加正常工作）
+    var entry = node.state.setAnimation(trackIdx, animName, track.loop !== false);
+    if (entry) {
+        if (track.alpha !== undefined && track.alpha >= 0 && track.alpha <= 1) {
+            entry.alpha = track.alpha;
+        }
+        var is4x = (node._spineVer === '4.3' || node._spineVer === '4.2');
+        if (is4x && track.mixBlend) {
+            entry.mixBlend = SMTool._mixBlendValue(track.mixBlend);
+        }
+        // 设置该轨道的过渡时间（Spine Runtime 自动处理 crossfade）
+        if (mixDur > 0) {
+            entry.mixDuration = mixDur;
+        }
     }
 
     if (trackIdx === 0) {
@@ -560,7 +606,6 @@ SMTool._onTrackAnimChange = function (nid, trackIdx, animName) {
         node.name = SMTool._translateName(animName);
         SMTool._updateEl(node);
     }
-    SMTool._applyTracksToState(node);
     SMTool._updateStateRowColors();
     SMTool._updateDuplicateHighlights();
     // ★ 同步更新所有动画流路径中的状态名
@@ -665,6 +710,12 @@ SMTool._onTrackMixDurationChange = function (nid, trackIdx, value) {
     if (isNaN(d) || d < 0) d = 0;
     if (d > 5) d = 5;
     node.tracks[trackIdx].mixDuration = d;
+
+    // ★ 同步到当前活跃的 TrackEntry（影响正在播放的过渡）
+    if (node.state) {
+        var entry = node.state.getCurrent(trackIdx);
+        if (entry) entry.mixDuration = d;
+    }
 
     var row = document.querySelector('#trackPanel-' + nid + ' .track-row[data-track="' + trackIdx + '"]');
     if (row) {

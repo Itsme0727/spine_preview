@@ -260,8 +260,9 @@ SMTool.copyNode = function (nid, offsetX, offsetY) {
     node._loopTime = (orig._loopTime !== undefined) ? orig._loopTime : null;
     node._exitText = orig._exitText || '';
     node.loop = orig.loop;
-    // 深拷贝轨道配置
+    // 深拷贝轨道配置 + 过渡表
     node.tracks = orig.tracks ? JSON.parse(JSON.stringify(orig.tracks)) : [];
+    node._mixTable = orig._mixTable ? JSON.parse(JSON.stringify(orig._mixTable)) : {};
 
     SMData.nodes.set(id, node);
     SMTool._createEl(node);

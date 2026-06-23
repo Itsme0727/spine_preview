@@ -1342,13 +1342,28 @@ SMTool._onAnimChange = function (nid, animName) {
     if (!node.tracks || node.tracks.length === 0) {
         SMTool._initDefaultTracks(node);
     }
+    var oldAnim = node.tracks[0].animName;
     node.tracks[0].animName = animName;
     node.currentAnim = animName;
     node.name = SMTool._translateName(animName);
-    // ★ 初始化：重置骨骼到绑定姿态 + 清除所有轨道，确保新动画从干净状态开始
-    node.skeleton.setToSetupPose();
-    node.state.clearTracks();
-    SMTool._applyTracksToState(node);
+
+    // ★ 同轨切换: 使用 mixDuration 实现平滑过渡，不清除其他轨道
+    var mixDur = (node.tracks[0].mixDuration !== undefined && node.tracks[0].mixDuration > 0)
+        ? node.tracks[0].mixDuration : 0;
+    if (oldAnim && oldAnim !== animName && mixDur > 0) {
+        SMTool._setTrackMix(node, oldAnim, animName, mixDur);
+        try { node.state.data.setMix(animName, oldAnim, mixDur); } catch(e) {}
+    }
+
+    // ★ 只切换 Track 0，保留其他轨道的播放状态
+    var entry = node.state.setAnimation(0, animName, node.tracks[0].loop !== false);
+    if (entry) {
+        if (node.tracks[0].alpha !== undefined) entry.alpha = node.tracks[0].alpha;
+        var is4x = (node._spineVer === '4.3' || node._spineVer === '4.2');
+        if (is4x && node.tracks[0].mixBlend) entry.mixBlend = SMTool._mixBlendValue(node.tracks[0].mixBlend);
+        if (mixDur > 0) entry.mixDuration = mixDur;
+    }
+
     SMTool._updateEl(node);
     SMTool._updateStateRowColors();
     SMTool._updateDuplicateHighlights();
