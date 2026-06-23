@@ -492,6 +492,26 @@ SMTool._loop = function (now) {
         var spd = (typeof node._playbackSpeed === 'number' && node._playbackSpeed !== 1.0) ? node._playbackSpeed : 1.0;
         node.state.update(dt * spd);
 
+        // ★ 轨道动画模式：检测序列是否全部播完需要重新循环
+        //    关键：不能检测 isComplete()（当前动画结束但 addAnimation 队列还没切换时
+        //    会误判），只能检测 getCurrent(ti) === null（轨道完全空，含队列全部播完）
+        if (node._trackMode && node._trackSequence && node._trackSequence.length > 0) {
+            var needRefresh = false;
+            for (var tsi = 0; tsi < node._trackSequence.length; tsi++) {
+                var tseq = node._trackSequence[tsi];
+                if (tseq.loopSeq !== false && tseq.enabled !== false && tseq.animations.length > 0) {
+                    // 只检测轨道完全空（所有排队动画均播完），不检测 isComplete
+                    if (!node.state.getCurrent(tsi)) {
+                        needRefresh = true;
+                        break;
+                    }
+                }
+            }
+            if (needRefresh) {
+                SMTool._applyTrackSequence(node);
+            }
+        }
+
         // ★ 事件帧气泡：始终检测飘动（不受 renderMode / 选中状态影响）
         //    显隐仅由左上角「💬 特效」按钮控制（CSS #app.hide-bubbles .event-bubble）
         SMTool._ensureEventFrames(node);

@@ -260,9 +260,12 @@ SMTool.copyNode = function (nid, offsetX, offsetY) {
     node._loopTime = (orig._loopTime !== undefined) ? orig._loopTime : null;
     node._exitText = orig._exitText || '';
     node.loop = orig.loop;
-    // 深拷贝轨道配置 + 过渡表
+    // 深拷贝轨道配置 + 过渡表 + 轨道序列
     node.tracks = orig.tracks ? JSON.parse(JSON.stringify(orig.tracks)) : [];
     node._mixTable = orig._mixTable ? JSON.parse(JSON.stringify(orig._mixTable)) : {};
+    node._trackMode = orig._trackMode || false;
+    node._trackName = orig._trackName || '轨道动画';
+    node._trackSequence = orig._trackSequence ? JSON.parse(JSON.stringify(orig._trackSequence)) : [];
 
     SMData.nodes.set(id, node);
     SMTool._createEl(node);
@@ -272,6 +275,10 @@ SMTool.copyNode = function (nid, offsetX, offsetY) {
         (node._srcSkelJson || node._srcSkelBinBase64)) {
         SMTool._loadFromSourceData(node).then(function () {
             SMTool._updateEl(node);
+            // ★ 轨道模式：序列数据已复制，加载完成后应用序列
+            if (node._trackMode && node.state) {
+                SMTool._applyTrackSequence(node);
+            }
             SMTool._updateDuplicateHighlights();
             SMTool._checkMissingStates();
             SMTool._refreshAllTranslations();

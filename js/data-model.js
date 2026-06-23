@@ -440,33 +440,29 @@ var SpineNodeData = (function () {
 
         // ---- 多轨道叠加系统 (Track System) ----
         // ★ Spine Runtime 核心概念:
-        //   Track（轨道）= 一个独立的动画播放器，每个 Track 维护自己的播放状态
-        //   Mix（混合过渡）= 同一 Track 内动画切换时的平滑过渡算法 (Idle → Run)
-        //   多 Track = 多个动画同时存在 (Run + Attack + Blink)
-        //   高编号 Track 拥有更高优先级，覆盖低编号 Track 对相同骨骼的影响
+        //   Track（轨道）= 一个独立的动画播放器
+        //   Mix（混合过渡）= 同一轨道内动画序列切换时的平滑过渡 (A → B → C)
+        //   多 Track = 多个动画序列同时叠加 (走 + 瞄准 → 射击)
         //
-        // tracks: [{ animName, alpha, mixBlend, enabled, loop, mixDuration }]
-        //   animName    - 动画名称
-        //   alpha       - 该轨道输出透明度 0.0~1.0（不影响同级 Track 切换）
-        //   mixBlend    - 该轨道的混合叠加模式:
-        //       'replace' = 替换（默认，适合基础动作 Track0）
-        //       'add'     = 叠加（适合 T1+ 的局部动画叠加）
-        //       'first'   = 首帧姿势混合
-        //       'setup'   = 从绑定姿态混合
-        //   enabled     - 是否启用此轨道
-        //   loop        - 是否循环播放
-        //   mixDuration - 该轨道切换到新动画时的过渡时间（秒），0=立即切换，>0=平滑过渡
+        // tracks（旧版兼容）: [{ animName, alpha, mixBlend, enabled, loop, mixDuration }]
         this.tracks = [];
 
+        // ★ 轨道动画模式（新版序列队列系统）
+        //   _trackMode: false=传统单动画节点 | true=轨道动画节点
+        //   _trackName: 轨道模式下显示的节点名称（默认"轨道动画"）
+        //   _trackSequence: [{ animations: [{name, mixOut}], loopSeq, alpha, enabled, mixBlend }]
+        this._trackMode = false;
+        this._trackName = '轨道动画';
+        this._trackSequence = [];
+        this._trackSeqLoop = {};  // { trackIndex: boolean } 运行时标记
+
         // ★ 同轨动画切换过渡表: { "fromAnim→toAnim": durationSeconds }
-        //    例如: { "Idle→Run": 0.2, "Run→Jump": 0.15 }
-        //    由 _applyMixTable() 同步到 Spine Runtime 的 AnimationStateData
         this._mixTable = {};
 
-        // ★ 循环控制（-1=无限循环，N次=N次循环，Ns=N秒循环）
-        this._loopMode = null;       // 'count' | 'time' | null（未设置）
-        this._loopCount = 1;         // 循环次数（-1=无限）
-        this._loopTime = null;       // 循环时间（秒）
+        // ★ 循环控制
+        this._loopMode = null;
+        this._loopCount = 1;
+        this._loopTime = null;
 
         // ★ 脏标记：为 true 时需要在下一帧重新渲染（位置/动画/皮肤变化时置 true）
         this._dirty = true;
@@ -592,4 +588,95 @@ SMTool._applyTracksToState = function (node) {
         node.currentAnim = node.tracks[0].animName;
         node.loop = node.tracks[0].loop !== false;
     }
+};
+
+// ★ 为新激活的轨道动画节点初始化默认序列
+SMTool._initDefaultTrackSequence = function (node) {
+    if (!node._trackSequence || node._trackSequence.length === 0) {
+        var curAnim = node.currentAnim || (node.animations[0] && node.animations[0].name) || '';
+        node._trackSequence = [{
+            animations: [{ name: curAnim, mixOut: 0 }],
+            loopSeq: true,
+            alpha: 1.0,
+            enabled: true,
+            mixBlend: 'replace'
+        }];
+    }
+};
+
+// ★ 将轨道序列配置应用到 Spine AnimationState（setAnimation + addAnimation 链）
+SMTool._applyTrackSequence = function (node) {
+    if (!node.state || !node._trackMode) return;
+
+    SMTool._applyMixTable(node);
+    var state = node.state;
+    var is4x = (node._spineVer === '4.3' || node._spineVer === '4.2');
+
+    state.clearTracks();
+    var seqs = node._trackSequence || [];
+
+    for (var ti = 0; ti < seqs.length; ti++) {
+        var seq = seqs[ti];
+        if (!seq.enabled) continue;
+        var anims = seq.animations;
+        if (!anims || anims.length === 0) continue;
+
+        // 首动画
+        var first = anims[0];
+        var entry = state.setAnimation(ti, first.name, false);
+        if (!entry) continue;
+        entry.alpha = (seq.alpha !== undefined) ? seq.alpha : 1.0;
+        if (is4x && seq.mixBlend) entry.mixBlend = SMTool._mixBlendValue(seq.mixBlend);
+        entry.mixDuration = 0;
+
+        // 后续动画链：addAnimation(delay=0) 紧接上一个
+        for (var ai = 1; ai < anims.length; ai++) {
+            var prev = anims[ai - 1];
+            var cur = anims[ai];
+            entry = state.addAnimation(ti, cur.name, false, 0);
+            if (entry) {
+                entry.alpha = seq.alpha;
+                if (is4x && seq.mixBlend) entry.mixBlend = SMTool._mixBlendValue(seq.mixBlend);
+                entry.mixDuration = (prev.mixOut !== undefined && prev.mixOut > 0) ? prev.mixOut : 0;
+            }
+        }
+
+        node._trackSeqLoop[ti] = seq.loopSeq !== false;
+    }
+};
+
+// ★ 只重建单条轨道（不清除其他轨道，用于 enable/disable 切换）
+SMTool._applySingleTrackSeq = function (node, ti) {
+    if (!node.state || !node._trackMode) return;
+    var seqs = node._trackSequence || [];
+    var seq = seqs[ti];
+    if (!seq || !seq.enabled) return;
+    var anims = seq.animations;
+    if (!anims || anims.length === 0) return;
+
+    var state = node.state;
+    var is4x = (node._spineVer === '4.3' || node._spineVer === '4.2');
+
+    // 只清空该轨道
+    state.clearTrack(ti);
+
+    var first = anims[0];
+    var entry = state.setAnimation(ti, first.name, false);
+    if (!entry) return;
+    entry.alpha = (seq.alpha !== undefined) ? seq.alpha : 1.0;
+    if (is4x && seq.mixBlend) entry.mixBlend = SMTool._mixBlendValue(seq.mixBlend);
+    entry.mixDuration = 0;
+
+    for (var ai = 1; ai < anims.length; ai++) {
+        var prev = anims[ai - 1];
+        var cur = anims[ai];
+        entry = state.addAnimation(ti, cur.name, false, 0);
+        if (entry) {
+            entry.alpha = seq.alpha;
+            if (is4x && seq.mixBlend) entry.mixBlend = SMTool._mixBlendValue(seq.mixBlend);
+            entry.mixDuration = (prev.mixOut !== undefined && prev.mixOut > 0) ? prev.mixOut : 0;
+        }
+    }
+
+    node._trackSeqLoop[ti] = seq.loopSeq !== false;
 };

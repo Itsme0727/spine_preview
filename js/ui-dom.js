@@ -240,9 +240,12 @@ SMTool._createEl = function (node) {
         '<div class="header" onmousedown="event.stopPropagation();SMTool._onHD(event,' + node.id + ')">' +
             '<div class="header-titles">' +
                 (node.sourceFile ? '<span class="source-file">' + SMTool._esc(node.sourceFile) + '</span>' : '') +
-                '<span class="name">' + SMTool._esc(node.currentAnim || node.name) + '</span>' +
+                '<span class="name">' + SMTool._esc(node._trackMode ? node._trackName : (node.currentAnim || node.name)) + '</span>' +
             '</div>' +
             '<div class="btns">' +
+                '<button onclick="event.stopPropagation();SMTool._toggleTrackMode(' + node.id + ')" ' +
+                    'title="轨道动画模式：多轨道序列队列播放" ' +
+                    'style="' + (node._trackMode ? 'background:#7c5ce7;color:#fff;' : '') + '">🎬</button>' +
                 '<button onclick="event.stopPropagation();SMTool._debugNode(' + node.id + ')" title="调试动画层位置/缩放">🔍</button>' +
                 '<button onclick="event.stopPropagation();SMTool.copyNode(' + node.id + ',50,50);" title="复制节点">📋</button>' +
                 '<button onclick="event.stopPropagation();SMTool.deleteNode(' + node.id + ')" title="删除节点">✕</button>' +
@@ -251,15 +254,21 @@ SMTool._createEl = function (node) {
         '<div class="spine-canvas-wrap" ondragover="event.preventDefault();event.stopPropagation()" ondrop="event.preventDefault();event.stopPropagation();SMTool._onND(event,' + node.id + ')">' +
             '<div style="color:var(--text2);padding:40px">拖入 Spine 文件</div>' +
         '</div>' +
-        '<div class="anim-bar">' +
-            '<div class="conn-dot input" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'' + SMTool._escAttr(curState) + '\',\'input\')" title="连线输入"></div>' +
-            '<select class="anim-select" onchange="SMTool._onAnimChange(' + node.id + ', this.value)">' + animOptionsHtml + '</select>' +
-            '<div class="anim-progress-bar"></div>' +
-            '<div class="conn-dot output" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'' + SMTool._escAttr(curState) + '\',\'output\')" title="连线输出"></div>' +
-        '</div>' +
-        // ---- 多轨道混合面板 ----
+        // ---- 动画选择栏（轨道模式隐藏） ----
+        (node._trackMode
+            ? '<div class="anim-bar" style="justify-content:center;padding:6px">' +
+                '<span style="color:var(--accent);font-size:24px;font-weight:600">🎬 轨道动画模式</span>' +
+              '</div>'
+            : '<div class="anim-bar">' +
+                '<div class="conn-dot input" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'' + SMTool._escAttr(curState) + '\',\'input\')" title="连线输入"></div>' +
+                '<select class="anim-select" onchange="SMTool._onAnimChange(' + node.id + ', this.value)">' + animOptionsHtml + '</select>' +
+                '<div class="anim-progress-bar"></div>' +
+                '<div class="conn-dot output" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'' + SMTool._escAttr(curState) + '\',\'output\')" title="连线输出"></div>' +
+              '</div>'
+        ) +
+        // ---- 轨道面板（轨道模式用序列面板） ----
         '<div class="track-panel" id="trackPanel-' + node.id + '">' +
-            SMTool._buildTrackPanelHtml(node) +
+            (node._trackMode ? SMTool._buildTrackSequencePanel(node) : SMTool._buildTrackPanelHtml(node)) +
         '</div>' +
         '<div class="footer">' +
             '<div class="footer-controls">' +
@@ -525,13 +534,215 @@ SMTool._buildTrackPanelHtml = function (node) {
     return html;
 };
 
-// 刷新节点的轨道面板 DOM
+// 刷新节点的轨道面板 DOM（兼容传统和序列模式）
 SMTool._refreshTrackPanel = function (node) {
     var panel = document.getElementById('trackPanel-' + node.id);
     if (panel) {
-        panel.innerHTML = SMTool._buildTrackPanelHtml(node);
+        panel.innerHTML = node._trackMode
+            ? SMTool._buildTrackSequencePanel(node)
+            : SMTool._buildTrackPanelHtml(node);
     }
 };
+
+// ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+// ★ 轨道动画模式 — 序列队列系统
+// ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+
+// ★ 切换轨道动画模式
+SMTool._toggleTrackMode = function (nid) {
+    var node = SMData.nodes.get(nid);
+    if (!node || node.nodeType !== 'spine') return;
+
+    node._trackMode = !node._trackMode;
+
+    if (node._trackMode) {
+        SMTool._initDefaultTrackSequence(node);
+        if (node.state) SMTool._applyTrackSequence(node);
+    } else {
+        if (node.state) {
+            SMTool._initDefaultTracks(node);
+            SMTool._applyTracksToState(node);
+        }
+    }
+
+    SMTool._updateEl(node);
+    SMTool._updatePos(node);
+    SMTool._updateStateRowColors();
+    SMTool._updateSB();
+
+    if (SMData._animPreview.visible && SMData._animPreview.nodeId === nid) {
+        SMTool._initAnimPreview(node);
+    }
+    if (typeof SMTool._syncLayerAnim === 'function') SMTool._syncLayerAnim(nid);
+    SMTool._syncFlowPathAnim(nid, node.currentAnim);
+};
+
+// ★ 构建轨道序列面板 HTML
+SMTool._buildTrackSequencePanel = function (node) {
+    var MAX_TRACKS = 10;
+    var seqs = node._trackSequence || [];
+
+    var html = '<div class="track-panel-header">' +
+        '<span class="track-panel-title">🎬 轨道序列</span>' +
+        (seqs.length < MAX_TRACKS
+            ? '<button class="track-add-btn" onclick="event.stopPropagation();SMTool._addTrackSeq(' + node.id + ')" title="添加新轨道（最多' + MAX_TRACKS + '条）">+ 轨道</button>'
+            : '') +
+        '</div>';
+
+    for (var ti = 0; ti < seqs.length; ti++) {
+        var seq = seqs[ti];
+        var isBase = (ti === 0);
+        var alphaPct = Math.round((seq.alpha !== undefined ? seq.alpha : 1) * 100);
+        var loopChecked = seq.loopSeq !== false ? ' checked' : '';
+        var enabledChecked = seq.enabled !== false ? ' checked' : '';
+        var blendReplace = (seq.mixBlend === 'replace') ? ' selected' : '';
+        var blendAdd = (seq.mixBlend === 'add' || !seq.mixBlend) ? ' selected' : '';
+
+        html += '<div class="tseq-track-header' + (seq.enabled === false ? ' tseq-disabled' : '') + '">' +
+            '<b>T' + ti + '</b> ' + (isBase ? '基础' : '叠加') +
+            '<span class="tseq-track-ctrls">' +
+                '<label title="启用/禁用此轨道"><input type="checkbox"' + enabledChecked +
+                    ' onchange="SMTool._onSeqEnableToggle(' + node.id + ',' + ti + ',this.checked)">开</label>' +
+                'α<input type="range" min="0" max="100" value="' + alphaPct + '" ' +
+                    'oninput="SMTool._onSeqAlphaChange(' + node.id + ',' + ti + ',this.value)" style="width:46px" title="透明度">' +
+                '<select onchange="SMTool._onSeqBlendChange(' + node.id + ',' + ti + ',this.value)" ' +
+                    'style="font-size:20px;background:var(--input-bg);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:1px 3px">' +
+                    '<option value="replace"' + blendReplace + '>替换</option>' +
+                    '<option value="add"' + blendAdd + '>叠加</option>' +
+                '</select>' +
+                '<label title="序列循环"><input type="checkbox"' + loopChecked +
+                    ' onchange="SMTool._onSeqLoopToggle(' + node.id + ',' + ti + ',this.checked)">↻</label>' +
+                (ti > 0 ? '<button onclick="event.stopPropagation();SMTool._removeTrackSeq(' + node.id + ',' + ti + ')" ' +
+                    'style="color:#f44;background:none;border:none;cursor:pointer;font-size:18px;padding:0 4px" title="删除轨道">✕</button>' : '') +
+            '</span>' +
+        '</div>';
+
+        html += '<div class="tseq-anims-row">';
+        var anims = seq.animations || [];
+        for (var ai = 0; ai < anims.length; ai++) {
+            var a = anims[ai];
+            var isLast = (ai === anims.length - 1);
+
+            html += '<select onchange="SMTool._onSeqAnimChange(' + node.id + ',' + ti + ',' + ai + ',this.value)" ' +
+                'style="font-size:22px;font-weight:600;background:var(--input-bg);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:2px 6px;min-width:80px">';
+            for (var ani = 0; ani < node.animations.length; ani++) {
+                var an = node.animations[ani];
+                html += '<option value="' + SMTool._esc(an.name) + '"' + (a.name === an.name ? ' selected' : '') + '>' +
+                    SMTool._esc(an.name) + '</option>';
+            }
+            html += '</select>';
+
+            // 混合值（最后一个不显示，除非循环）
+            if (!isLast || seq.loopSeq) {
+                html += '<span class="tseq-mix-arrow">→</span>' +
+                    '<input type="number" value="' + (a.mixOut || 0) + '" min="0" max="10" step="0.1" ' +
+                    'onchange="SMTool._onSeqMixOutChange(' + node.id + ',' + ti + ',' + ai + ',this.value)" ' +
+                    'class="tseq-mix-input" title="过渡到下一个动画的时间（秒）">' +
+                    '<span class="tseq-mix-unit">s</span>';
+            }
+
+            if (anims.length > 1) {
+                html += '<button onclick="event.stopPropagation();SMTool._removeSeqAnim(' + node.id + ',' + ti + ',' + ai + ')" ' +
+                    'style="color:var(--text2);background:none;border:none;cursor:pointer;font-size:14px;margin-left:2px" title="移除此动画">✕</button>';
+            }
+        }
+
+        html += '<button onclick="event.stopPropagation();SMTool._addSeqAnim(' + node.id + ',' + ti + ')" ' +
+            'style="color:var(--accent);background:rgba(74,158,255,0.08);border:1px dashed rgba(74,158,255,0.25);border-radius:4px;cursor:pointer;font-size:18px;padding:2px 8px;margin-left:4px" title="在末尾添加动画">+</button>';
+
+        html += '</div>';
+    }
+
+    return html;
+};
+
+// ── 序列 CRUD ──
+SMTool._addTrackSeq = function (nid) {
+    var node = SMData.nodes.get(nid);
+    if (!node || !node._trackMode) return;
+    if (node._trackSequence.length >= 10) return;
+    node._trackSequence.push({
+        animations: [{ name: node.animations[0] ? node.animations[0].name : '', mixOut: 0 }],
+        loopSeq: true, alpha: 1.0, enabled: true, mixBlend: 'add'
+    });
+    if (node.state) SMTool._applyTrackSequence(node);
+    SMTool._refreshTrackPanel(node);
+};
+SMTool._removeTrackSeq = function (nid, ti) {
+    var node = SMData.nodes.get(nid);
+    if (!node || ti <= 0 || ti >= node._trackSequence.length) return;
+    node._trackSequence.splice(ti, 1);
+    if (node.state) SMTool._applyTrackSequence(node);
+    SMTool._refreshTrackPanel(node);
+};
+SMTool._addSeqAnim = function (nid, ti) {
+    var node = SMData.nodes.get(nid);
+    if (!node || !node._trackSequence[ti]) return;
+    node._trackSequence[ti].animations.push({ name: node.animations[0] ? node.animations[0].name : '', mixOut: 0 });
+    if (node.state) SMTool._applyTrackSequence(node);
+    SMTool._refreshTrackPanel(node);
+};
+SMTool._removeSeqAnim = function (nid, ti, ai) {
+    var node = SMData.nodes.get(nid);
+    var seq = node && node._trackSequence[ti];
+    if (!seq || seq.animations.length <= 1) return;
+    seq.animations.splice(ai, 1);
+    if (node.state) SMTool._applyTrackSequence(node);
+    SMTool._refreshTrackPanel(node);
+};
+SMTool._onSeqAnimChange = function (nid, ti, ai, name) {
+    var node = SMData.nodes.get(nid);
+    var seq = node && node._trackSequence[ti];
+    if (!seq || !seq.animations[ai]) return;
+    seq.animations[ai].name = name;
+    if (node.state) SMTool._applyTrackSequence(node);
+    SMTool._updateStateRowColors();
+};
+SMTool._onSeqMixOutChange = function (nid, ti, ai, value) {
+    var node = SMData.nodes.get(nid);
+    var seq = node && node._trackSequence[ti];
+    if (!seq || !seq.animations[ai]) return;
+    var d = parseFloat(value); if (isNaN(d) || d < 0) d = 0;
+    seq.animations[ai].mixOut = d;
+};
+SMTool._onSeqAlphaChange = function (nid, ti, value) {
+    var node = SMData.nodes.get(nid);
+    var seq = node && node._trackSequence[ti];
+    if (!seq) return;
+    seq.alpha = parseInt(value) / 100;
+    if (node.state) { var e = node.state.getCurrent(ti); if (e) e.alpha = seq.alpha; }
+};
+SMTool._onSeqBlendChange = function (nid, ti, value) {
+    var node = SMData.nodes.get(nid);
+    var seq = node && node._trackSequence[ti];
+    if (!seq) return;
+    seq.mixBlend = value;
+    if (node.state) SMTool._applyTrackSequence(node);
+};
+SMTool._onSeqLoopToggle = function (nid, ti, checked) {
+    var node = SMData.nodes.get(nid);
+    var seq = node && node._trackSequence[ti];
+    if (!seq) return;
+    seq.loopSeq = checked;
+};
+
+SMTool._onSeqEnableToggle = function (nid, ti, checked) {
+    var node = SMData.nodes.get(nid);
+    var seq = node && node._trackSequence[ti];
+    if (!seq) return;
+    seq.enabled = checked;
+    if (node.state) {
+        if (!checked) {
+            // 禁用：清空该轨道
+            node.state.clearTrack(ti);
+        } else {
+            // 启用：只重建该轨道（不清除其他轨道）
+            SMTool._applySingleTrackSeq(node, ti);
+        }
+    }
+};
+
+// ★ 结束轨道动画模式模块 ★
 
 // 添加新轨道
 SMTool._addTrack = function (nid) {
@@ -2680,6 +2891,12 @@ SMTool._updateEl = function (node) {
     var el = SMTool._getEl(node.id);
     if (!el) return;
     if (node.nodeType !== 'spine') return;  // 文本节点无需刷新
+
+    // 更新标题名（轨道模式用 _trackName）
+    var nameEl = el.querySelector('.header-titles .name');
+    if (nameEl) {
+        nameEl.textContent = node._trackMode ? node._trackName : (node.currentAnim || node.name);
+    }
 
     // 动画下拉框
     var sel = el.querySelector('.anim-select');

@@ -134,7 +134,10 @@ SMTool._createLayerEl = function (node) {
             var resolvedInit = SMTool._resolveAnimNodeDownstream(layerInfo.animNodeId);
             var linkedNode = resolvedInit.animNode;
             if (linkedNode) {
-                displayText = SMTool._esc(linkedNode.sourceFile || linkedNode.name || '动画节点');
+                displayText = SMTool._esc(
+                    (linkedNode._trackMode ? linkedNode._trackName : '') ||
+                    linkedNode.sourceFile || linkedNode.name || '动画节点'
+                );
                 if (layerInfo.animName) {
                     animName = ' — ' + SMTool._esc(layerInfo.animName);
                 }
@@ -206,7 +209,10 @@ SMTool._updateLayerEl = function (node) {
                 var resolved = SMTool._resolveAnimNodeDownstream(layerInfo.animNodeId);
                 var linkedNode = resolved.animNode;
                 if (linkedNode) {
-                    displayText = SMTool._esc(linkedNode.sourceFile || linkedNode.name || '动画节点');
+                    displayText = SMTool._esc(
+                        (linkedNode._trackMode ? linkedNode._trackName : '') ||
+                        linkedNode.sourceFile || linkedNode.name || '动画节点'
+                    );
                     if (layerInfo.animName) {
                         animName = ' — ' + SMTool._esc(layerInfo.animName);
                     }

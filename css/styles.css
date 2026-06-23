@@ -1453,6 +1453,48 @@ body {
 .track-loop-btn:hover { border-color:var(--accent2); color:#fff; }
 .track-loop-btn.active { color:#44aaff; border-color:#44aaff; background:rgba(68,170,255,0.1); }
 
+/* ===== 轨道序列面板（轨道动画模式） ===== */
+.tseq-track-header {
+    display: flex; align-items: center; gap: 5px;
+    padding: 4px 8px; margin: 5px 0 2px;
+    background: rgba(74,158,255,0.06); border-radius: 6px;
+    font-size: 22px; color: var(--text); font-weight: 600;
+}
+.tseq-track-header b { color: var(--accent); font-size: 24px; }
+.tseq-track-header.tseq-disabled { opacity: 0.4; }
+.tseq-track-header.tseq-disabled b { color: var(--text2); }
+.tseq-track-ctrls {
+    margin-left: auto; display: flex; align-items: center; gap: 4px;
+    font-size: 18px; color: var(--text2);
+}
+.tseq-track-ctrls input[type="range"] { height: 4px; cursor: pointer; }
+.tseq-track-ctrls select { cursor: pointer; }
+.tseq-track-ctrls label { cursor: pointer; display: flex; align-items: center; gap: 1px; }
+
+.tseq-anims-row {
+    display: flex; align-items: center; gap: 3px;
+    padding: 3px 8px 6px; flex-wrap: wrap;
+}
+.tseq-anims-row select {
+    font-size: 22px; font-weight: 600; background: var(--input-bg);
+    border: 1px solid var(--border); color: var(--text);
+    border-radius: 4px; padding: 2px 6px; min-width: 80px; cursor: pointer;
+    font-family: inherit;
+}
+.tseq-anims-row select:hover { border-color: var(--accent); }
+.tseq-mix-arrow { color: var(--text2); font-size: 18px; margin: 0 1px; }
+.tseq-mix-input {
+    width: 42px; font-size: 18px; background: var(--input-bg);
+    border: 1px solid var(--accent); color: var(--accent);
+    border-radius: 3px; padding: 1px 3px; text-align: center;
+    font-family: inherit; outline: none;
+    -moz-appearance: textfield;
+}
+.tseq-mix-input::-webkit-inner-spin-button,
+.tseq-mix-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.tseq-mix-input:focus { border-color: #fff; }
+.tseq-mix-unit { color: var(--accent); font-size: 14px; font-weight: 600; }
+
 /* ===== 旧状态列表（保留兼容） ===== */
 .spine-node .state-list {
     padding: 4px 8px;

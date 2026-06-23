@@ -948,7 +948,10 @@ SMTool._serializeData = function () {
             premultipliedAlpha: n.premultipliedAlpha,
             loop: n.loop,
             tracks: n.tracks,
-            _mixTable: n._mixTable || {},  // ★ 同轨动画切换过渡表
+            _mixTable: n._mixTable || {},
+            _trackMode: n._trackMode || false,       // ★ 轨道动画模式
+            _trackName: n._trackName || '轨道动画',   // ★ 轨道模式显示名
+            _trackSequence: n._trackSequence || [],   // ★ 轨道序列数据
             _srcSkelJson: n._srcSkelJson,
             _srcSkelBinBase64: n._srcSkelBinBase64,
             _srcAtlasText: n._srcAtlasText,
@@ -1840,7 +1843,10 @@ SMTool._processImportJson = function (jsonText, fileHandle) {
             node._stateDesc = nd._stateDesc || '';
             node.loop = (nd.loop !== undefined ? nd.loop : true);
             node.tracks = nd.tracks || [];
-            node._mixTable = nd._mixTable || {};  // ★ 恢复同轨动画切换过渡表
+            node._mixTable = nd._mixTable || {};
+            node._trackMode = nd._trackMode || false;       // ★ 轨道动画模式
+            node._trackName = nd._trackName || '轨道动画';   // ★ 轨道模式显示名
+            node._trackSequence = nd._trackSequence || [];   // ★ 轨道序列数据
             node._customScale = (nd._customScale !== undefined ? nd._customScale : 1.0);
             node._playbackSpeed = (nd._playbackSpeed !== undefined ? nd._playbackSpeed : 1.0);
             node._loopMode = nd._loopMode || null;
@@ -1958,6 +1964,10 @@ SMTool._processImportJson = function (jsonText, fileHandle) {
                 (node._srcSkelJson || node._srcSkelBinBase64)) {
                 SMTool._loadFromSourceData(node).then(function () {
                     SMTool._updateEl(node);
+                    // ★ 轨道模式：恢复后应用序列
+                    if (node._trackMode && node.state) {
+                        SMTool._applyTrackSequence(node);
+                    }
                 }).catch(function (err) {
                     console.error('[Import] Failed to restore rendering:', err);
                 });
