@@ -28,8 +28,6 @@
     <div id="toolbar">
         <button onclick="SMTool.addSpineNode()">➕ 添加节点</button>
         <span class="sep"></span>
-        <button id="btnTestLayerSort" style="background:#ff6b6b;color:#fff;font-weight:700;" onclick="alert('SMTool._layerMoveBy='+typeof SMTool._layerMoveBy);var ln=null;var it=SMData.nodes.values();var r=it.next();while(!r.done){if(r.value.nodeType==='layer'){ln=r.value;break;}r=it.next();}if(ln){SMTool._layerMoveBy(ln.id,1,1);}else{alert('没有层级节点，请先右键添加');}">🔧 测试排序</button>
-        <span class="sep"></span>
         <button id="btnConnect" onclick="SMTool.toggleConnectMode()">🔗 连线模式</button>
         <span class="sep"></span>
         <button onclick="SMTool.fitAll()">📐 适合视图</button>
@@ -40,8 +38,6 @@
         <button onclick="SMTool.exportAsZip()" style="background:#f59e0b;color:#fff">📦 导出ZIP</button>
         <button onclick="SMTool.importData()">📥 导入</button>
         <button onclick="SMTool.exportAIJson()" style="background:#10b981;color:#fff">🤖 导出AI</button>
-        <span class="sep"></span>
-        <button id="btnTestLayer" onclick="SMTool._testLayerPreviewDirect()" style="background:#7c5ce7;color:#fff">🧪 测试层级叠加</button>
     </div>
 
     <!-- ===== 显示/隐藏切换按钮（左上角） ===== -->

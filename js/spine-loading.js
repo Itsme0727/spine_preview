@@ -344,6 +344,10 @@ SMTool._parseZip = function (data) {
 
 // ---- 原有 Spine 文件拖放逻辑（提取为独立函数）----
 SMTool._onDropSpineFiles = function (files, dropX, dropY) {
+    console.log('[Drop] _onDropSpineFiles: ' + files.length + ' file(s) at screen (' + dropX + ',' + dropY + ')');
+    for (var fi = 0; fi < files.length; fi++) {
+        console.log('[Drop]   file[' + fi + ']: ' + files[fi].name);
+    }
 
     var groups = {};
     for (var i = 0; i < files.length; i++) {
@@ -513,11 +517,22 @@ SMTool._onDropSpineFiles = function (files, dropX, dropY) {
     })();
 
     // Create nodes (with duplicate detection)
-    // ★ 网格布局：每套动画文件形成的节点堆，从左到右排列，每行最多3堆，
-    //    堆之间边缘距离 ≥200px（面板约300px + 余量，锚点间距500px）
+    // ★ 网格布局：每套动画文件形成的节点堆，从左到右排列，每行最多3堆
+    console.log('[Drop] After grouping: ' + keys.length + ' raw groups');
+    var unmergedCount = 0;
+    for (var di = 0; di < keys.length; di++) {
+        var dg = groups[keys[di]];
+        if (!dg._merged && (dg.json || dg.skel)) {
+            unmergedCount++;
+            console.log('[Drop]   unmerged group[' + (unmergedCount-1) + ']: "' + keys[di] + '" has ' +
+                (dg.json ? 'json ' : '') + (dg.skel ? 'skel ' : '') + (dg.atlas ? 'atlas ' : '') +
+                (dg._pngs ? dg._pngs.length + 'png(s)' : '0png'));
+        }
+    }
+    console.log('[Drop] Will create ' + unmergedCount + ' node group(s)');
     var MAX_COLS = 3;
-    var GRID_GAP_X = 500;  // 堆锚点水平间距
-    var GRID_GAP_Y = 500;  // 堆锚点垂直间距
+    var GRID_GAP_X = 600;  // 堆锚点水平间距（初始粗略值，后续 _applyGridLayout 精确修正）
+    var GRID_GAP_Y = 600;  // 堆锚点垂直间距
     var groupIndex = 0;
     var batchNodeIds = [];  // ★ 追踪本批次创建的所有节点 ID
     var batchPromises = []; // ★ 追踪每个节点的加载完成 Promise
@@ -544,96 +559,226 @@ SMTool._onDropSpineFiles = function (files, dropX, dropY) {
         }
     }
 
+    console.log('[Drop] Batch summary: ' + batchNodeIds.length + ' groups, ' + batchPromises.length + ' promises');
+
     // ★ 后处理：等待所有节点加载完成后（含克隆+布局），再按实际渲染尺寸进行网格排列
     if (batchNodeIds.length > 1) {
         var _batchDropX = dropX, _batchDropY = dropY;
         Promise.all(batchPromises).then(function () {
-            // 再等一小段时间确保 DOM 渲染完成（canvas 自动扩展等）
-            setTimeout(function () {
-                SMTool._applyGridLayout(batchNodeIds, _batchDropX, _batchDropY);
-            }, 300);
+            console.log('[Drop] All ' + batchPromises.length + ' groups loaded, scheduling _applyGridLayout...');
+            // 使用 requestAnimationFrame 双帧确保 DOM 已完成布局和绘制
+            requestAnimationFrame(function () {
+                requestAnimationFrame(function () {
+                    console.log('[Drop] Running _applyGridLayout now');
+                    try {
+                        SMTool._applyGridLayout(batchNodeIds, _batchDropX, _batchDropY);
+                    } catch (e) {
+                        console.error('[Drop] _applyGridLayout error:', e);
+                    }
+                });
+            });
+        }).catch(function (err) {
+            console.error('[Drop] Promise.all failed:', err);
         });
+    } else {
+        console.log('[Drop] Only ' + batchNodeIds.length + ' group(s), skipping inter-group layout');
     }
 
     // ★ 纯图片文件忽略（已禁用独立图片节点，请使用数据面板添加截图）
 };
 
-// ★ 网格布局后处理：将一批节点按 sourceFile 分组，每组排列成矩阵（最多3列）
-//    根据节点实际渲染宽度/高度动态计算安全间距，确保任意大小面板都不重叠
+// ★ 网格布局后处理：将一批节点按 sourceFile 分组，每组排列成队列
+//    同一 sourceFile 的节点竖向堆叠（由 _autoLayoutNodes 负责），
+//    不同 sourceFile 之间从左到右排列，每行最多 3 组，自动换行。
+//    根据节点实际渲染宽高动态计算间距，确保任意大小面板都不重叠。
 SMTool._applyGridLayout = function (nodeIds, anchorScreenX, anchorScreenY) {
     var MAX_COLS = 3;
-    var MIN_GAP = 200;  // 面板之间最小空隙（px）
+    var MIN_GAP_X = 1600;  // 组间水平最小空隙（世界单位）
+    var MIN_GAP_Y = 400;   // 组间垂直最小空隙（世界单位）
 
-    // 1. 按 sourceFile 分组
+    console.log('[Grid] _applyGridLayout called with ' + nodeIds.length + ' sample nodeIds:', nodeIds.join(','));
+
+    // 1. 从样本 nodeIds 确定要处理的 sourceFile 集合
+    var relevantSourceFiles = new Set();
+    for (var i = 0; i < nodeIds.length; i++) {
+        var sampleNode = SMData.nodes.get(nodeIds[i]);
+        if (sampleNode && sampleNode.sourceFile) {
+            relevantSourceFiles.add(sampleNode.sourceFile);
+        } else {
+            console.warn('[Grid] Sample node ' + nodeIds[i] + ' not found or no sourceFile');
+        }
+    }
+    console.log('[Grid] relevantSourceFiles size=' + relevantSourceFiles.size + ': ' + Array.from(relevantSourceFiles).join(', '));
+    if (relevantSourceFiles.size <= 1) {
+        console.log('[Grid] Only ' + relevantSourceFiles.size + ' sourceFile(s), nothing to arrange');
+        return;
+    }
+
+    // 2. 扫描 SMData.nodes 中所有属于这些 sourceFile 的 spine 节点（含克隆节点）
     var groups = {};
     var groupOrder = [];
-    for (var i = 0; i < nodeIds.length; i++) {
-        var nid = nodeIds[i];
-        var node = SMData.nodes.get(nid);
-        if (!node || !node.sourceFile) continue;
-        if (!groups[node.sourceFile]) {
-            groups[node.sourceFile] = [];
-            groupOrder.push(node.sourceFile);
+    var totalNodeCount = 0;
+    var nodesIter = SMData.nodes.values();
+    var r = nodesIter.next();
+    while (!r.done) {
+        var n = r.value;
+        if (n.nodeType === 'spine' && n.sourceFile && relevantSourceFiles.has(n.sourceFile)) {
+            if (!groups[n.sourceFile]) {
+                groups[n.sourceFile] = [];
+                groupOrder.push(n.sourceFile);
+            }
+            groups[n.sourceFile].push(n);
+            totalNodeCount++;
         }
-        groups[node.sourceFile].push(nid);
+        r = nodesIter.next();
+    }
+    console.log('[Grid] Found ' + totalNodeCount + ' total nodes across ' + groupOrder.length + ' groups');
+    for (var di = 0; di < groupOrder.length; di++) {
+        console.log('[Grid]   Group "' + groupOrder[di] + '": ' + groups[groupOrder[di]].length + ' node(s)');
+    }
+    if (groupOrder.length <= 1) {
+        console.log('[Grid] Only ' + groupOrder.length + ' group(s) after scan, nothing to arrange');
+        return;
     }
 
-    if (groupOrder.length <= 1) return;
-
-    // 2. 测量每组第一个节点的 DOM 渲染宽高，取最大值作为列间距/行间距
-    var maxWidth = 300, maxHeight = 300;
-    for (var gi = 0; gi < groupOrder.length; gi++) {
-        var gnodes = groups[groupOrder[gi]];
-        var el = document.getElementById('sn-' + gnodes[0]);
-        if (el) {
-            var rw = el.getBoundingClientRect().width;
-            var rh = el.getBoundingClientRect().height;
-            if (rw > maxWidth) maxWidth = rw;
-            if (rh > maxHeight) maxHeight = rh;
-        }
-    }
-    // 转换为世界坐标（考虑当前缩放）
+    // 3. 测量每组节点的实际 DOM 包围盒（屏幕像素），取该组最大值
     var z = SMData.view.zoom || 1;
-    if (z > 0) {
-        maxWidth = maxWidth / z;
-        maxHeight = maxHeight / z;
+    var groupMetrics = [];  // [{ sourceFile, nodes, maxW, maxH, totalW, totalH }]
+    for (var gi = 0; gi < groupOrder.length; gi++) {
+        var sf = groupOrder[gi];
+        var gNodes = groups[sf];
+        var gMaxW = 300, gMaxH = 200;
+        var gTotalW = 0, gTotalH = 0;
+        var firstEl = null;
+
+        for (var ni = 0; ni < gNodes.length; ni++) {
+            var el = document.getElementById('sn-' + gNodes[ni].id);
+            if (el) {
+                if (!firstEl) firstEl = el;
+                var rw = el.getBoundingClientRect().width;
+                var rh = el.getBoundingClientRect().height;
+                if (rw > gMaxW) gMaxW = rw;
+                if (rh > gMaxH) gMaxH = rh;
+            }
+        }
+        // 用该组所有节点实际 DOM 范围估算整体包围盒（屏幕坐标）
+        var minScreenX = Infinity, minScreenY = Infinity;
+        var maxScreenX = -Infinity, maxScreenY = -Infinity;
+        var measurableCount = 0;
+        for (var mj = 0; mj < gNodes.length; mj++) {
+            var mel = document.getElementById('sn-' + gNodes[mj].id);
+            if (mel) {
+                var mr = mel.getBoundingClientRect();
+                if (isFinite(mr.left) && mr.width > 0) {
+                    if (mr.left < minScreenX) minScreenX = mr.left;
+                    if (mr.top < minScreenY) minScreenY = mr.top;
+                    if (mr.right > maxScreenX) maxScreenX = mr.right;
+                    if (mr.bottom > maxScreenY) maxScreenY = mr.bottom;
+                    measurableCount++;
+                }
+            }
+        }
+        if (measurableCount > 0 && isFinite(minScreenX)) {
+            gTotalW = (maxScreenX - minScreenX) / z;
+            gTotalH = (maxScreenY - minScreenY) / z;
+        } else {
+            // 回退：使用节点内部数据估算
+            for (var fi = 0; fi < gNodes.length; fi++) {
+                var fw = (gNodes[fi].width || 300);
+                var fh = (gNodes[fi]._canvasHeight || 200) + 100;
+                if (fw > gTotalW) gTotalW = fw;
+                gTotalH += fh + 20;
+            }
+        }
+        gMaxW = gMaxW / z;
+        gMaxH = gMaxH / z;
+        // 使用实测包围盒，若无则用单节点尺寸
+        if (gTotalW < gMaxW) gTotalW = gMaxW;
+        if (gTotalH < gMaxH) gTotalH = gMaxH;
+
+        console.log('[Grid] Group "' + sf + '": ' + gNodes.length + ' nodes, ' + measurableCount + ' measurable, ' +
+            'totalW=' + Math.round(gTotalW) + ' totalH=' + Math.round(gTotalH) + ' (world units)');
+
+        groupMetrics.push({
+            sourceFile: sf,
+            nodes: gNodes,
+            maxW: gMaxW,
+            maxH: gMaxH,
+            totalW: gTotalW,
+            totalH: gTotalH
+        });
     }
-    var gapX = maxWidth + MIN_GAP;   // 水平间距 = 面板最大宽度 + 间隙
-    var gapY = maxHeight + MIN_GAP;  // 垂直间距 = 面板最大高度 + 间隙
 
-    console.log('[Grid] Panel max=' + Math.round(maxWidth) + 'x' + Math.round(maxHeight) + ' world units, gap=' + Math.round(gapX) + 'x' + Math.round(gapY));
+    // 4. 计算每组在世界坐标中的目标锚点（左上角）
+    //    从左到右排列，每行最多 MAX_COLS 组，换行时行高取该行所有组的最大 totalH
+    var rowLayouts = [];  // [{ groups: [groupMetrics], rowH: number }]
+    var curRow = { groups: [], rowH: 0 };
+    for (var gi2 = 0; gi2 < groupMetrics.length; gi2++) {
+        if (curRow.groups.length >= MAX_COLS) {
+            rowLayouts.push(curRow);
+            curRow = { groups: [], rowH: 0 };
+        }
+        curRow.groups.push(groupMetrics[gi2]);
+        if (groupMetrics[gi2].totalH > curRow.rowH) curRow.rowH = groupMetrics[gi2].totalH;
+    }
+    if (curRow.groups.length > 0) rowLayouts.push(curRow);
 
-    // 3. 以第一个节点为基准锚点，按网格排列
-    var firstGroupNodes = groups[groupOrder[0]];
-    var anchorNode = SMData.nodes.get(firstGroupNodes[0]);
-    if (!anchorNode) return;
+    // ★ 安全兜底：防止 totalH=0 导致行间距消失
+    for (var ri2 = 0; ri2 < rowLayouts.length; ri2++) {
+        if (!rowLayouts[ri2].rowH || rowLayouts[ri2].rowH < 50) {
+            rowLayouts[ri2].rowH = 400;  // 兜底行高
+        }
+    }
+    console.log('[Grid] Row layout: ' + rowLayouts.length + ' row(s)');
+    for (var ri3 = 0; ri3 < rowLayouts.length; ri3++) {
+        console.log('[Grid]   Row ' + ri3 + ': ' + rowLayouts[ri3].groups.length + ' group(s), rowH=' + Math.round(rowLayouts[ri3].rowH));
+    }
+
+    // 5. 以第一个组的第一个节点为锚点，逐组逐行设置目标位置
+    var anchorNode = groupMetrics[0].nodes[0];
+    if (!anchorNode) { console.warn('[Grid] No anchor node found'); return; }
     var baseWX = anchorNode.x;
     var baseWY = anchorNode.y;
 
-    for (var gi = 0; gi < groupOrder.length; gi++) {
-        var sf = groupOrder[gi];
-        var col = gi % MAX_COLS;
-        var row = Math.floor(gi / MAX_COLS);
+    console.log('[Grid] Anchor at world (' + Math.round(baseWX) + ', ' + Math.round(baseWY) + '), zoom=' + z.toFixed(2));
 
-        var targetWX = baseWX + col * gapX;
-        var targetWY = baseWY + row * gapY;
+    var accumY = baseWY;
+    for (var ri = 0; ri < rowLayouts.length; ri++) {
+        var rowData = rowLayouts[ri];
+        var accumX = baseWX;
 
-        var groupNodeIds = groups[sf];
-        var firstNode = SMData.nodes.get(groupNodeIds[0]);
-        if (!firstNode) continue;
-        var dx = targetWX - firstNode.x;
-        var dy = targetWY - firstNode.y;
+        console.log('[Grid] Row ' + ri + ' starts at accumY=' + Math.round(accumY) + ', rowH=' + Math.round(rowData.rowH));
 
-        for (var ni = 0; ni < groupNodeIds.length; ni++) {
-            var gn = SMData.nodes.get(groupNodeIds[ni]);
-            if (!gn) continue;
-            gn.x += dx;
-            gn.y += dy;
-            SMTool._updatePos(gn);
+        for (var ci = 0; ci < rowData.groups.length; ci++) {
+            var gm = rowData.groups[ci];
+            var groupFirst = gm.nodes[0];
+
+            var targetWX = accumX;
+            var targetWY = accumY;
+
+            var dx = targetWX - groupFirst.x;
+            var dy = targetWY - groupFirst.y;
+
+            console.log('[Grid] Group "' + gm.sourceFile + '" (row ' + ri + ' col ' + ci + '): ' +
+                'move from (' + Math.round(groupFirst.x) + ',' + Math.round(groupFirst.y) + ') → (' +
+                Math.round(targetWX) + ',' + Math.round(targetWY) + ') delta=(' + Math.round(dx) + ',' + Math.round(dy) + ')');
+
+            // 移动该组所有节点
+            for (var ni2 = 0; ni2 < gm.nodes.length; ni2++) {
+                gm.nodes[ni2].x += dx;
+                gm.nodes[ni2].y += dy;
+                SMTool._updatePos(gm.nodes[ni2]);
+            }
+
+            accumX += gm.totalW + MIN_GAP_X;
         }
+
+        accumY += rowData.rowH + MIN_GAP_Y;
+        console.log('[Grid] Row ' + ri + ' done, next accumY=' + Math.round(accumY) + ' (added rowH=' + Math.round(rowData.rowH) + ' + gap=' + MIN_GAP_Y + ')');
     }
 
-    console.log('[Grid] Layout applied (' + groupOrder.length + ' groups, gap=' + Math.round(gapX) + 'x' + Math.round(gapY) + ' world units)');
+    console.log('[Grid] Layout applied: ' + groupOrder.length + ' sourceFile groups, '
+        + rowLayouts.length + ' row(s), ' + groupMetrics.reduce(function(s,g){return s+g.nodes.length;},0) + ' total nodes');
 };
 
 // ================================================================
