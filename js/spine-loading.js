@@ -389,26 +389,251 @@ SMTool._onDropSpineFiles = function (files, dropX, dropY) {
         }
     }
 
+    // ★ 跨名文件智能合并 —— 支持骨架/图集/图片使用不同文件名（如 anim.skel + tex.atlas + img.png）
+    // 策略：Spine 中图集(.atlas)第一行引用图片名，骨架(.skel/.json)不直接引用图集名，
+    //       因此只要成套文件类型互补，即可合并为一组。
+    (function () {
+        var keys2 = Object.keys(groups);
+        // 收集「有骨架无图集」的组 和 「有图集无骨架」的组
+        var skelOnly = [];  // { base, group }
+        var atlasOnly = [];
+        var pngOnly = [];
+        for (var i = 0; i < keys2.length; i++) {
+            var b = keys2[i];
+            var g = groups[b];
+            if (g._merged) continue;
+            var hasSkel = !!(g.json || g.skel);
+            var hasAtlas = !!g.atlas;
+            var hasPng = !!(g._pngs && g._pngs.length > 0) || !!g.png;
+            if (hasSkel && !hasAtlas) skelOnly.push({ base: b, group: g });
+            else if (hasAtlas && !hasSkel) atlasOnly.push({ base: b, group: g });
+            else if (!hasSkel && !hasAtlas && hasPng) pngOnly.push({ base: b, group: g });
+        }
+
+        // Phase A: 骨架组 + 图集组 智能合并
+        // 场景1: 1图集 + N骨架 → 图集共享复制到所有骨架（常见：多动画共用图集）
+        // 场景2: N图集 + 1骨架 → 第一个图集合并，其余忽略（骨架只认一个图集）
+        // 场景3: 等量 → 一对一合并
+        if (atlasOnly.length === 1 && skelOnly.length >= 1) {
+            // ★ 一个图集服务多个骨架：将图集文件引用复制到每个骨架组
+            var sharedAe = atlasOnly[0];
+            for (var si = 0; si < skelOnly.length; si++) {
+                var se2 = skelOnly[si];
+                for (var kk in sharedAe.group) {
+                    if (kk === '_merged' || kk === 'name') continue;
+                    if (kk === '_pngs') {
+                        if (!se2.group._pngs) se2.group._pngs = [];
+                        for (var pi = 0; pi < sharedAe.group._pngs.length; pi++) {
+                            // 避免重复添加同一图片文件
+                            var alreadyHas = false;
+                            for (var epi = 0; epi < se2.group._pngs.length; epi++) {
+                                if (se2.group._pngs[epi].name === sharedAe.group._pngs[pi].name) { alreadyHas = true; break; }
+                            }
+                            if (!alreadyHas) se2.group._pngs.push(sharedAe.group._pngs[pi]);
+                        }
+                    } else if (!se2.group[kk]) {
+                        se2.group[kk] = sharedAe.group[kk];
+                    }
+                }
+                console.log('[Drop] 🔗 Shared atlas "' + sharedAe.base + '" → "' + se2.base + '" (' + (si + 1) + '/' + skelOnly.length + ')');
+            }
+            sharedAe.group._merged = true;
+        } else if (skelOnly.length === 1 && atlasOnly.length >= 1) {
+            // 一个骨架 + 多个图集：只用第一个图集
+            var se3 = skelOnly[0];
+            var ae2 = atlasOnly[0];
+            for (var kk2 in ae2.group) {
+                if (kk2 === '_merged' || kk2 === 'name') continue;
+                if (kk2 === '_pngs') {
+                    if (!se3.group._pngs) se3.group._pngs = [];
+                    for (var pi2 = 0; pi2 < ae2.group._pngs.length; pi2++) {
+                        se3.group._pngs.push(ae2.group._pngs[pi2]);
+                    }
+                } else if (!se3.group[kk2]) {
+                    se3.group[kk2] = ae2.group[kk2];
+                }
+            }
+            ae2.group._merged = true;
+            console.log('[Drop] 🔗 Merged (first of ' + atlasOnly.length + ' atlases): "' + ae2.base + '" → "' + se3.base + '"');
+            // 其余图集忽略（无法分配给同一个骨架）
+            for (var ai = 1; ai < atlasOnly.length; ai++) {
+                atlasOnly[ai].group._merged = true;
+                console.log('[Drop] ⚠ Ignored extra atlas: "' + atlasOnly[ai].base + '" (only one atlas per skeleton)');
+            }
+        } else {
+            // 等量或无法判断：一对一按顺序合并
+            while (skelOnly.length > 0 && atlasOnly.length > 0) {
+                var se4 = skelOnly.shift();
+                var ae3 = atlasOnly.shift();
+                for (var kk3 in ae3.group) {
+                    if (kk3 === '_merged' || kk3 === 'name') continue;
+                    if (kk3 === '_pngs') {
+                        if (!se4.group._pngs) se4.group._pngs = [];
+                        for (var pi3 = 0; pi3 < ae3.group._pngs.length; pi3++) {
+                            se4.group._pngs.push(ae3.group._pngs[pi3]);
+                        }
+                    } else if (!se4.group[kk3]) {
+                        se4.group[kk3] = ae3.group[kk3];
+                    }
+                }
+                ae3.group._merged = true;
+                console.log('[Drop] 🔗 Merged different-name files: "' + ae3.base + '" → "' + se4.base + '"');
+            }
+        }
+
+        // Phase B: 剩余纯图片组 → 合并到有骨架/图集的组（_loadSpine 会模糊匹配图片名）
+        // ★ 若只有一个图片组且有多个骨架组 → 图片共享到所有骨架组（多动画共用图集场景）
+        while (pngOnly.length > 0) {
+            var pe = pngOnly.shift();
+            // 收集所有可用的目标组（有骨架或图集，且未被合并）
+            var targets = [];
+            for (var i = 0; i < keys2.length; i++) {
+                var b2 = keys2[i];
+                var g2 = groups[b2];
+                if (g2._merged || g2 === pe.group) continue;
+                if (g2.json || g2.skel || g2.atlas) { targets.push(g2); }
+            }
+            if (targets.length > 0) {
+                // 将图片文件引用复制到所有目标组（共享场景）
+                for (var ti = 0; ti < targets.length; ti++) {
+                    var tgt = targets[ti];
+                    if (!tgt._pngs) tgt._pngs = [];
+                    for (var pi = 0; pi < pe.group._pngs.length; pi++) {
+                        var alreadyHas = false;
+                        for (var epi = 0; epi < tgt._pngs.length; epi++) {
+                            if (tgt._pngs[epi].name === pe.group._pngs[pi].name) { alreadyHas = true; break; }
+                        }
+                        if (!alreadyHas) tgt._pngs.push(pe.group._pngs[pi]);
+                    }
+                }
+                pe.group._merged = true;
+                console.log('[Drop] 🖼 Shared PNG "' + pe.base + '" → ' + targets.length + ' group(s)');
+            }
+        }
+    })();
+
     // Create nodes (with duplicate detection)
-    var accumulatedOffset = 0;
-    var H_SPACING = 350;
+    // ★ 网格布局：每套动画文件形成的节点堆，从左到右排列，每行最多3堆，
+    //    堆之间边缘距离 ≥200px（面板约300px + 余量，锚点间距500px）
+    var MAX_COLS = 3;
+    var GRID_GAP_X = 500;  // 堆锚点水平间距
+    var GRID_GAP_Y = 500;  // 堆锚点垂直间距
+    var groupIndex = 0;
+    var batchNodeIds = [];  // ★ 追踪本批次创建的所有节点 ID
+    var batchPromises = []; // ★ 追踪每个节点的加载完成 Promise
     for (var k2 = 0; k2 < keys.length; k2++) {
         var base2 = keys[k2];
         var group2 = groups[base2];
         if (group2._merged) { continue; }
         if (group2.json || group2.skel) {
+            var col = groupIndex % MAX_COLS;
+            var row = Math.floor(groupIndex / MAX_COLS);
+            var gx = dropX + col * GRID_GAP_X;
+            var gy = dropY + row * GRID_GAP_Y;
             var existingIds = SMTool._checkDuplicateSourceFile(base2);
             if (existingIds.length > 0) {
-                SMTool._showDuplicateDialog(base2, group2, dropX + accumulatedOffset, dropY, existingIds);
+                SMTool._showDuplicateDialog(base2, group2, gx, gy, existingIds);
             } else {
-                SMTool._createNode(group2, base2, dropX + accumulatedOffset, dropY);
+                var newNodeId = SMData.nextId;
+                var nodePromise = SMTool._createNode(group2, base2, gx, gy);
+                batchNodeIds.push(newNodeId);
+                batchPromises.push(nodePromise);
                 SMData._forceRedraw = true;
             }
-            accumulatedOffset += H_SPACING;
+            groupIndex++;
         }
     }
 
+    // ★ 后处理：等待所有节点加载完成后（含克隆+布局），再按实际渲染尺寸进行网格排列
+    if (batchNodeIds.length > 1) {
+        var _batchDropX = dropX, _batchDropY = dropY;
+        Promise.all(batchPromises).then(function () {
+            // 再等一小段时间确保 DOM 渲染完成（canvas 自动扩展等）
+            setTimeout(function () {
+                SMTool._applyGridLayout(batchNodeIds, _batchDropX, _batchDropY);
+            }, 300);
+        });
+    }
+
     // ★ 纯图片文件忽略（已禁用独立图片节点，请使用数据面板添加截图）
+};
+
+// ★ 网格布局后处理：将一批节点按 sourceFile 分组，每组排列成矩阵（最多3列）
+//    根据节点实际渲染宽度/高度动态计算安全间距，确保任意大小面板都不重叠
+SMTool._applyGridLayout = function (nodeIds, anchorScreenX, anchorScreenY) {
+    var MAX_COLS = 3;
+    var MIN_GAP = 200;  // 面板之间最小空隙（px）
+
+    // 1. 按 sourceFile 分组
+    var groups = {};
+    var groupOrder = [];
+    for (var i = 0; i < nodeIds.length; i++) {
+        var nid = nodeIds[i];
+        var node = SMData.nodes.get(nid);
+        if (!node || !node.sourceFile) continue;
+        if (!groups[node.sourceFile]) {
+            groups[node.sourceFile] = [];
+            groupOrder.push(node.sourceFile);
+        }
+        groups[node.sourceFile].push(nid);
+    }
+
+    if (groupOrder.length <= 1) return;
+
+    // 2. 测量每组第一个节点的 DOM 渲染宽高，取最大值作为列间距/行间距
+    var maxWidth = 300, maxHeight = 300;
+    for (var gi = 0; gi < groupOrder.length; gi++) {
+        var gnodes = groups[groupOrder[gi]];
+        var el = document.getElementById('sn-' + gnodes[0]);
+        if (el) {
+            var rw = el.getBoundingClientRect().width;
+            var rh = el.getBoundingClientRect().height;
+            if (rw > maxWidth) maxWidth = rw;
+            if (rh > maxHeight) maxHeight = rh;
+        }
+    }
+    // 转换为世界坐标（考虑当前缩放）
+    var z = SMData.view.zoom || 1;
+    if (z > 0) {
+        maxWidth = maxWidth / z;
+        maxHeight = maxHeight / z;
+    }
+    var gapX = maxWidth + MIN_GAP;   // 水平间距 = 面板最大宽度 + 间隙
+    var gapY = maxHeight + MIN_GAP;  // 垂直间距 = 面板最大高度 + 间隙
+
+    console.log('[Grid] Panel max=' + Math.round(maxWidth) + 'x' + Math.round(maxHeight) + ' world units, gap=' + Math.round(gapX) + 'x' + Math.round(gapY));
+
+    // 3. 以第一个节点为基准锚点，按网格排列
+    var firstGroupNodes = groups[groupOrder[0]];
+    var anchorNode = SMData.nodes.get(firstGroupNodes[0]);
+    if (!anchorNode) return;
+    var baseWX = anchorNode.x;
+    var baseWY = anchorNode.y;
+
+    for (var gi = 0; gi < groupOrder.length; gi++) {
+        var sf = groupOrder[gi];
+        var col = gi % MAX_COLS;
+        var row = Math.floor(gi / MAX_COLS);
+
+        var targetWX = baseWX + col * gapX;
+        var targetWY = baseWY + row * gapY;
+
+        var groupNodeIds = groups[sf];
+        var firstNode = SMData.nodes.get(groupNodeIds[0]);
+        if (!firstNode) continue;
+        var dx = targetWX - firstNode.x;
+        var dy = targetWY - firstNode.y;
+
+        for (var ni = 0; ni < groupNodeIds.length; ni++) {
+            var gn = SMData.nodes.get(groupNodeIds[ni]);
+            if (!gn) continue;
+            gn.x += dx;
+            gn.y += dy;
+            SMTool._updatePos(gn);
+        }
+    }
+
+    console.log('[Grid] Layout applied (' + groupOrder.length + ' groups, gap=' + Math.round(gapX) + 'x' + Math.round(gapY) + ' world units)');
 };
 
 // ================================================================
@@ -939,58 +1164,54 @@ SMTool._createNode = function (fileGroup, baseName, optX, optY) {
     SMTool._createEl(node);
     SMTool._updatePos(node);
 
-    var self = this;
-    SMTool._loadSpine(node, fileGroup).then(function () {
-        var anims = node.animations;
-        var animNames = [];
-        for (var ai = 0; ai < anims.length; ai++) animNames.push(anims[ai].name);
-        // 异步联网翻译
-        SMTool._translateAnimNames(animNames, function () {});
-        if (anims.length > 0) {
-            node.name = SMTool._translateName(anims[0].name);
-            SMTool._updateEl(node);
-        }
-        if (anims.length > 1) {
-            var allNodes = [node]; // 收集所有节点用于布局
-            var animIdx = 1;
-
-            // 串行创建克隆（逐个来，避免真实浏览器中并发 WebGL 上下文竞争导致首个节点画面丢失）
-            function createNextClone() {
-                if (animIdx >= anims.length) {
-                    // 全部完成，自动布局并全选所有衍生节点
-                    setTimeout(function () {
-                        SMTool._autoLayoutNodes(allNodes, node.x, node.y);
-                        // 全选这批文件产生的所有节点
-                        SMData.selectedNodes.clear();
-                        for (var si = 0; si < allNodes.length; si++) {
-                            SMData.selectedNodes.add(allNodes[si].id);
-                        }
-                        SMData.selectedNode = allNodes[0].id;
-                        SMTool._updateSel();
-                        SMTool._updateSB();
-                    }, 200);
-                    return;
-                }
-                SMTool._createCloneNode(node, anims[animIdx].name, animIdx, anims.length, function (clonedNode) {
-                    if (clonedNode) allNodes.push(clonedNode);
-                    animIdx++;
-                    // 加短暂延迟让浏览器消化当前 WebGL 上下文
-                    setTimeout(createNextClone, 80);
-                });
+    // ★ 返回 Promise，在所有异步加载/克隆/布局完成后 resolve
+    return new Promise(function (resolveNode) {
+        SMTool._loadSpine(node, fileGroup).then(function () {
+            var anims = node.animations;
+            var animNames = [];
+            for (var ai = 0; ai < anims.length; ai++) animNames.push(anims[ai].name);
+            SMTool._translateAnimNames(animNames, function () {});
+            if (anims.length > 0) {
+                node.name = SMTool._translateName(anims[0].name);
+                SMTool._updateEl(node);
             }
-            createNextClone();
-        } else {
-            if (SMData.nodes.size <= 1) setTimeout(function () { SMTool.fitAll(); }, 300);
-        }
-        SMTool._updateSB();
-    }).catch(function (err) {
-        console.error('[Spine] Load failed:', err);
-        node.name = baseName + ' (加载失败)';
-        SMTool._updateEl(node);
+            if (anims.length > 1) {
+                var allNodes = [node];
+                var animIdx = 1;
+                function createNextClone() {
+                    if (animIdx >= anims.length) {
+                        setTimeout(function () {
+                            SMTool._autoLayoutNodes(allNodes, node.x, node.y);
+                            SMData.selectedNodes.clear();
+                            for (var si = 0; si < allNodes.length; si++) {
+                                SMData.selectedNodes.add(allNodes[si].id);
+                            }
+                            SMData.selectedNode = allNodes[0].id;
+                            SMTool._updateSel();
+                            SMTool._updateSB();
+                            resolveNode(node);  // ★ 克隆全部完成
+                        }, 200);
+                        return;
+                    }
+                    SMTool._createCloneNode(node, anims[animIdx].name, animIdx, anims.length, function (clonedNode) {
+                        if (clonedNode) allNodes.push(clonedNode);
+                        animIdx++;
+                        setTimeout(createNextClone, 80);
+                    });
+                }
+                createNextClone();
+            } else {
+                if (SMData.nodes.size <= 1) setTimeout(function () { SMTool.fitAll(); }, 300);
+                resolveNode(node);  // ★ 单动画直接完成
+            }
+            SMTool._updateSB();
+        }).catch(function (err) {
+            console.error('[Spine] Load failed:', err);
+            node.name = baseName + ' (加载失败)';
+            SMTool._updateEl(node);
+            resolveNode(node);  // ★ 失败也 resolve，不阻塞其他节点
+        });
     });
-
-    SMTool._updateSB();
-    SMTool._updateSel();
 };
 
 // ---- 自动布局：间距 = 每个节点自身面板宽度 / 2，每行最多5个，左到右上到下排列 ----
@@ -1533,6 +1754,38 @@ SMTool._parseSpineData = function (node, SP, WGL, atlasText, pageDataUrls, skelJ
             }
             node.atlasData = atlas;
             console.log('[Spine] Atlas: ' + atlas.pages.length + ' page(s), ' + atlas.regions.length + ' region(s)');
+
+            // ★ 兼容层：补丁 atlas.findRegion，处理 skeleton 与 atlas 之间空格不一致的问题
+            //    某些 spine 导出会在 attachment path 中插入空格（如 "Bg Light"），
+            //    但 atlas 中对应区域可能无空格（"BgLight"），反之亦然。
+            (function () {
+                var _origFind = atlas.findRegion.bind(atlas);
+                // 构建「无空格 → 原始名」反向索引
+                var noSpaceMap = {};
+                for (var ri = 0; ri < atlas.regions.length; ri++) {
+                    var rn = atlas.regions[ri].name;
+                    var key = rn.replace(/\s+/g, '');
+                    if (!noSpaceMap[key]) noSpaceMap[key] = [];
+                    noSpaceMap[key].push(rn);
+                }
+                atlas.findRegion = function (name) {
+                    var r = _origFind(name);
+                    if (r) return r;
+                    // 尝试去掉所有空格后匹配
+                    if (/\s/.test(name)) {
+                        r = _origFind(name.replace(/\s+/g, ''));
+                        if (r) { console.log('[Spine]   Fuzzy-matched (space→nospace): "' + name + '" → "' + r.name + '"'); return r; }
+                    } else {
+                        // 尝试在 atlas 中查找同「无空格键」但带空格的变体
+                        var candidates = noSpaceMap[name];
+                        if (candidates && candidates.length > 0) {
+                            r = _origFind(candidates[0]);
+                            if (r) { console.log('[Spine]   Fuzzy-matched (nospace→space): "' + name + '" → "' + r.name + '"'); return r; }
+                        }
+                    }
+                    return null;
+                };
+            })();
 
             // 加载 SkeletonData
             var al = new SP.AtlasAttachmentLoader(atlas);

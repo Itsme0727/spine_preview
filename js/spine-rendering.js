@@ -847,6 +847,33 @@ SMTool._initAnimPreview = function (node) {
             pp._atlasData = atlas;
             pp._texImgs = imgs;
 
+            // ★ 兼容层：补丁 atlas.findRegion，处理 skeleton 与 atlas 之间空格不一致的问题
+            (function () {
+                var _origFind = atlas.findRegion.bind(atlas);
+                var noSpaceMap = {};
+                for (var ri = 0; ri < atlas.regions.length; ri++) {
+                    var rn = atlas.regions[ri].name;
+                    var key = rn.replace(/\s+/g, '');
+                    if (!noSpaceMap[key]) noSpaceMap[key] = [];
+                    noSpaceMap[key].push(rn);
+                }
+                atlas.findRegion = function (name) {
+                    var r = _origFind(name);
+                    if (r) return r;
+                    if (/\s/.test(name)) {
+                        r = _origFind(name.replace(/\s+/g, ''));
+                        if (r) return r;
+                    } else {
+                        var candidates = noSpaceMap[name];
+                        if (candidates && candidates.length > 0) {
+                            r = _origFind(candidates[0]);
+                            if (r) return r;
+                        }
+                    }
+                    return null;
+                };
+            })();
+
             var al = new SP.AtlasAttachmentLoader(atlas);
             var sd;
             var srcType = node._srcType || 'json';
