@@ -104,6 +104,30 @@ SMTool._onMD = function (e) {
             e.stopPropagation();
             return;
         }
+        // ★ 检测条件框删除按钮（×） — 必须在 _findLabel（标签拖拽）之前处理
+        if (SMData._labelRects && SMData._labelRects.length > 0) {
+            if (!SMData._lblLogOnce) { SMData._lblLogOnce = true; console.log('[×] _labelRects sample:', SMData._labelRects.length + ' rects, first closeArea=(' + Math.round(SMData._labelRects[0].closeX) + ',' + Math.round(SMData._labelRects[0].closeY) + ',' + SMData._labelRects[0].closeW + 'x' + SMData._labelRects[0].closeH + ')'); }
+            for (var lri = 0; lri < SMData._labelRects.length; lri++) {
+                var lrc = SMData._labelRects[lri];
+                if (lrc.closeX !== undefined &&
+                    e.clientX >= lrc.closeX && e.clientX <= lrc.closeX + lrc.closeW &&
+                    e.clientY >= lrc.closeY && e.clientY <= lrc.closeY + lrc.closeH) {
+                    for (var cd = 0; cd < SMData.connections.length; cd++) {
+                        if (SMData.connections[cd].id === lrc.connId) {
+                            SMData.connections[cd].condition = '';
+                            SMData.connections[cd]._hideLabel = true;
+                            break;
+                        }
+                    }
+                    SMData.selectedConnection = null;
+                    SMData._forceRedraw = true;
+                    SMTool._updateSB();
+                    SMTool._updateFlowPanel();
+                    e.preventDefault();
+                    return;
+                }
+            }
+        }
         // 检测条件标签拖拽（拖拽标签改变贝塞尔曲线走势）
         var lr = SMTool._findLabel(e.clientX, e.clientY);
         if (lr) {
@@ -1237,8 +1261,9 @@ SMTool._onKD = function (e) {
         }
         return;
     }
-    // Ctrl+Z：撤销
+    // Ctrl+Z：撤销（排除文本输入框中的浏览器原生撤销）
     if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === 'z' || e.key === 'Z')) {
+        if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)) return;
         e.preventDefault();
         SMTool.undo();
         return;
@@ -1532,6 +1557,29 @@ SMTool._highlightTarget = function (mx, my) {
 
 // ---- 检测条件标签点击（也检测贝塞尔曲线上的点击） ----
 SMTool._checkConditionClick = function (mx, my) {
+    // ★ 优先检测删除按钮（×）：使用 _labelRects 中的 close 区域直接匹配
+    if (SMData._labelRects) {
+        for (var lri = 0; lri < SMData._labelRects.length; lri++) {
+            var lr = SMData._labelRects[lri];
+            if (lr.closeX !== undefined &&
+                mx >= lr.closeX && mx <= lr.closeX + lr.closeW &&
+                my >= lr.closeY && my <= lr.closeY + lr.closeH) {
+                // 找到对应连线并清除条件
+                for (var ciDel = 0; ciDel < SMData.connections.length; ciDel++) {
+                    if (SMData.connections[ciDel].id === lr.connId) {
+                        SMData.connections[ciDel].condition = '';
+                        SMData.connections[ciDel]._hideLabel = true;
+                        SMData.selectedConnection = null;
+                        SMData._forceRedraw = true;
+                        SMTool._updateSB();
+                        SMTool._updateFlowPanel();
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
     for (var i = 0; i < SMData.connections.length; i++) {
         var c = SMData.connections[i];
         var fn = SMData.nodes.get(c.fromNode);
@@ -1556,45 +1604,50 @@ SMTool._checkConditionClick = function (mx, my) {
         var cp1s = SMTool.worldToCanvas(fp.x + cp1x, fp.y + cp1y);
         var cp2s = SMTool.worldToCanvas(tp.x + cp2x, tp.y + cp2y);
 
-        // 检测是否点击了标签位置（中点附近）
+        // ★ 使用 _labelRects 精确检测：点击是否落在标签矩形内（不只是中点附近）
+        var inLabelRect = false;
+        if (SMData._labelRects) {
+            for (var lrj = 0; lrj < SMData._labelRects.length; lrj++) {
+                var lr2 = SMData._labelRects[lrj];
+                if (lr2.connId === c.id &&
+                    mx >= lr2.x && mx <= lr2.x + lr2.w &&
+                    my >= lr2.y && my <= lr2.y + lr2.h) {
+                    inLabelRect = true;
+                    break;
+                }
+            }
+        }
+
+        // 检测是否点击了标签位置（中点附近，作为回退）
         var mt = 0.5;
         var lx = Math.pow(1 - mt, 3) * fs.x + 3 * Math.pow(1 - mt, 2) * mt * cp1s.x + 3 * (1 - mt) * mt * mt * cp2s.x + mt * mt * mt * ts.x;
         var ly = Math.pow(1 - mt, 3) * fs.y + 3 * Math.pow(1 - mt, 2) * mt * cp1s.y + 3 * (1 - mt) * mt * mt * cp2s.y + mt * mt * mt * ts.y;
         var distLabel = Math.sqrt((mx - lx) * (mx - lx) + (my - ly) * (my - ly));
 
-        if (distLabel < 30) {
-            // ★ 优先检测：是否点击了删除图标（×）
-            if (SMData._labelRects) {
-                for (var lri = 0; lri < SMData._labelRects.length; lri++) {
-                    var lr = SMData._labelRects[lri];
-                    if (lr.connId === c.id && lr.closeX !== undefined) {
-                        if (mx >= lr.closeX && mx <= lr.closeX + lr.closeW &&
-                            my >= lr.closeY && my <= lr.closeY + lr.closeH) {
-                            // 点击了删除图标 → 清除条件文字，保留连线
-                            c.condition = '';
-                            SMData.selectedConnection = null;
-                            SMTool._updateSB();
-                            SMTool._updateFlowPanel();
-                            return true;
-                        }
-                    }
-                }
-            }
-            // 点击了标签 → 选中连线 + 弹出条件编辑器
+        if (inLabelRect || distLabel < 30) {
+            // ★ 单击：选中连线（用于贝塞尔拖拽），不弹条件编辑器
             SMData.selectedConnection = c.id;
+            c._hideLabel = false;  // ★ 恢复标签显示
             SMTool._updateStateRowColors();
-            if (!isEntryExitConn) {
-                // ★ 取实际条件框的底部 Y 坐标（非贝塞尔中点）
-                var boxBottom = ly;
-                if (SMData._labelRects) {
-                    for (var lri = 0; lri < SMData._labelRects.length; lri++) {
-                        if (SMData._labelRects[lri].connId === c.id) {
-                            boxBottom = SMData._labelRects[lri].y + SMData._labelRects[lri].h;
-                            break;
+            // ★ 双击检测：同一连线短时间内再次点击 → 弹出条件编辑器
+            var now2 = Date.now();
+            if (SMData._lastCondClickConn === c.id && (now2 - SMData._lastCondClickTime) < 450) {
+                SMData._lastCondClickConn = -1;
+                if (!isEntryExitConn) {
+                    var boxBottom = ly;
+                    if (SMData._labelRects) {
+                        for (var lri = 0; lri < SMData._labelRects.length; lri++) {
+                            if (SMData._labelRects[lri].connId === c.id) {
+                                boxBottom = SMData._labelRects[lri].y + SMData._labelRects[lri].h;
+                                break;
+                            }
                         }
                     }
+                    SMTool._showCond(c, lx, boxBottom);
                 }
-                SMTool._showCond(c, lx, boxBottom);
+            } else {
+                SMData._lastCondClickConn = c.id;
+                SMData._lastCondClickTime = now2;
             }
             return true;
         }

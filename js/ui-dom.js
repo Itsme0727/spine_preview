@@ -5988,6 +5988,12 @@ SMTool._playFullStep = function () {
             // ★ 播放到末尾 → 自动大循环：从头重新播放（浮窗+画布同步）
             pb.currentStep = 0;
             SMTool._clearAllProgressBars();
+            // ★ 必须先同步浮窗到源头第一个节点，再开始播放
+            var firstStepNode = path.nodes[0];
+            if (firstStepNode && !firstStepNode.cycleClose) {
+                var firstSpineNode = SMData.nodes.get(firstStepNode.id);
+                if (firstSpineNode) SMTool._showAnimPreview(firstSpineNode);
+            }
             SMTool._playFullStep();
         }
     }, timerDelay);

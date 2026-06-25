@@ -170,9 +170,9 @@ SMTool._renderConnections = function () {
         }
 
         // 条件标签（带换行/截断）—— 尺寸随画布缩放
-        // 仅出口节点的连线不显示条件标签（出口是终点，无需条件）
+        // 仅出口节点的连线不显示条件标签；_hideLabel 标记也跳过
         var isExitConn = (fn.nodeType === 'exit' || tn.nodeType === 'exit');
-        if (!isExitConn) {
+        if (!isExitConn && !conn._hideLabel) {
         if (!inFocus) ctx.globalAlpha = 0.25;
         var rawLabel = conn.condition || '条件';
         var maxCharsPerLine = 20;
@@ -492,6 +492,12 @@ SMTool._findLabel = function (sx, sy) {
     if (!SMData._labelRects) return null;
     for (var i = 0; i < SMData._labelRects.length; i++) {
         var lr = SMData._labelRects[i];
+        // ★ 排除关闭按钮区域：点击 × 不触发标签拖拽，交给 _checkConditionClick 处理删除
+        if (lr.closeX !== undefined &&
+            sx >= lr.closeX && sx <= lr.closeX + lr.closeW &&
+            sy >= lr.closeY && sy <= lr.closeY + lr.closeH) {
+            continue;
+        }
         if (sx >= lr.x && sx <= lr.x + lr.w && sy >= lr.y && sy <= lr.y + lr.h) {
             return lr;
         }

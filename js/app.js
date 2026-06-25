@@ -27,6 +27,7 @@ SMTool.addSpineNode = function () {
 
 // 删除节点
 SMTool.deleteNode = function (nid) {
+    console.log('[DeleteNode] nid=' + nid + ' nodesBefore=' + SMData.nodes.size);
     SMTool.pushUndo();
     // 删除相关连线
     SMData.connections = SMData.connections.filter(function (c) {
@@ -1543,6 +1544,7 @@ SMTool.init = function () {
 
     // 生成当前状态的快照（仅序列化必要字段）
     SMTool._snapshotState = function () {
+        console.log('[Snapshot] Called. _isUndoRedo=' + SMData._isUndoRedo + ' stackDepth=' + SMData._undoStack.length);
         var snap = {
             v: 1, // 快照版本
             nodes: [],
@@ -1571,17 +1573,21 @@ SMTool.init = function () {
                 cp2x: c.cp2x !== undefined ? c.cp2x : -50,
                 cp2y: c.cp2y !== undefined ? c.cp2y : 0,
                 color: c.color || '',
-                _layerNum: c._layerNum  // ★ 层级节点独占连线层号
+                _layerNum: c._layerNum,  // ★ 层级节点独占连线层号
+                _hideLabel: !!c._hideLabel  // ★ 条件框隐藏标记
             });
         }
 
         // 序列化节点
         var nodesIter = SMData.nodes.values();
         var result = nodesIter.next();
+        var nodeCount = 0;
         // 源数据引用缓存（避免每份快照复制 base64 图片等大块数据）
         if (!SMData._srcCache) SMData._srcCache = {};
+        try {
         while (!result.done) {
             var n = result.value;
+            nodeCount++;
             // 将源数据存入全局缓存，快照中只存引用 key
             var srcKey = null;
             if (n._srcTexDataUrl || n._srcAtlasText || n._srcSkelJson || n._srcSkelBinBase64) {
@@ -1614,6 +1620,11 @@ SMTool.init = function () {
                 currentSkin: n.currentSkin || '',
                 premultipliedAlpha: !!n.premultipliedAlpha,
                 loop: n.loop !== undefined ? n.loop : true,
+                tracks: n.tracks ? JSON.parse(JSON.stringify(n.tracks)) : [],
+                _trackMode: n._trackMode || false,
+                _trackName: n._trackName || '轨道动画',
+                _trackSequence: n._trackSequence ? JSON.parse(JSON.stringify(n._trackSequence)) : [],
+                _mixTable: n._mixTable ? JSON.parse(JSON.stringify(n._mixTable)) : {},
                 _srcKey: srcKey,   // 源数据引用 key，不再复制大块数据
                 _boneTags: n._boneTags ? JSON.parse(JSON.stringify(n._boneTags)) : {},
                 _boneNotes: n._boneNotes ? JSON.parse(JSON.stringify(n._boneNotes)) : {},
@@ -1644,6 +1655,10 @@ SMTool.init = function () {
             });
             result = nodesIter.next();
         }
+        } catch (e) {
+            console.error('[Snapshot] Error serializing node #' + nodeCount + ':', e);
+        }
+        console.log('[Snapshot] Captured ' + snap.nodes.length + ' nodes (iterated ' + nodeCount + ')');
 
         // 序列化分组
         for (var g = 0; g < SMData.groups.length; g++) {
@@ -1723,6 +1738,11 @@ SMTool.init = function () {
                 existing.version = nd.version || '';
                 existing.premultipliedAlpha = !!nd.premultipliedAlpha;
                 existing.loop = nd.loop !== undefined ? nd.loop : true;
+                existing.tracks = nd.tracks || [];
+                existing._trackMode = nd._trackMode || false;
+                existing._trackName = nd._trackName || '轨道动画';
+                existing._trackSequence = nd._trackSequence || [];
+                existing._mixTable = nd._mixTable || {};
                 // 从缓存恢复源数据（仅当 key 变化时才更新）
                 SMTool._applySrcCache(existing, nd._srcKey);
                 existing._boneTags = nd._boneTags || {};
@@ -1821,6 +1841,7 @@ SMTool.init = function () {
                 // 更新动画（即时切换，无需重载）
                 if (existing.state && existing.currentAnim !== (nd.currentAnim || '')) {
                     try {
+                        if (!existing.tracks || existing.tracks.length === 0) SMTool._initDefaultTracks(existing);
                         existing.tracks[0].animName = nd.currentAnim || '';
                         SMTool._applyTracksToState(existing);
                     } catch (e) { /* 忽略 */ }
@@ -1898,6 +1919,11 @@ SMTool.init = function () {
                 node.currentSkin = nd.currentSkin || '';
                 node.premultipliedAlpha = !!nd.premultipliedAlpha;
                 node.loop = nd.loop !== undefined ? nd.loop : true;
+                node.tracks = nd.tracks || [];
+                node._trackMode = nd._trackMode || false;
+                node._trackName = nd._trackName || '轨道动画';
+                node._trackSequence = nd._trackSequence || [];
+                node._mixTable = nd._mixTable || {};
                 // 从缓存恢复源数据
                 SMTool._applySrcCache(node, nd._srcKey);
                 node._boneTags = nd._boneTags || {};
@@ -2031,7 +2057,8 @@ SMTool.init = function () {
                 cp2x: c.cp2x,
                 cp2y: c.cp2y,
                 color: c.color || '',
-                _layerNum: c._layerNum  // ★ 层级节点独占连线层号
+                _layerNum: c._layerNum,  // ★ 层级节点独占连线层号
+                _hideLabel: !!c._hideLabel  // ★ 条件框隐藏标记
             };
         });
 
@@ -2058,7 +2085,8 @@ SMTool.init = function () {
         document.getElementById('conditionEditor').classList.remove('show');
 
         // ---- 7. 刷新 UI（轻量级刷新，不重建任何 DOM） ----
-        SMTool._updateAllPos();
+        SMData._forceRedraw = true;  // ★ 强制下次渲染循环重绘全部
+        SMTool._updateAllPos(true);  // ★ 强制同步刷新所有节点 DOM 位置
         SMTool._updateSel();
         SMTool._updateSB();
         SMTool._updateStateRowColors();
@@ -2085,8 +2113,10 @@ SMTool.init = function () {
 
     // 压入撤销栈（在操作前调用）
     SMTool.pushUndo = function () {
-        if (SMData._isUndoRedo) return; // 正在执行撤销/重做，不压栈
+        if (SMData._isUndoRedo) { console.warn('[PushUndo] BLOCKED by _isUndoRedo=true'); return; }
         var snap = SMTool._snapshotState();
+        if (!snap.nodes || snap.nodes.length === 0) { console.warn('[PushUndo] SKIP empty snapshot'); return; }
+        console.log('[PushUndo] snap nodes=' + snap.nodes.length + ' stackBefore=' + SMData._undoStack.length);
         // 与栈顶比对去重：状态未变则不重复压栈
         if (SMData._undoStack.length > 0) {
             var lastSnap = SMData._undoStack[SMData._undoStack.length - 1];
@@ -2160,13 +2190,18 @@ SMTool.init = function () {
     SMTool._commitDragUndo = function () {
         if (!SMData._pendingDragSnap) return;
         var endSnap = SMTool._snapshotState();
+        console.log('[CommitDragUndo] pendingSnap nodes=' + SMData._pendingDragSnap.nodes.length + ' endSnap nodes=' + endSnap.nodes.length);
         if (!SMTool._snapEqual(SMData._pendingDragSnap, endSnap)) {
-            // 状态确实变了 → 压入拖拽前的快照
-            SMData._undoStack.push(SMData._pendingDragSnap);
-            while (SMData._undoStack.length > SMData._undoMaxSteps) {
-                SMData._undoStack.shift();
+            // ★ 过滤空快照
+            if (!SMData._pendingDragSnap.nodes || SMData._pendingDragSnap.nodes.length === 0) {
+                console.warn('[CommitDragUndo] SKIP empty pendingSnap');
+            } else {
+                SMData._undoStack.push(SMData._pendingDragSnap);
+                while (SMData._undoStack.length > SMData._undoMaxSteps) {
+                    SMData._undoStack.shift();
+                }
+                SMData._redoStack = [];
             }
-            SMData._redoStack = [];
         }
         SMData._pendingDragSnap = null;
     };
@@ -2179,14 +2214,36 @@ SMTool.init = function () {
             return;
         }
         SMData._isUndoRedo = true;
-        // 保存当前状态到重做栈
-        var currentSnap = SMTool._snapshotState();
-        SMData._redoStack.push(currentSnap);
-        // 取出上一个快照恢复
-        var prevSnap = SMData._undoStack.pop();
-        SMTool._restoreState(prevSnap);
+        try {
+            // 保存当前状态到重做栈
+            var currentSnap = SMTool._snapshotState();
+            SMData._redoStack.push(currentSnap);
+            // 取出上一个快照恢复
+            var prevSnap = SMData._undoStack.pop();
+            if (!prevSnap || !prevSnap.nodes || prevSnap.nodes.length === 0) {
+                console.warn('[Undo] Empty/invalid snapshot, skipping. Clearing corrupt stack entry.');
+                SMData._undoStack = [];  // ★ 清空整栈防止后续 undo 也崩
+                SMData._isUndoRedo = false;
+                document.getElementById('sbStatus').textContent = '无法撤销（快照损坏已修复）';
+                setTimeout(function () { document.getElementById('sbStatus').textContent = ''; }, 2000);
+                return;
+            }
+            console.log('[Undo] Restoring snapshot: ' + prevSnap.nodes.length + ' nodes, ' + (prevSnap.connections || []).length + ' connections. Current nodes: ' + SMData.nodes.size + '. Undo stack depth: ' + SMData._undoStack.length);
+            if (prevSnap.nodes.length === 0) {
+                console.warn('[Undo] ⚠ Snapshot has 0 nodes! Check _snapshotState.');
+            }
+            // ★ 诊断：打印快照中每个节点的 id 和 nodeType
+            for (var di = 0; di < Math.min(prevSnap.nodes.length, 5); di++) {
+                console.log('[Undo]   snap node[' + di + ']: id=' + prevSnap.nodes[di].id + ' type=' + prevSnap.nodes[di].nodeType);
+            }
+            SMTool._restoreState(prevSnap);
+            console.log('[Undo] After restore: ' + SMData.nodes.size + ' nodes in map, ' + document.querySelectorAll('.spine-node').length + ' DOM elements');
+            document.getElementById('sbStatus').textContent = '已撤销 (' + SMData._undoStack.length + ' 步可撤销)';
+        } catch (e) {
+            console.error('[Undo] Error:', e);
+            document.getElementById('sbStatus').textContent = '撤销失败: ' + (e.message || '未知错误');
+        }
         SMData._isUndoRedo = false;
-        document.getElementById('sbStatus').textContent = '已撤销 (' + SMData._undoStack.length + ' 步可撤销)';
         setTimeout(function () { document.getElementById('sbStatus').textContent = ''; }, 2000);
     };
 
