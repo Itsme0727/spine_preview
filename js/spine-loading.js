@@ -1056,8 +1056,11 @@ SMTool._replaceSpineData = function (existingIds, fileGroup, baseName) {
                     }
                     node.atlasData = atlas;
 
-                    // 加载 SkeletonData
-                    var al = new SP.AtlasAttachmentLoader(atlas);
+                    // ★ 兼容层：应用 atlas 补丁（空格模糊匹配 + 缺失区域容错）
+                    SMTool._patchAtlasForLoading(atlas);
+
+                    // 加载 SkeletonData（使用容错版 AttachmentLoader）
+                    var al = SMTool._createLenientAttachmentLoader(atlas, SP);
                     var sd;
                     if (skelBin) {
                         var bl = new SP.SkeletonBinary(al);
@@ -1870,6 +1873,75 @@ SMTool._getSpineRuntime = function (useVer) {
     return window.spine38;
 };
 
+// ================================================================
+// ★ 共享 Atlas 兼容补丁 — 同时用于首次加载(_parseSpineData)和导入恢复(_loadFromSourceData)
+// 1. findRegion 空格模糊匹配（处理 skeleton 与 atlas 之间空格不一致）
+// 2. 见 _createLenientAttachmentLoader — 缺失区域不阻断加载
+// ================================================================
+SMTool._patchAtlasForLoading = function (atlas) {
+    if (atlas._patchedForLoading) return;
+    var _origFind = atlas.findRegion.bind(atlas);
+    var noSpaceMap = {};
+    for (var ri = 0; ri < atlas.regions.length; ri++) {
+        var rn = atlas.regions[ri].name;
+        var key = rn.replace(/\s+/g, '');
+        if (!noSpaceMap[key]) noSpaceMap[key] = [];
+        noSpaceMap[key].push(rn);
+    }
+    atlas.findRegion = function (name) {
+        var r = _origFind(name);
+        if (r) return r;
+        if (/\s/.test(name)) {
+            r = _origFind(name.replace(/\s+/g, ''));
+            if (r) { console.log('[Spine]   Fuzzy-matched (space→nospace): "' + name + '" → "' + r.name + '"'); return r; }
+        } else {
+            var candidates = noSpaceMap[name];
+            if (candidates && candidates.length > 0) {
+                r = _origFind(candidates[0]);
+                if (r) { console.log('[Spine]   Fuzzy-matched (nospace→space): "' + name + '" → "' + r.name + '"'); return r; }
+            }
+        }
+        return null;
+    };
+    atlas._patchedForLoading = true;
+};
+
+// ★ 容错版 AtlasAttachmentLoader：缺失的图集区域不阻断加载
+//    某些 Spine 导出文件中 skeleton 引用了 atlas 中不存在的区域（如 Symbol_12/x1），
+//    严格模式会直接抛异常导致整个骨架加载失败。此处为缺失区域创建 4x4 占位符。
+SMTool._createLenientAttachmentLoader = function (atlas, SP) {
+    var al = new SP.AtlasAttachmentLoader(atlas);
+    var _origNewRegion = al.newRegionAttachment.bind(al);
+    al.newRegionAttachment = function (skin, name, path) {
+        var region = atlas.findRegion(path);
+        if (!region) {
+            console.warn('[Spine] ⚠ Missing atlas region: "' + path + '", creating 4x4 placeholder');
+            if (!atlas._placeholderRegions) atlas._placeholderRegions = {};
+            if (!atlas._placeholderRegions[path]) {
+                var page = atlas.pages[0];
+                var ph = {
+                    name: path,
+                    page: page,
+                    x: 0, y: 0, width: 4, height: 4,
+                    rotate: false,
+                    offsetX: 0, offsetY: 0,
+                    originalWidth: 4, originalHeight: 4,
+                    u: 0, v: 0,
+                    u2: (page && page.width) ? 4 / page.width : 0.003,
+                    v2: (page && page.height) ? 4 / page.height : 0.003,
+                    index: -1,
+                    _placeholder: true
+                };
+                atlas._placeholderRegions[path] = ph;
+                atlas.regions.push(ph);
+            }
+            region = atlas._placeholderRegions[path];
+        }
+        return _origNewRegion(skin, name, path);
+    };
+    return al;
+};
+
 // ---- 解析 Spine 数据 ----
 // imgs: 按 atlas page 索引的 Image 数组，pageDataUrls: [{ name, dataUrl }]
 SMTool._parseSpineData = function (node, SP, WGL, atlasText, pageDataUrls, skelJson, skelBin, imgs, useVer) {
@@ -1900,40 +1972,11 @@ SMTool._parseSpineData = function (node, SP, WGL, atlasText, pageDataUrls, skelJ
             node.atlasData = atlas;
             console.log('[Spine] Atlas: ' + atlas.pages.length + ' page(s), ' + atlas.regions.length + ' region(s)');
 
-            // ★ 兼容层：补丁 atlas.findRegion，处理 skeleton 与 atlas 之间空格不一致的问题
-            //    某些 spine 导出会在 attachment path 中插入空格（如 "Bg Light"），
-            //    但 atlas 中对应区域可能无空格（"BgLight"），反之亦然。
-            (function () {
-                var _origFind = atlas.findRegion.bind(atlas);
-                // 构建「无空格 → 原始名」反向索引
-                var noSpaceMap = {};
-                for (var ri = 0; ri < atlas.regions.length; ri++) {
-                    var rn = atlas.regions[ri].name;
-                    var key = rn.replace(/\s+/g, '');
-                    if (!noSpaceMap[key]) noSpaceMap[key] = [];
-                    noSpaceMap[key].push(rn);
-                }
-                atlas.findRegion = function (name) {
-                    var r = _origFind(name);
-                    if (r) return r;
-                    // 尝试去掉所有空格后匹配
-                    if (/\s/.test(name)) {
-                        r = _origFind(name.replace(/\s+/g, ''));
-                        if (r) { console.log('[Spine]   Fuzzy-matched (space→nospace): "' + name + '" → "' + r.name + '"'); return r; }
-                    } else {
-                        // 尝试在 atlas 中查找同「无空格键」但带空格的变体
-                        var candidates = noSpaceMap[name];
-                        if (candidates && candidates.length > 0) {
-                            r = _origFind(candidates[0]);
-                            if (r) { console.log('[Spine]   Fuzzy-matched (nospace→space): "' + name + '" → "' + r.name + '"'); return r; }
-                        }
-                    }
-                    return null;
-                };
-            })();
+            // ★ 兼容层：应用 atlas 补丁（空格模糊匹配 + 缺失区域容错）
+            SMTool._patchAtlasForLoading(atlas);
 
-            // 加载 SkeletonData
-            var al = new SP.AtlasAttachmentLoader(atlas);
+            // 加载 SkeletonData（使用容错版 AttachmentLoader，缺失区域不阻断加载）
+            var al = SMTool._createLenientAttachmentLoader(atlas, SP);
             var sd;
             if (skelBin) {
                 console.log('[Spine] Parsing .skel (' + skelBin.length + ' bytes)');
@@ -2411,7 +2454,10 @@ SMTool._loadFromSourceData = function (node) {
                 node.textureImg = firstImg;
                 node._texImgs = imgs;
 
-                var al = new SP.AtlasAttachmentLoader(atlas);
+                // ★ 兼容层：应用 atlas 补丁（空格模糊匹配 + 缺失区域容错）
+                SMTool._patchAtlasForLoading(atlas);
+
+                var al = SMTool._createLenientAttachmentLoader(atlas, SP);
                 var sd;
                 if (srcType === 'skel' && node._srcSkelBinBase64) {
                     var skelBin = SMTool._base64ToUint8(node._srcSkelBinBase64);

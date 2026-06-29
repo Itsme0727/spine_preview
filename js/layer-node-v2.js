@@ -1431,8 +1431,9 @@ SMTool._loadOneSkeletonToGL = function (gl, SP, WGL, srcNode, physParam, cw, ch,
         atlas = new SP.TextureAtlas(atlasText, function () { return new SP.FakeTexture(imgs[0]); });
     }
 
-    // 解析 skeleton
-    var al = new SP.AtlasAttachmentLoader(atlas);
+    // 解析 skeleton（使用容错版 AttachmentLoader + atlas 补丁）
+    SMTool._patchAtlasForLoading(atlas);
+    var al = SMTool._createLenientAttachmentLoader(atlas, SP);
     var sd;
     if (srcType === 'skel' && skelBin) {
         var bl = new SP.SkeletonBinary(al); bl.scale = 1;
