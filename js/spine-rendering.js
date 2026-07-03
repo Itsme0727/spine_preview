@@ -996,6 +996,13 @@ SMTool._initAnimPreview = function (node) {
             var state = new SP.AnimationState(stateData);
             // 复制源节点的全部轨道配置（不只是 track 0）
             SMTool._applyPreviewTracks(pp, state, stateData, sd, node);
+            // ★ 浮窗预览始终循环播放（轨道序列模式由序列链自行管理循环，不强制 loop=true）
+            if (!node._trackMode) {
+                for (var ti3 = 0; ti3 < 5; ti3++) {
+                    var e3 = state.getCurrent(ti3);
+                    if (e3) e3.loop = true;
+                }
+            }
             // ★ 先配置好动画再设置 pp.state，避免空状态帧闪烁
             pp.state = state;
             // 🔒 [LOCK-C] END
@@ -1070,8 +1077,9 @@ SMTool._initAnimPreview = function (node) {
             SMTool._renderAnimPreview(performance.now());
             // 🔒 [LOCK-D] END
 
-            // 更新面板标题
-            SMTool._updateAppTitle('🎬 ' + targetAnim, node.sourceFile || '');
+            // 更新面板标题（轨道模式显示轨道名称）
+            var titleAnim = (node._trackMode && pp.animName) ? pp.animName : targetAnim;
+            SMTool._updateAppTitle('🎬 ' + titleAnim, node.sourceFile || '');
 
         } catch (e) {
             console.error('[AnimPreview] Setup failed:', e);
@@ -1172,33 +1180,34 @@ SMTool._renderAnimPreview = function (now) {
         pp.state.update(dt * previewSpeed);
     }
 
-    // ★ 单节点动画播完后延迟 1 秒自动从头重播
+    // ★ 浮窗预览始终循环播放，不受节点自身的循环设置影响。
+    //    普通模式：强制所有轨道 loop=true，Spine 运行时内部处理无缝首尾衔接。
+    //    轨道序列模式：检测所有序列播完后自动从头重启序列链。
     if (!pp._flowFrozen && pp.state && !pp._layerSkeletons) {
-        var trackEntry = pp.state.getCurrent(0);
-        var isComplete = false;
-        if (trackEntry) {
-            try {
-                if (typeof trackEntry.isComplete === 'function') {
-                    isComplete = trackEntry.isComplete();
-                } else if (trackEntry.isComplete !== undefined) {
-                    isComplete = !!trackEntry.isComplete;
-                }
-            } catch (e) { isComplete = false; }
-        }
-        if (isComplete) {
-            if (!pp._singleLoopTimer) {
-                pp._singleLoopTimer = setTimeout(function () {
-                    pp._singleLoopTimer = null;
-                    var srcNode = SMData.nodes.get(pp.nodeId);
-                    if (srcNode && srcNode.nodeType === 'spine') {
-                        SMTool._initAnimPreview(srcNode);
+        var srcNode2 = SMData.nodes.get(pp.nodeId);
+        if (srcNode2 && srcNode2._trackMode && srcNode2._trackSequence && srcNode2._trackSequence.length > 0) {
+            // 轨道序列模式：检测序列是否全部播完
+            var allSeqDone = true;
+            for (var tsi = 0; tsi < srcNode2._trackSequence.length; tsi++) {
+                var tseq = srcNode2._trackSequence[tsi];
+                if (tseq.enabled !== false && tseq.loopSeq !== false && tseq.animations.length > 0) {
+                    if (pp.state.getCurrent(tsi)) {
+                        allSeqDone = false;
+                        break;
                     }
-                }, 1000);
+                }
+            }
+            if (allSeqDone) {
+                SMTool._applyPreviewTrackSequence(pp, pp.state, pp._skeletonData, srcNode2);
+                pp._lastTime = performance.now();
             }
         } else {
-            if (pp._singleLoopTimer) {
-                clearTimeout(pp._singleLoopTimer);
-                pp._singleLoopTimer = null;
+            // 普通模式：强制所有轨道 loop=true
+            for (var ti = 0; ti < 5; ti++) {
+                var entry = pp.state.getCurrent(ti);
+                if (entry && !entry.loop) {
+                    entry.loop = true;
+                }
             }
         }
     }
@@ -1215,8 +1224,15 @@ SMTool._renderAnimPreview = function (now) {
     if (useVer === '4.3' || useVer === '4.2') {
         if (pp._sceneRenderer) {
             try {
-                // ★ SceneRenderer 需要 begin/end 包围 drawSkeleton 才能刷出画面
+                // ★ 每帧同步相机（与主画布渲染保持一致，防止动画循环包裹点时
+                //    SceneRenderer 内部状态过期导致的画面抽搐）
+                pp._sceneRenderer.camera.position.set(cw / 2, ch / 2, 0);
+                pp._sceneRenderer.camera.viewportWidth = cw;
+                pp._sceneRenderer.camera.viewportHeight = ch;
+                pp._sceneRenderer.camera.update();
                 pp._sceneRenderer.begin();
+                // ★ begin() 可能重置 viewport，重新应用预览专属视口
+                gl.viewport(0, 0, canvas.width, canvas.height);
                 pp._sceneRenderer.drawSkeleton(pp.skeleton, pp._premultipliedAlpha || false);
                 pp._sceneRenderer.end();
             } catch (e) { /* ignore */ }
@@ -1428,9 +1444,12 @@ SMTool._updateAnimPreviewAnim = function (animName) {
     var node = SMData.nodes.get(pp.nodeId);
     if (!node || !node.state) return;
 
-    // ★ 完整复制源节点的轨道混合配置
+    // ★ 完整复制源节点的轨道混合配置（轨道模式由 _applyPreviewTracks 内部分发）
     SMTool._applyPreviewTracks(pp, pp.state, new (SMTool._getSpineRuntime(pp._spineVer)).AnimationStateData(pp._skeletonData), pp._skeletonData, node);
-    pp.animName = node.currentAnim || animName;
+    // ★ 轨道模式保留 _applyPreviewTracks 设置的 animName；普通模式用 currentAnim
+    if (!node._trackMode) {
+        pp.animName = node.currentAnim || animName;
+    }
 
     // ★ 同步 PMA 和皮肤
     SMTool._syncPreviewPmaAndSkin(pp, node);
@@ -1443,6 +1462,13 @@ SMTool._applyPreviewTracks = function (pp, previewState, stateData, skeletonData
     previewState.clearTracks();
     // ★ 清除轨道后立刻重置骨骼到绑定姿态，防止上一动画最后一帧残留闪烁
     if (pp.skeleton) pp.skeleton.setToSetupPose();
+
+    // ★ 轨道动画模式：使用轨道序列而非简单轨道
+    if (sourceNode._trackMode && sourceNode._trackSequence && sourceNode._trackSequence.length > 0) {
+        SMTool._applyPreviewTrackSequence(pp, previewState, skeletonData, sourceNode);
+        pp.animName = sourceNode._trackName || '动画混合';
+        return;
+    }
 
     var tracks = sourceNode.tracks;
     if (!tracks || tracks.length === 0) {
@@ -1494,6 +1520,51 @@ SMTool._applyPreviewTracks = function (pp, previewState, stateData, skeletonData
             for (var ti = 0; ti < 5; ti++) {
                 var e = previewState.getCurrent(ti);
                 if (e) e.loop = false;
+            }
+        }
+    }
+
+    // ★ 立即应用第一帧，消除 setup pose 闪烁
+    previewState.update(0);
+    previewState.apply(pp.skeleton);
+    pp.skeleton.updateWorldTransform(pp._physParam);
+};
+
+// ★ 预览专用：将源节点的轨道序列复制到预览 AnimationState
+//    与 _applyTrackSequence 逻辑一致，但操作预览独立的 state/skeleton
+SMTool._applyPreviewTrackSequence = function (pp, previewState, skeletonData, sourceNode) {
+    var is4x = (pp._spineVer === '4.3' || pp._spineVer === '4.2');
+    var seqs = sourceNode._trackSequence || [];
+
+    for (var ti = 0; ti < seqs.length; ti++) {
+        var seq = seqs[ti];
+        if (!seq.enabled) continue;
+        var anims = seq.animations;
+        if (!anims || anims.length === 0) continue;
+
+        // 验证首动画存在
+        var animExists = false;
+        for (var ai = 0; ai < skeletonData.animations.length; ai++) {
+            if (skeletonData.animations[ai].name === anims[0].name) { animExists = true; break; }
+        }
+        if (!animExists) continue;
+
+        // 首动画（不循环，序列链控制流转）
+        var entry = previewState.setAnimation(ti, anims[0].name, false);
+        if (!entry) continue;
+        entry.alpha = (seq.alpha !== undefined) ? seq.alpha : 1.0;
+        if (is4x && seq.mixBlend) entry.mixBlend = SMTool._mixBlendValue(seq.mixBlend);
+        entry.mixDuration = 0;
+
+        // 后续动画链
+        for (var ai2 = 1; ai2 < anims.length; ai2++) {
+            var prev = anims[ai2 - 1];
+            var cur = anims[ai2];
+            var nextEntry = previewState.addAnimation(ti, cur.name, false, 0);
+            if (nextEntry) {
+                nextEntry.alpha = seq.alpha;
+                if (is4x && seq.mixBlend) nextEntry.mixBlend = SMTool._mixBlendValue(seq.mixBlend);
+                nextEntry.mixDuration = (prev.mixOut !== undefined && prev.mixOut > 0) ? prev.mixOut : 0;
             }
         }
     }
