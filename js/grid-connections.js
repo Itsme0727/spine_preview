@@ -389,7 +389,7 @@ SMTool._getStateConnectorPos = function (node, stateName, type) {
     }
 
     // ★ 延时器/隐藏器节点：左右端点均可连接
-    if (node.nodeType === 'delayer' || node.nodeType === 'hider') {
+    if (node.nodeType === 'delayer' || node.nodeType === 'progDelayer' || node.nodeType === 'hider') {
         var dotD = el.querySelector('.anim-bar .conn-dot.' + (type === 'output' ? 'output' : 'input'));
         if (dotD) {
             var rD = dotD.getBoundingClientRect();

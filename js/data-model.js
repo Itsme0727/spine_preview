@@ -643,6 +643,12 @@ SMTool._applyTrackSequence = function (node) {
 
         node._trackSeqLoop[ti] = seq.loopSeq !== false;
     }
+    // ★ 即时应用第一帧到骨架（与 _applyPreviewTrackSequence 一致，确保修改参数后立刻生效）
+    if (node.skeleton) {
+        state.update(0);
+        state.apply(node.skeleton);
+        node.skeleton.updateWorldTransform(node._physParam);
+    }
 };
 
 // ★ 只重建单条轨道（不清除其他轨道，用于 enable/disable 切换）
@@ -679,4 +685,10 @@ SMTool._applySingleTrackSeq = function (node, ti) {
     }
 
     node._trackSeqLoop[ti] = seq.loopSeq !== false;
+    // ★ 即时应用第一帧
+    if (node.skeleton) {
+        state.update(0);
+        state.apply(node.skeleton);
+        node.skeleton.updateWorldTransform(node._physParam);
+    }
 };

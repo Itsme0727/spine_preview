@@ -492,22 +492,25 @@ SMTool._loop = function (now) {
         var spd = (typeof node._playbackSpeed === 'number' && node._playbackSpeed !== 1.0) ? node._playbackSpeed : 1.0;
         node.state.update(dt * spd);
 
-        // ★ 轨道动画模式：检测序列是否全部播完需要重新循环
-        //    关键：不能检测 isComplete()（当前动画结束但 addAnimation 队列还没切换时
-        //    会误判），只能检测 getCurrent(ti) === null（轨道完全空，含队列全部播完）
+        // ★ 轨道动画模式：检测所有序列链是否真正播完，播完后自动重新循环
         if (node._trackMode && node._trackSequence && node._trackSequence.length > 0) {
-            var needRefresh = false;
+            var allDone = true;
+            var hasTracks = false;
             for (var tsi = 0; tsi < node._trackSequence.length; tsi++) {
                 var tseq = node._trackSequence[tsi];
                 if (tseq.loopSeq !== false && tseq.enabled !== false && tseq.animations.length > 0) {
-                    // 只检测轨道完全空（所有排队动画均播完），不检测 isComplete
-                    if (!node.state.getCurrent(tsi)) {
-                        needRefresh = true;
-                        break;
-                    }
+                    hasTracks = true;
+                    var entry = node.state.getCurrent(tsi);
+                    // 轨道空 → 已完成
+                    if (!entry) continue;
+                    // 有排队的下一动画（addAnimation 链） → 尚未结束，继续播放
+                    if (entry.next || entry._next) { allDone = false; break; }
+                    // 当前动画仍在播放 → 继续
+                    if (typeof entry.isComplete === 'function' && !entry.isComplete()) { allDone = false; break; }
+                    if (entry.isComplete === false) { allDone = false; break; }
                 }
             }
-            if (needRefresh) {
+            if (hasTracks && allDone) {
                 SMTool._applyTrackSequence(node);
             }
         }
@@ -1180,34 +1183,40 @@ SMTool._renderAnimPreview = function (now) {
         pp.state.update(dt * previewSpeed);
     }
 
-    // ★ 浮窗预览始终循环播放，不受节点自身的循环设置影响。
-    //    普通模式：强制所有轨道 loop=true，Spine 运行时内部处理无缝首尾衔接。
-    //    轨道序列模式：检测所有序列播完后自动从头重启序列链。
+    // ================================================================
+    // 🔒🔒🔒 [LOCK-SUPER-FLOW-PREVIEW] 动画流浮窗切换核心逻辑
+    // ⚠️⚠️⚠️ 最严重警告：此处代码极易改出闪烁/卡顿/抽搐的bug，
+    //   一旦改坏极难修复回原样。禁止随意修改！
+    //   修改前必须明确询问用户"是否同意修改 LOCK-SUPER-FLOW-PREVIEW"，
+    //   用户明确回答"同意修改"后方可改动。
+    // ================================================================
+    // ★ 单节点动画播完后延迟 1 秒自动从头重播
     if (!pp._flowFrozen && pp.state && !pp._layerSkeletons) {
-        var srcNode2 = SMData.nodes.get(pp.nodeId);
-        if (srcNode2 && srcNode2._trackMode && srcNode2._trackSequence && srcNode2._trackSequence.length > 0) {
-            // 轨道序列模式：检测序列是否全部播完
-            var allSeqDone = true;
-            for (var tsi = 0; tsi < srcNode2._trackSequence.length; tsi++) {
-                var tseq = srcNode2._trackSequence[tsi];
-                if (tseq.enabled !== false && tseq.loopSeq !== false && tseq.animations.length > 0) {
-                    if (pp.state.getCurrent(tsi)) {
-                        allSeqDone = false;
-                        break;
-                    }
+        var trackEntry = pp.state.getCurrent(0);
+        var isComplete = false;
+        if (trackEntry) {
+            try {
+                if (typeof trackEntry.isComplete === 'function') {
+                    isComplete = trackEntry.isComplete();
+                } else if (trackEntry.isComplete !== undefined) {
+                    isComplete = !!trackEntry.isComplete;
                 }
-            }
-            if (allSeqDone) {
-                SMTool._applyPreviewTrackSequence(pp, pp.state, pp._skeletonData, srcNode2);
-                pp._lastTime = performance.now();
+            } catch (e) { isComplete = false; }
+        }
+        if (isComplete) {
+            if (!pp._singleLoopTimer) {
+                pp._singleLoopTimer = setTimeout(function () {
+                    pp._singleLoopTimer = null;
+                    var srcNode = SMData.nodes.get(pp.nodeId);
+                    if (srcNode && srcNode.nodeType === 'spine') {
+                        SMTool._initAnimPreview(srcNode);
+                    }
+                }, 1000);
             }
         } else {
-            // 普通模式：强制所有轨道 loop=true
-            for (var ti = 0; ti < 5; ti++) {
-                var entry = pp.state.getCurrent(ti);
-                if (entry && !entry.loop) {
-                    entry.loop = true;
-                }
+            if (pp._singleLoopTimer) {
+                clearTimeout(pp._singleLoopTimer);
+                pp._singleLoopTimer = null;
             }
         }
     }
@@ -1444,12 +1453,12 @@ SMTool._updateAnimPreviewAnim = function (animName) {
     var node = SMData.nodes.get(pp.nodeId);
     if (!node || !node.state) return;
 
-    // ★ 完整复制源节点的轨道混合配置（轨道模式由 _applyPreviewTracks 内部分发）
+    // ================================================================
+    // 🔒🔒🔒 [LOCK-SUPER-FLOW-PREVIEW] 同锁：与上方联动，不可单独修改
+    // ================================================================
+    // ★ 完整复制源节点的轨道混合配置
     SMTool._applyPreviewTracks(pp, pp.state, new (SMTool._getSpineRuntime(pp._spineVer)).AnimationStateData(pp._skeletonData), pp._skeletonData, node);
-    // ★ 轨道模式保留 _applyPreviewTracks 设置的 animName；普通模式用 currentAnim
-    if (!node._trackMode) {
-        pp.animName = node.currentAnim || animName;
-    }
+    pp.animName = node.currentAnim || animName;
 
     // ★ 同步 PMA 和皮肤
     SMTool._syncPreviewPmaAndSkin(pp, node);
@@ -1470,6 +1479,9 @@ SMTool._applyPreviewTracks = function (pp, previewState, stateData, skeletonData
         return;
     }
 
+    // ================================================================
+    // 🔒🔒🔒 [LOCK-SUPER-FLOW-PREVIEW] 同锁：与上方动画流切换逻辑联动，不可单独修改
+    // ================================================================
     var tracks = sourceNode.tracks;
     if (!tracks || tracks.length === 0) {
         // 没有轨道配置 → 只播放 currentAnim
@@ -1533,6 +1545,10 @@ SMTool._applyPreviewTracks = function (pp, previewState, stateData, skeletonData
 // ★ 预览专用：将源节点的轨道序列复制到预览 AnimationState
 //    与 _applyTrackSequence 逻辑一致，但操作预览独立的 state/skeleton
 SMTool._applyPreviewTrackSequence = function (pp, previewState, skeletonData, sourceNode) {
+    // ★ 必须先清空所有旧轨道，防止切换节点时残留上一节点的动画
+    previewState.clearTracks();
+    if (pp.skeleton) pp.skeleton.setToSetupPose();
+
     var is4x = (pp._spineVer === '4.3' || pp._spineVer === '4.2');
     var seqs = sourceNode._trackSequence || [];
 

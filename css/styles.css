@@ -1696,7 +1696,7 @@ body {
     pointer-events: none;
 }
 
-/* ===== 延时器节点 ===== */
+/* ===== 模拟延时器节点（紫色系） ===== */
 .spine-node.delayer-node {
     width: 320px;
     min-width: 280px;
@@ -1781,6 +1781,19 @@ body {
     background: #c0a0ff;
     border-radius: 9px;
     transition: width linear;
+}
+
+/* ===== 程序延时器节点（黄色调） ===== */
+.spine-node.prog-delayer-node .delayer-header {
+    background: #3d2800;
+    border-radius: 14px 14px 0 0;
+    border-bottom: 1px solid #5a3e00;
+}
+.spine-node.prog-delayer-node .delayer-title {
+    color: #ffd700;
+}
+.spine-node.prog-delayer-node .delayer-progress-bar {
+    background: #ffd700;
 }
 
 /* ===== 入口节点 ===== */

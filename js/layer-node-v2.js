@@ -944,8 +944,8 @@ SMTool._showLayerPreview = function (layerNode) {
         if (ln >= 1 && ln <= ld.layerCount) {
             var tn = SMData.nodes.get(c.toNode);
             // ★ 接受 Spine 动画节点、延时器节点、隐藏器节点 或 嵌套并行播放节点
-            if (tn && (tn.nodeType === 'spine' || tn.nodeType === 'delayer' || tn.nodeType === 'hider' || tn.nodeType === 'layer')) {
-                var hasRes = (tn.nodeType === 'delayer' || tn.nodeType === 'hider' || tn.nodeType === 'layer') || (tn._srcAtlasText && (tn._srcSkelJson || tn._srcSkelBinBase64) && (tn.textureImg || (tn._texImgs && tn._texImgs.length > 0)));
+            if (tn && (tn.nodeType === 'spine' || tn.nodeType === 'delayer' || tn.nodeType === 'progDelayer' || tn.nodeType === 'hider' || tn.nodeType === 'layer')) {
+                var hasRes = (tn.nodeType === 'delayer' || tn.nodeType === 'progDelayer' || tn.nodeType === 'hider' || tn.nodeType === 'layer') || (tn._srcAtlasText && (tn._srcSkelJson || tn._srcSkelBinBase64) && (tn.textureImg || (tn._texImgs && tn._texImgs.length > 0)));
                 if (hasRes) {
                     var dup = false;
                     for (var dj = 0; dj < linkedNodes.length; dj++) {
@@ -966,8 +966,8 @@ SMTool._showLayerPreview = function (layerNode) {
             }
             if (!dup2) {
                 var ln2 = SMData.nodes.get(info.animNodeId);
-                if (ln2 && (ln2.nodeType === 'spine' || ln2.nodeType === 'delayer' || ln2.nodeType === 'hider' || ln2.nodeType === 'layer')) {
-                    var hasRes2 = (ln2.nodeType === 'delayer' || ln2.nodeType === 'hider' || ln2.nodeType === 'layer') || (ln2._srcAtlasText && (ln2._srcSkelJson || ln2._srcSkelBinBase64) && (ln2.textureImg || (ln2._texImgs && ln2._texImgs.length > 0)));
+                if (ln2 && (ln2.nodeType === 'spine' || ln2.nodeType === 'delayer' || ln2.nodeType === 'progDelayer' || ln2.nodeType === 'hider' || ln2.nodeType === 'layer')) {
+                    var hasRes2 = (ln2.nodeType === 'delayer' || ln2.nodeType === 'progDelayer' || ln2.nodeType === 'hider' || ln2.nodeType === 'layer') || (ln2._srcAtlasText && (ln2._srcSkelJson || ln2._srcSkelBinBase64) && (ln2.textureImg || (ln2._texImgs && ln2._texImgs.length > 0)));
                     if (hasRes2) {
                         linkedNodes.push({ layer: li, node: ln2 });
                     }
@@ -1009,7 +1009,7 @@ SMTool._showLayerPreview = function (layerNode) {
     if (!firstNode) {
         for (var fni2 = 0; fni2 < linkedNodes.length; fni2++) {
             var lnk = linkedNodes[fni2];
-            if (lnk.node.nodeType === 'delayer' || lnk.node.nodeType === 'hider') {
+            if (lnk.node.nodeType === 'delayer' || lnk.node.nodeType === 'progDelayer' || lnk.node.nodeType === 'hider') {
                 var chainIds = SMTool._buildChainFromNode(lnk.node.id);
                 for (var ci = 0; ci < chainIds.length; ci++) {
                     var cn = SMData.nodes.get(chainIds[ci]);
@@ -1120,7 +1120,7 @@ SMTool._showLayerPreview = function (layerNode) {
                 }
             }
             // ★ 延时器节点：创建虚拟条目（无骨架，仅含延迟信息）
-            else if (chainNode && chainNode.nodeType === 'delayer') {
+            else if (chainNode && (chainNode.nodeType === 'delayer' || chainNode.nodeType === 'progDelayer')) {
                 chainSkeletons.push({
                     _chainNodeId: chainIds[cni],
                     _isDelayer: true,
@@ -1675,7 +1675,7 @@ SMTool._ensureSubtreeSkeletons = function (nestedLayerNodeId, pp, parentContaine
                     cls._chainAnimName = chainNode.currentAnim || '';
                     chainSkeletons.push(cls);
                 }
-            } else if (chainNode && chainNode.nodeType === 'delayer') {
+            } else if (chainNode && (chainNode.nodeType === 'delayer' || chainNode.nodeType === 'progDelayer')) {
                 chainSkeletons.push({
                     _chainNodeId: chainIds[cni], _isDelayer: true,
                     _delayValue: chainNode._delayValue || 1.0, _chainAnimName: '',
@@ -2009,15 +2009,40 @@ SMTool._renderOneNormalLayer = function (ls, dt, frozen, gl, WGL, pp) {
             var next = ls._chainSkeletons[ls._chainIdx];
             if (next && !next._isDelayer && !next._isHider && next.state) {
                 try { next.state.clearTracks(); } catch (e) {}
-                var nextAnim = next._chainAnimName || '';
-                if (nextAnim) {
-                    // ★★ 根据源节点的循环模式决定动画是否内部循环
-                    var nextSrc = (next._chainNodeId != null) ? SMData.nodes.get(next._chainNodeId) : null;
-                    var nextLoop = (nextSrc && nextSrc.loop !== false && !!(nextSrc._loopMode || (nextSrc._loopCount !== undefined && nextSrc._loopCount !== 1))) ? true : false;
-                    next.state.setAnimation(0, nextAnim, nextLoop);
+                var nextSrc = (next._chainNodeId != null) ? SMData.nodes.get(next._chainNodeId) : null;
+                // ★ 轨道动画模式：应用完整序列链
+                if (nextSrc && nextSrc._trackMode && nextSrc._trackSequence && nextSrc._trackSequence.length > 0) {
+                    for (var tsi2 = 0; tsi2 < nextSrc._trackSequence.length; tsi2++) {
+                        var tseq2 = nextSrc._trackSequence[tsi2];
+                        if (!tseq2.enabled) continue;
+                        var anims2 = tseq2.animations;
+                        if (!anims2 || anims2.length === 0) continue;
+                        var first2 = anims2[0];
+                        var entry2 = next.state.setAnimation(tsi2, first2.name, false);
+                        if (!entry2) continue;
+                        entry2.alpha = (tseq2.alpha !== undefined) ? tseq2.alpha : 1.0;
+                        if (next._spineVer4x && tseq2.mixBlend) entry2.mixBlend = SMTool._mixBlendValue(tseq2.mixBlend);
+                        for (var aij2 = 1; aij2 < anims2.length; aij2++) {
+                            var nextEntry2 = next.state.addAnimation(tsi2, anims2[aij2].name, false, 0);
+                            if (nextEntry2) {
+                                nextEntry2.alpha = tseq2.alpha;
+                                if (next._spineVer4x && tseq2.mixBlend) nextEntry2.mixBlend = SMTool._mixBlendValue(tseq2.mixBlend);
+                                nextEntry2.mixDuration = (anims2[aij2-1].mixOut || 0);
+                            }
+                        }
+                    }
                     next.state.update(0);
                     next.state.apply(next.skeleton);
                     next.skeleton.updateWorldTransform(next.physParam);
+                } else {
+                    var nextAnim = next._chainAnimName || '';
+                    if (nextAnim) {
+                        var nextLoop = (nextSrc && nextSrc.loop !== false && !!(nextSrc._loopMode || (nextSrc._loopCount !== undefined && nextSrc._loopCount !== 1))) ? true : false;
+                        next.state.setAnimation(0, nextAnim, nextLoop);
+                        next.state.update(0);
+                        next.state.apply(next.skeleton);
+                        next.skeleton.updateWorldTransform(next.physParam);
+                    }
                 }
             }
             // ★★ 切换后立即归一化新骨架的 MVP 和世界变换，消除抖动
@@ -2648,10 +2673,11 @@ SMTool._getLayerCurNodeName = function (ls) {
     if (nid == null) return '';
     var node = SMData.nodes.get(nid);
     if (!node) return '';
-    // ★ 动画节点：显示 currentAnim（动画状态名）；延时器：显示延时值；隐藏器：显示隐藏值
+    // ★ 动画节点：轨道模式显示轨道名，普通模式显示状态名
     if (node.nodeType === 'spine') {
+        if (node._trackMode) return node._trackName || '轨道动画';
         return node.currentAnim || (node.animations && node.animations.length > 0 ? node.animations[0].name : node.name || '');
-    } else if (node.nodeType === 'delayer') {
+    } else if (node.nodeType === 'delayer' || node.nodeType === 'progDelayer') {
         return '⏱ 延时 ' + (node._delayValue || 1.0).toFixed(1) + 's';
     } else if (node.nodeType === 'hider') {
         var hv = (node._hideValue !== undefined) ? node._hideValue : -1;

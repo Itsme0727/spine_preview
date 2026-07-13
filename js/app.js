@@ -1462,7 +1462,33 @@ SMTool.init = function () {
         var id = SMData.nextId++;
         var node = new SpineNodeData(id);
         node.nodeType = 'delayer';
-        node.name = '延时器';
+        node.name = '模拟延时器';
+        node.x = wx; node.y = wy;
+        node.width = 280;
+        node._delayValue = 1.0;
+        SMData.nodes.set(id, node);
+        SMTool._createEl(node);
+        SMTool._updatePos(node);
+        SMData.selectedNodes.clear();
+        SMData.selectedNodes.add(id);
+        SMData.selectedNode = id;
+        SMTool._updateSel();
+        SMTool._updateSB();
+    };
+
+    SMTool.addProgDelayerNode = function () {
+        SMTool.addProgDelayerNodeAt(
+            Math.random() * 200 - 100 + window.innerWidth / 2,
+            Math.random() * 200 - 100 + window.innerHeight / 2
+        );
+    };
+
+    SMTool.addProgDelayerNodeAt = function (wx, wy) {
+        SMTool.pushUndo();
+        var id = SMData.nextId++;
+        var node = new SpineNodeData(id);
+        node.nodeType = 'progDelayer';
+        node.name = '程序延时器';
         node.x = wx; node.y = wy;
         node.width = 280;
         node._delayValue = 1.0;

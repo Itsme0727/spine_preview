@@ -159,7 +159,7 @@ SMTool._createEl = function (node) {
         var delayVal = node._delayValue;
         el.innerHTML =
             '<div class="header delayer-header" onmousedown="event.stopPropagation();SMTool._onHD(event,' + node.id + ')">' +
-                '<span class="delayer-title">⏱ 延时器</span>' +
+                '<span class="delayer-title">⏱ 模拟延时器</span>' +
                 '<div class="btns">' +
                     '<button onclick="event.stopPropagation();SMTool.deleteNode(' + node.id + ')" title="删除节点">✕</button>' +
                 '</div>' +
@@ -180,6 +180,35 @@ SMTool._createEl = function (node) {
             '<div class="anim-bar" style="display:flex;justify-content:space-between">' +
                 '<div class="conn-dot input" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'delayer\',\'input\')" title="连线输入"></div>' +
                 '<div class="conn-dot output" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'delayer\',\'output\')" title="连线输出"></div>' +
+            '</div>' +
+            '<span class="scale-handle" onmousedown="event.stopPropagation();SMTool._onScaleStart(event,' + node.id + ')" title="拖拽缩放"><i class="scale-handle-icon"></i></span>';
+    } else if (node.nodeType === 'progDelayer') {
+        el.classList.add('delayer-node', 'prog-delayer-node');
+        if (node._delayValue === undefined) node._delayValue = 1.0;
+        var pdelayVal = node._delayValue;
+        el.innerHTML =
+            '<div class="header delayer-header" onmousedown="event.stopPropagation();SMTool._onHD(event,' + node.id + ')">' +
+                '<span class="delayer-title">⏱ 程序延时器</span>' +
+                '<div class="btns">' +
+                    '<button onclick="event.stopPropagation();SMTool.deleteNode(' + node.id + ')" title="删除节点">✕</button>' +
+                '</div>' +
+            '</div>' +
+            '<div class="delayer-body">' +
+                '<div class="delayer-set-row">' +
+                    '<button class="delayer-step-btn" onclick="event.stopPropagation();SMTool._delayerStep(' + node.id + ',-0.1)">◀</button>' +
+                    '<input type="number" class="delayer-input" value="' + pdelayVal + '" step="0.001" min="0.001" ' +
+                        'onchange="event.stopPropagation();SMTool._delayerSet(' + node.id + ',parseFloat(this.value)||1.0)" ' +
+                        'onclick="event.stopPropagation()" onkeydown="event.stopPropagation()">' +
+                    '<button class="delayer-step-btn" onclick="event.stopPropagation();SMTool._delayerStep(' + node.id + ',0.1)">▶</button>' +
+                    '<span class="delayer-unit">秒</span>' +
+                '</div>' +
+                '<div class="delayer-progress-wrap">' +
+                    '<div class="delayer-progress-bar" id="delayerBar-' + node.id + '"></div>' +
+                '</div>' +
+            '</div>' +
+            '<div class="anim-bar" style="display:flex;justify-content:space-between">' +
+                '<div class="conn-dot input" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'progDelayer\',\'input\')" title="连线输入"></div>' +
+                '<div class="conn-dot output" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'progDelayer\',\'output\')" title="连线输出"></div>' +
             '</div>' +
             '<span class="scale-handle" onmousedown="event.stopPropagation();SMTool._onScaleStart(event,' + node.id + ')" title="拖拽缩放"><i class="scale-handle-icon"></i></span>';
     } else if (node.nodeType === 'hider') {
@@ -254,10 +283,13 @@ SMTool._createEl = function (node) {
         '<div class="spine-canvas-wrap" ondragover="event.preventDefault();event.stopPropagation()" ondrop="event.preventDefault();event.stopPropagation();SMTool._onND(event,' + node.id + ')">' +
             '<div style="color:var(--text2);padding:40px">拖入 Spine 文件</div>' +
         '</div>' +
-        // ---- 动画选择栏（轨道模式隐藏） ----
+        // ---- 动画选择栏（轨道模式：隐藏下拉框，保留两端连线端点） ----
         (node._trackMode
-            ? '<div class="anim-bar" style="justify-content:center;padding:6px">' +
-                '<span style="color:var(--accent);font-size:24px;font-weight:600">🎬 轨道动画模式</span>' +
+            ? '<div class="anim-bar">' +
+                '<div class="conn-dot input" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'' + SMTool._escAttr(node._trackName || '动画混合') + '\',\'input\')" title="连线输入"></div>' +
+                '<span style="color:var(--accent);font-size:24px;font-weight:600;flex:1;text-align:center">🎬 轨道动画模式</span>' +
+                '<div class="anim-progress-bar"></div>' +
+                '<div class="conn-dot output" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'' + SMTool._escAttr(node._trackName || '动画混合') + '\',\'output\')" title="连线输出"></div>' +
               '</div>'
             : '<div class="anim-bar">' +
                 '<div class="conn-dot input" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'' + SMTool._escAttr(curState) + '\',\'input\')" title="连线输入"></div>' +
@@ -705,6 +737,8 @@ SMTool._onSeqMixOutChange = function (nid, ti, ai, value) {
     if (!seq || !seq.animations[ai]) return;
     var d = parseFloat(value); if (isNaN(d) || d < 0) d = 0;
     seq.animations[ai].mixOut = d;
+    // ★ 混合时间变更后重建序列链，使新 mixDuration 即时生效
+    if (node.state) SMTool._applyTrackSequence(node);
 };
 SMTool._onSeqAlphaChange = function (nid, ti, value) {
     var node = SMData.nodes.get(nid);
@@ -725,6 +759,8 @@ SMTool._onSeqLoopToggle = function (nid, ti, checked) {
     var seq = node && node._trackSequence[ti];
     if (!seq) return;
     seq.loopSeq = checked;
+    // ★ 循环开关变更后重建序列链，使新设置即时生效
+    if (node.state) SMTool._applyTrackSequence(node);
 };
 
 SMTool._onSeqEnableToggle = function (nid, ti, checked) {
@@ -740,7 +776,15 @@ SMTool._onSeqEnableToggle = function (nid, ti, checked) {
             // 启用：只重建该轨道（不清除其他轨道）
             SMTool._applySingleTrackSeq(node, ti);
         }
+        // ★ 即时应用到骨架（先重置骨骼防止残留旧轨道画面）
+        if (node.skeleton) {
+            node.skeleton.setToSetupPose();
+            node.state.update(0);
+            node.state.apply(node.skeleton);
+            node.skeleton.updateWorldTransform(node._physParam);
+        }
     }
+    SMTool._refreshTrackPanel(node);
 };
 
 // ★ 结束轨道动画模式模块 ★
@@ -952,7 +996,7 @@ SMTool._updateExitText = function (nid, value) {
 // ---- 延时器数值操作 ----
 SMTool._delayerStep = function (nid, delta) {
     var node = SMData.nodes.get(nid);
-    if (!node || node.nodeType !== 'delayer') return;
+    if (!node || (node.nodeType !== 'delayer' && node.nodeType !== 'progDelayer')) return;
     var val = (node._delayValue || 1.0) + delta;
     if (val < 0.001) val = 0.001;
     node._delayValue = Math.round(val * 1000) / 1000;
@@ -965,7 +1009,7 @@ SMTool._delayerStep = function (nid, delta) {
 
 SMTool._delayerSet = function (nid, val) {
     var node = SMData.nodes.get(nid);
-    if (!node || node.nodeType !== 'delayer') return;
+    if (!node || (node.nodeType !== 'delayer' && node.nodeType !== 'progDelayer')) return;
     if (isNaN(val) || val < 0.001) val = 0.001;
     node._delayValue = Math.round(val * 1000) / 1000;
     var el = SMTool._getEl(nid);
@@ -2899,13 +2943,17 @@ SMTool._updateEl = function (node) {
         nameEl.textContent = node._trackMode ? node._trackName : (node.currentAnim || node.name);
     }
 
-    // ★ 轨道模式：切换 anim-bar 显示（下拉框 ⇄ 模式文字）
+    // ★ 轨道模式：anim-bar 保留连线端点，仅隐藏下拉框
     var animBar = el.querySelector('.anim-bar');
     if (animBar) {
         if (node._trackMode) {
-            animBar.innerHTML = '<span style="color:var(--accent);font-size:24px;font-weight:600">🎬 轨道动画模式</span>';
-            animBar.style.justifyContent = 'center';
-            animBar.style.padding = '6px';
+            animBar.innerHTML =
+                '<div class="conn-dot input" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'' + SMTool._escAttr(node._trackName || '动画混合') + '\',\'input\')" title="连线输入"></div>' +
+                '<span style="color:var(--accent);font-size:24px;font-weight:600;flex:1;text-align:center">🎬 轨道动画模式</span>' +
+                '<div class="anim-progress-bar"></div>' +
+                '<div class="conn-dot output" onclick="event.stopPropagation();SMTool._onDot(' + node.id + ',\'' + SMTool._escAttr(node._trackName || '动画混合') + '\',\'output\')" title="连线输出"></div>';
+            animBar.style.justifyContent = '';
+            animBar.style.padding = '';
         } else {
             // 普通模式：重建下拉框 + 连线端点
             var curState2 = node.currentAnim || (node.animations[0] && node.animations[0].name) || '';
@@ -3043,9 +3091,9 @@ SMTool._updateEl = function (node) {
         loopBtn.classList.toggle('active', node.loop !== false);
     }
 
-    // 标题（显示原始英文动画名，而非翻译后的 node.name）
+    // 标题（轨道模式显示轨道名，普通模式显示原始英文动画名）
     var hn = el.querySelector('.header .name');
-    if (hn) { var displayName = node.currentAnim || node.name; hn.textContent = displayName; hn.title = displayName; }
+    if (hn) { var displayName = node._trackMode ? node._trackName : (node.currentAnim || node.name); hn.textContent = displayName; hn.title = displayName; }
     var sf = el.querySelector('.header .source-file');
     if (node.sourceFile) {
         if (sf) { sf.textContent = node.sourceFile; }
@@ -3226,7 +3274,7 @@ SMTool._updateFloatLabels = function () {
             var nameSpan2 = label.querySelector('.fl-name');
             var stateSpan2 = label.querySelector('.fl-state');
             if (nameSpan2 && nameSpan2.contentEditable !== 'true') {
-                nameSpan2.textContent = node.currentAnim || '';
+                nameSpan2.textContent = node._trackMode ? (node._trackName || '轨道动画') : (node.currentAnim || '');
             }
             if (stateSpan2) {
                 stateSpan2.textContent = node.sourceFile || '';
@@ -3513,9 +3561,9 @@ SMTool._showAnimPreview = function (node) {
 
     if (sameSource) {
         pp.nodeId = node.id;
-        // ★ 轨道模式：使用轨道名称 + 重建序列链
+        // ★ 轨道模式：重建序列链
         if (node._trackMode && node._trackSequence && node._trackSequence.length > 0) {
-            SMTool._updateAppTitle('🎬 ' + (node._trackName || '动画混合'), node.sourceFile || '');
+            SMTool._updateAppTitle('🎬 ' + (node._trackName || '轨道动画'), node.sourceFile || '');
             SMTool._applyPreviewTrackSequence(pp, pp.state, pp._skeletonData, node);
         } else {
             SMTool._updateAppTitle('🎬 ' + targetAnim, node.sourceFile || '');
@@ -4296,7 +4344,7 @@ SMTool._updateStateRowColors = function () {
                 }
                 var infos = stateMap.get(curState);
                 // ★ 延时器/文本节点不参与 anim-bar 着色（无动画状态概念，空字符串会误匹配）
-                if (node && (node.nodeType === 'delayer' || node.nodeType === 'shortText' || node.nodeType === 'textBox' || node.nodeType === 'titleText' || node.nodeType === 'image')) {
+                if (node && (node.nodeType === 'delayer' || node.nodeType === 'progDelayer' || node.nodeType === 'shortText' || node.nodeType === 'textBox' || node.nodeType === 'titleText' || node.nodeType === 'image')) {
                     bar.style.backgroundColor = '';
                     bar.style.borderLeft = '';
                 } else if (infos && infos.length > 0) {
@@ -4611,7 +4659,7 @@ SMTool._updateFlowPanel = function () {
         };
 
         // 获取节点的动画名（优先使用 currentAnim，否则用第一个动画）
-        var selAnim = _disp(selNode.currentAnim) || (selNode.animations.length > 0 ? selNode.animations[0].name : selNode.name);
+        var selAnim = _disp(selNode.currentAnim, selNode) || (selNode.animations.length > 0 ? selNode.animations[0].name : selNode.name);
 
         // 生成流程链 HTML
         var chainsHtml = '';
@@ -4801,10 +4849,11 @@ SMTool._updateFullFlowPanel = function (content, panel) {
 
     panel.classList.remove('inactive');
 
-    // 辅助显示名
-    var _disp = function (s) {
+    // 辅助显示名（轨道模式显示轨道名）
+    var _disp = function (s, node) {
         if (s === 'entry') return '入口';
         if (s === 'exit') return '出口';
+        if (node && node._trackMode) return node._trackName || '轨道动画';
         return s;
     };
 
@@ -4881,7 +4930,7 @@ SMTool._updateFullFlowPanel = function (content, panel) {
                             var isNestedActive = SMData._animPreview && SMData._animPreview.visible
                                 && SMData._animPreview.nodeId === bn.id;
                             var nestedHub = { _branches: nestedBranches };
-                            h += '<span class="flp-full-state layer-hub-state" style="font-size:12px">📚 ' + SMTool._esc(_disp(bn.anim)) + '</span>';
+                            h += '<span class="flp-full-state layer-hub-state" style="font-size:12px">📚 ' + SMTool._esc(_disp(bn.anim, SMData.nodes.get(bn.id))) + '</span>';
                             // ★ 递归渲染：若嵌套层活跃则正常高亮，否则子分支节点统归 upcoming
                             if (isNestedActive) {
                                 h += _renderLayerBranchesInline(nestedHub, isActivePath, stepIdx);
@@ -4889,7 +4938,7 @@ SMTool._updateFullFlowPanel = function (content, panel) {
                                 h += _renderLayerBranchesInlineUpcoming(nestedHub);
                             }
                         } else {
-                            h += '<span class="flp-full-state branch-state upcoming">📚 ' + SMTool._esc(_disp(bn.anim)) + ' (无连线)</span>';
+                            h += '<span class="flp-full-state branch-state upcoming">📚 ' + SMTool._esc(_disp(bn.anim, SMData.nodes.get(bn.id))) + ' (无连线)</span>';
                         }
                     } else {
                         var bState = ' branch-state';
@@ -4905,7 +4954,7 @@ SMTool._updateFullFlowPanel = function (content, panel) {
                         } else if (isActivePath && stepIdx < pb.currentStep) {
                             bState += ' played';
                         }
-                        h += '<span class="flp-full-state' + bState + '" data-br-layer="' + br.layer + '" data-br-idx="' + bni + '">' + SMTool._esc(_disp(bn.anim)) + '</span>';
+                        h += '<span class="flp-full-state' + bState + '" data-br-layer="' + br.layer + '" data-br-idx="' + bni + '">' + SMTool._esc(_disp(bn.anim, SMData.nodes.get(bn.id))) + '</span>';
                     }
                     if (bni < br.nodes.length - 1) {
                         h += '<span class="flp-full-arrow" style="font-size:13px;margin:0 2px;opacity:0.6;">→</span>';
@@ -4946,13 +4995,13 @@ SMTool._updateFullFlowPanel = function (content, panel) {
                     if (isNested2) {
                         var nestedBr2 = _getNestedLayerBranchesForDisplay(bn.id);
                         if (nestedBr2 && nestedBr2.length > 0) {
-                            h += '<span class="flp-full-state layer-hub-state" style="font-size:12px">📚 ' + SMTool._esc(_disp(bn.anim)) + '</span>';
+                            h += '<span class="flp-full-state layer-hub-state" style="font-size:12px">📚 ' + SMTool._esc(_disp(bn.anim, SMData.nodes.get(bn.id))) + '</span>';
                             h += _renderLayerBranchesInlineUpcoming({ _branches: nestedBr2 });
                         } else {
-                            h += '<span class="flp-full-state branch-state upcoming">📚 ' + SMTool._esc(_disp(bn.anim)) + '</span>';
+                            h += '<span class="flp-full-state branch-state upcoming">📚 ' + SMTool._esc(_disp(bn.anim, SMData.nodes.get(bn.id))) + '</span>';
                         }
                     } else {
-                        h += '<span class="flp-full-state branch-state upcoming">' + SMTool._esc(_disp(bn.anim)) + '</span>';
+                        h += '<span class="flp-full-state branch-state upcoming">' + SMTool._esc(_disp(bn.anim, SMData.nodes.get(bn.id))) + '</span>';
                     }
                     if (bni < br.nodes.length - 1) {
                         h += '<span class="flp-full-arrow" style="font-size:13px;margin:0 2px;opacity:0.6;">→</span>';
@@ -5004,6 +5053,8 @@ SMTool._updateFullFlowPanel = function (content, panel) {
                         animName = chainNode.currentAnim || (chainNode.animations && chainNode.animations[0] ? chainNode.animations[0].name : chainNode.name);
                     } else if (chainNode.nodeType === 'delayer') {
                         animName = '⏱ ' + (chainNode._delayValue || 1) + 's';
+                    } else if (chainNode.nodeType === 'progDelayer') {
+                        animName = '⏱ ' + (chainNode._delayValue || 1) + 's';
                     } else if (chainNode.nodeType === 'layer') {
                         animName = '📚 并行播放';
                     } else {
@@ -5040,6 +5091,7 @@ SMTool._updateFullFlowPanel = function (content, panel) {
                         if (!cn2) continue;
                         var an2 = cn2.nodeType === 'spine' ? (cn2.currentAnim || (cn2.animations && cn2.animations[0] ? cn2.animations[0].name : cn2.name)) :
                             cn2.nodeType === 'delayer' ? '⏱ ' + (cn2._delayValue || 1) + 's' :
+                            cn2.nodeType === 'progDelayer' ? '⏱ ' + (cn2._delayValue || 1) + 's' :
                             cn2.nodeType === 'layer' ? '📚 并行播放' : (cn2.name || '');
                         bns2.push({ id: chain2[cni2], anim: an2 });
                     }
@@ -5071,7 +5123,7 @@ SMTool._updateFullFlowPanel = function (content, panel) {
                     else if (si === pb.currentStep) hubClass += ' current';
                     else hubClass += ' upcoming';
                 }
-                html += '<span class="' + hubClass + '">📚 ' + SMTool._esc(_disp(sn.anim)) + '</span>';
+                html += '<span class="' + hubClass + '">📚 ' + SMTool._esc(_disp(sn.anim, SMData.nodes.get(sn.id))) + '</span>';
                 // ★ 内联分支矩阵（紧跟枢纽色块后面）
                 html += _renderLayerBranchesInline(sn, isActivePath, si);
             } else {
@@ -5083,7 +5135,7 @@ SMTool._updateFullFlowPanel = function (content, panel) {
                     else if (si === pb.currentStep) stateClass += ' current';
                     else stateClass += ' upcoming';
                 }
-                html += '<span class="' + stateClass + '">' + SMTool._esc(_disp(sn.anim)) + '</span>';
+                html += '<span class="' + stateClass + '">' + SMTool._esc(_disp(sn.anim, SMData.nodes.get(sn.id))) + '</span>';
             }
             if (si < path.nodes.length - 1) {
                 html += '<span class="flp-full-arrow">→</span>';
@@ -5739,7 +5791,7 @@ SMTool._applyStepToMainNode = function (stepNode) {
 
     var spineNode = SMData.nodes.get(stepNode.id);
     // ★ 延时器/隐藏器/大循环节点：无骨架，直接返回节点引用
-    if (spineNode && (spineNode.nodeType === 'delayer' || spineNode.nodeType === 'hider' || spineNode.nodeType === 'loop')) {
+    if (spineNode && (spineNode.nodeType === 'delayer' || spineNode.nodeType === 'progDelayer' || spineNode.nodeType === 'hider' || spineNode.nodeType === 'loop')) {
         return spineNode;
     }
     if (spineNode && spineNode.state && spineNode.skeleton) {
@@ -5747,43 +5799,46 @@ SMTool._applyStepToMainNode = function (stepNode) {
         try { spineNode.state.clearTracks(); } catch (e) {}
         try { spineNode.skeleton.setToSetupPose(); } catch (e) {}
         if (!spineNode._pausedByFlow) {
-            // ★ 保存完整 tracks 配置（支持多轨道恢复）
             spineNode._savedTracks = spineNode.tracks ? JSON.parse(JSON.stringify(spineNode.tracks)) : null;
             spineNode._savedLoop = spineNode.loop;
             spineNode._pausedByFlow = true;
         }
-        var animName = stepNode.anim;
-        if (spineNode.skeletonData) {
-            var found = false;
-            for (var ai = 0; ai < spineNode.skeletonData.animations.length; ai++) {
-                if (spineNode.skeletonData.animations[ai].name === animName) {
-                    found = true;
-                    break;
-                }
-            }
-            if (found) {
-                if (!spineNode.tracks || spineNode.tracks.length === 0) {
-                    SMTool._initDefaultTracks(spineNode);
-                }
-                spineNode.tracks[0].animName = animName;
-                spineNode.currentAnim = animName;
-                // ★ 应用轨道配置到状态
-                SMTool._applyTracksToState(spineNode);
-                // ★ 动画组播放：若节点显式配置了循环模式（次数/时间），则让动画自然循环，
-                //    由流定时器（timerDelay）控制推进；无循环模式则强制不循环，停在最后一帧
-                var hasLoopMode = spineNode.loop !== false && !!(spineNode._loopMode || (spineNode._loopCount !== undefined && spineNode._loopCount !== 1));
-                if (!hasLoopMode) {
-                    for (var ti = 0; ti < 5; ti++) {
-                        var e = spineNode.state.getCurrent(ti);
-                        if (e) e.loop = false;
+
+        // ★ 轨道动画模式：使用序列链数据，不覆盖为单动画
+        if (spineNode._trackMode && spineNode._trackSequence && spineNode._trackSequence.length > 0) {
+            SMTool._applyTrackSequence(spineNode);
+        } else {
+            var animName = stepNode.anim;
+            if (spineNode.skeletonData) {
+                var found = false;
+                for (var ai = 0; ai < spineNode.skeletonData.animations.length; ai++) {
+                    if (spineNode.skeletonData.animations[ai].name === animName) {
+                        found = true;
+                        break;
                     }
                 }
-                // ★ 立即应用第一帧，消除 setup pose 闪烁
-                spineNode.state.update(0);
-                spineNode.state.apply(spineNode.skeleton);
-                spineNode.skeleton.updateWorldTransform(spineNode._physParam);
+                if (found) {
+                    if (!spineNode.tracks || spineNode.tracks.length === 0) {
+                        SMTool._initDefaultTracks(spineNode);
+                    }
+                    spineNode.tracks[0].animName = animName;
+                    spineNode.currentAnim = animName;
+                    SMTool._applyTracksToState(spineNode);
+                    // ★ 动画组播放：若节点显式配置了循环模式，则自然循环；无则强制不循环
+                    var hasLoopMode = spineNode.loop !== false && !!(spineNode._loopMode || (spineNode._loopCount !== undefined && spineNode._loopCount !== 1));
+                    if (!hasLoopMode) {
+                        for (var ti = 0; ti < 5; ti++) {
+                            var e = spineNode.state.getCurrent(ti);
+                            if (e) e.loop = false;
+                        }
+                    }
+                }
             }
         }
+        // ★ 立即应用第一帧，消除 setup pose 闪烁
+        spineNode.state.update(0);
+        spineNode.state.apply(spineNode.skeleton);
+        spineNode.skeleton.updateWorldTransform(spineNode._physParam);
     }
     return spineNode;
 };
@@ -5973,11 +6028,32 @@ SMTool._playFullStep = function () {
     var duration = 1000;
     if (spineNode && spineNode.nodeType === 'delayer') {
         duration = (spineNode._delayValue || 1.0) * 1000;
+    } else if (spineNode && spineNode.nodeType === 'progDelayer') {
+        duration = (spineNode._delayValue || 1.0) * 1000;
     } else if (spineNode && spineNode.nodeType === 'hider') {
         var hv = (spineNode._hideValue !== undefined) ? spineNode._hideValue : -1;
         duration = (hv === -1 || hv === 0) ? 0 : hv * 1000;
     } else if (spineNode && spineNode.nodeType === 'loop') {
         duration = 0;  // ★ 大循环节点：立即触发
+    } else if (spineNode && spineNode._trackMode && spineNode._trackSequence && spineNode._trackSequence.length > 0) {
+        // ★ 轨道动画模式：计算序列链的真实总时长（各轨道同时播放，取最长的）
+        var maxTrackDur = 0;
+        for (var tsi3 = 0; tsi3 < spineNode._trackSequence.length; tsi3++) {
+            var tseq3 = spineNode._trackSequence[tsi3];
+            if (!tseq3.enabled) continue;
+            var trackDur = 0;
+            for (var aij = 0; aij < (tseq3.animations || []).length; aij++) {
+                var anmName = tseq3.animations[aij].name;
+                for (var di2 = 0; di2 < spineNode.skeletonData.animations.length; di2++) {
+                    if (spineNode.skeletonData.animations[di2].name === anmName) {
+                        trackDur += spineNode.skeletonData.animations[di2].duration;
+                        break;
+                    }
+                }
+            }
+            if (trackDur > maxTrackDur) maxTrackDur = trackDur;
+        }
+        duration = (maxTrackDur > 0 ? maxTrackDur : 1) * 1000;
     } else if (spineNode && spineNode.skeletonData) {
         for (var di = 0; di < spineNode.skeletonData.animations.length; di++) {
             if (spineNode.skeletonData.animations[di].name === stepNode.anim) {
@@ -6025,7 +6101,7 @@ SMTool._playFullStep = function () {
     timerDelay += (path.nodes.length <= 1 ? 100 : 0);
 
     // 延时器进度条（使用计算后的总时长）
-    if (spineNode && spineNode.nodeType === 'delayer') {
+    if (spineNode && (spineNode.nodeType === 'delayer' || spineNode.nodeType === 'progDelayer')) {
         var delayerBar = document.getElementById('delayerBar-' + stepNode.id);
         if (delayerBar) {
             delayerBar.style.transition = 'none';
