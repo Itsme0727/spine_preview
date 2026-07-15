@@ -104,6 +104,7 @@ var SMData = {
     _autoSaveIntervalId: null, // 自动保存定时器 ID
     _saveFileHandle: null,   // FileSystemFileHandle（首次保存后持有，用于静默覆写）
     _assetsDirHandle: null,  // FileSystemDirectoryHandle（伴随图片存储目录）
+    _lastSavePath: '',       // ★ 上次保存的路径（用于 toast 提示）
     _panelCache: {},         // 数据面板 HTML 缓存 { nodeId: htmlString }
     _lastPanelNodeId: -1,    // 上次渲染面板的节点 ID
     _activePanelTab: 'skin', // 当前激活的数据面板页签（skin/bone/slot/info）
@@ -148,6 +149,7 @@ var SMData = {
         _boundsSize: null,    // {x, y} 骨架包围盒尺寸
         _physParam: null,     // 物理参数
         _lastTime: 0,         // 上一帧时间
+        _loopRestartGuard: false,  // ★ 循环重启防重入
 
         // ★★ 嵌套并行播放状态（金字塔模型）
         // activeTreeNodeId: 当前在浮窗面板中渲染的树节点 ID
@@ -588,6 +590,8 @@ SMTool._applyTracksToState = function (node) {
         node.currentAnim = node.tracks[0].animName;
         node.loop = node.tracks[0].loop !== false;
     }
+    node._dirty = true;
+    SMData._forceRedraw = true;
 };
 
 // ★ 为新激活的轨道动画节点初始化默认序列
@@ -604,16 +608,22 @@ SMTool._initDefaultTrackSequence = function (node) {
     }
 };
 
-// ★ 将轨道序列配置应用到 Spine AnimationState（setAnimation + addAnimation 链）
+// ★ 将轨道序列配置应用到 Spine AnimationState
+//    架构：baseTrack(ti*2) 始终播放当前动画；overlayTrack(ti*2+1) 仅在 crossfade 过渡期间使用
+//    mixOut=0 → addAnimation 瞬切队列；mixOut>0 → 渲染循环驱动双向 alpha 淡入淡出
 SMTool._applyTrackSequence = function (node) {
     if (!node.state || !node._trackMode) return;
 
-    SMTool._applyMixTable(node);
     var state = node.state;
     var is4x = (node._spineVer === '4.3' || node._spineVer === '4.2');
 
+    // ★ Bug1修复：先复位骨架到 setup pose（清除旧动画残留的骨骼值），再清空轨道
+    if (node.skeleton) node.skeleton.setToSetupPose();
     state.clearTracks();
+    SMTool._applyMixTable(node);
     var seqs = node._trackSequence || [];
+
+    node._cfState = null;  // 清理旧的 crossfade 状态
 
     for (var ti = 0; ti < seqs.length; ti++) {
         var seq = seqs[ti];
@@ -621,37 +631,94 @@ SMTool._applyTrackSequence = function (node) {
         var anims = seq.animations;
         if (!anims || anims.length === 0) continue;
 
-        // 首动画
+        var baseTrack = ti * 2;
+        var overlayTrack = ti * 2 + 1;
+
+        // 首动画 → 基础轨
         var first = anims[0];
-        var entry = state.setAnimation(ti, first.name, false);
+        var entry = state.setAnimation(baseTrack, first.name, false);
         if (!entry) continue;
         entry.alpha = (seq.alpha !== undefined) ? seq.alpha : 1.0;
         if (is4x && seq.mixBlend) entry.mixBlend = SMTool._mixBlendValue(seq.mixBlend);
         entry.mixDuration = 0;
 
-        // 后续动画链：addAnimation(delay=0) 紧接上一个
+        // 后续动画链
         for (var ai = 1; ai < anims.length; ai++) {
             var prev = anims[ai - 1];
             var cur = anims[ai];
-            entry = state.addAnimation(ti, cur.name, false, 0);
-            if (entry) {
-                entry.alpha = seq.alpha;
-                if (is4x && seq.mixBlend) entry.mixBlend = SMTool._mixBlendValue(seq.mixBlend);
-                entry.mixDuration = (prev.mixOut !== undefined && prev.mixOut > 0) ? prev.mixOut : 0;
+            if (prev.mixOut > 0) {
+                // mixOut>0 → 交给渲染循环用双向 alpha 淡入淡出（不在此排队）
+                if (!node._cfState) {
+                    node._cfState = {
+                        ti: ti, baseTrack: baseTrack, overlayTrack: overlayTrack,
+                        animIdx: ai - 1, nextAnimIdx: ai,
+                        mixOut: prev.mixOut, elapsed: 0,
+                        phase: 'waiting',  // waiting → crossfading
+                        seqAlpha: seq.alpha,
+                        seqMixBlend: seq.mixBlend || 'replace',
+                        loopSeq: seq.loopSeq !== false
+                    };
+                }
+                break;  // 停止 addAnimation 排队，后续由 _continueSeqAfterCf 接管
+            } else {
+                // mixOut=0 → 瞬时切换队列
+                entry = state.addAnimation(baseTrack, cur.name, false, 0);
+                if (entry) {
+                    entry.alpha = seq.alpha;
+                    if (is4x && seq.mixBlend) entry.mixBlend = SMTool._mixBlendValue(seq.mixBlend);
+                    entry.mixDuration = 0;
+                }
             }
         }
-
         node._trackSeqLoop[ti] = seq.loopSeq !== false;
     }
-    // ★ 即时应用第一帧到骨架（与 _applyPreviewTrackSequence 一致，确保修改参数后立刻生效）
+    // ★ 即时应用第一帧 + 标记脏帧
     if (node.skeleton) {
         state.update(0);
         state.apply(node.skeleton);
         node.skeleton.updateWorldTransform(node._physParam);
     }
+    node._dirty = true;
+    SMData._forceRedraw = true;
 };
 
-// ★ 只重建单条轨道（不清除其他轨道，用于 enable/disable 切换）
+// ★ crossfade 完成后继续序列（设置后续动画或循环）
+SMTool._continueSeqAfterCf = function (node, ti, fromAnimIdx) {
+    if (!node.state || !node._trackMode) return;
+    var seq = node._trackSequence[ti];
+    if (!seq || !seq.enabled) return;
+    var anims = seq.animations;
+    var is4x = (node._spineVer === '4.3' || node._spineVer === '4.2');
+    var baseTrack = ti * 2;
+    var overlayTrack = ti * 2 + 1;
+
+    // 从 fromAnimIdx+2 开始排队后续动画
+    for (var ai = fromAnimIdx + 2; ai < anims.length; ai++) {
+        var prev = anims[ai - 1];
+        var cur = anims[ai];
+        if (prev.mixOut > 0) {
+            node._cfState = {
+                ti: ti, baseTrack: baseTrack, overlayTrack: overlayTrack,
+                animIdx: ai - 1, nextAnimIdx: ai,
+                mixOut: prev.mixOut, elapsed: 0,
+                phase: 'waiting',
+                seqAlpha: seq.alpha,
+                seqMixBlend: seq.mixBlend || 'replace',
+                loopSeq: seq.loopSeq !== false
+            };
+            break;
+        } else {
+            node.state.addAnimation(baseTrack, cur.name, false, 0);
+        }
+    }
+    // 无更多动画 → 如果循环则回到第一个
+    if (!node._cfState && seq.loopSeq !== false) {
+        node.state.setAnimation(baseTrack, anims[0].name, false);
+        SMTool._continueSeqAfterCf(node, ti, -1);
+    }
+};
+
+// ★ 只重建单条轨道（不清除其他轨道，用于 enable/disable 切换）— 双轨架构适配
 SMTool._applySingleTrackSeq = function (node, ti) {
     if (!node.state || !node._trackMode) return;
     var seqs = node._trackSequence || [];
@@ -662,25 +729,49 @@ SMTool._applySingleTrackSeq = function (node, ti) {
 
     var state = node.state;
     var is4x = (node._spineVer === '4.3' || node._spineVer === '4.2');
+    var baseTrack = ti * 2;
+    var overlayTrack = ti * 2 + 1;
 
-    // 只清空该轨道
-    state.clearTrack(ti);
+    // ★ Bug1修复：先复位骨架
+    if (node.skeleton) node.skeleton.setToSetupPose();
+    // 只清空该序列轨的配对轨道
+    state.clearTrack(baseTrack);
+    state.clearTrack(overlayTrack);
 
     var first = anims[0];
-    var entry = state.setAnimation(ti, first.name, false);
+    var entry = state.setAnimation(baseTrack, first.name, false);
     if (!entry) return;
     entry.alpha = (seq.alpha !== undefined) ? seq.alpha : 1.0;
     if (is4x && seq.mixBlend) entry.mixBlend = SMTool._mixBlendValue(seq.mixBlend);
     entry.mixDuration = 0;
 
+    // 清除旧 crossfade 状态，重建序列
+    node._cfState = null;
+
+    // 后续动画链：mixOut=0 用 addAnimation 瞬切；mixOut>0 设置 _cfState
     for (var ai = 1; ai < anims.length; ai++) {
         var prev = anims[ai - 1];
         var cur = anims[ai];
-        entry = state.addAnimation(ti, cur.name, false, 0);
-        if (entry) {
-            entry.alpha = seq.alpha;
-            if (is4x && seq.mixBlend) entry.mixBlend = SMTool._mixBlendValue(seq.mixBlend);
-            entry.mixDuration = (prev.mixOut !== undefined && prev.mixOut > 0) ? prev.mixOut : 0;
+        if (prev.mixOut > 0) {
+            if (!node._cfState) {
+                node._cfState = {
+                    ti: ti, baseTrack: baseTrack, overlayTrack: overlayTrack,
+                    animIdx: ai - 1, nextAnimIdx: ai,
+                    mixOut: prev.mixOut, elapsed: 0,
+                    phase: 'waiting',
+                    seqAlpha: seq.alpha,
+                    seqMixBlend: seq.mixBlend || 'replace',
+                    loopSeq: seq.loopSeq !== false
+                };
+            }
+            break;
+        } else {
+            entry = state.addAnimation(baseTrack, cur.name, false, 0);
+            if (entry) {
+                entry.alpha = seq.alpha;
+                if (is4x && seq.mixBlend) entry.mixBlend = SMTool._mixBlendValue(seq.mixBlend);
+                entry.mixDuration = 0;
+            }
         }
     }
 

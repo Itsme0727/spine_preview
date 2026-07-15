@@ -275,7 +275,6 @@ SMTool._createEl = function (node) {
                 '<button onclick="event.stopPropagation();SMTool._toggleTrackMode(' + node.id + ')" ' +
                     'title="轨道动画模式：多轨道序列队列播放" ' +
                     'style="' + (node._trackMode ? 'background:#7c5ce7;color:#fff;' : '') + '">🎬</button>' +
-                '<button onclick="event.stopPropagation();SMTool._debugNode(' + node.id + ')" title="调试动画层位置/缩放">🔍</button>' +
                 '<button onclick="event.stopPropagation();SMTool.copyNode(' + node.id + ',50,50);" title="复制节点">📋</button>' +
                 '<button onclick="event.stopPropagation();SMTool.deleteNode(' + node.id + ')" title="删除节点">✕</button>' +
             '</div>' +
@@ -592,6 +591,8 @@ SMTool._toggleTrackMode = function (nid) {
         SMTool._initDefaultTrackSequence(node);
         if (node.state) SMTool._applyTrackSequence(node);
     } else {
+        node._cfState = null;   // ★ 退出轨道模式时清理 crossfade 状态
+        node._seqStates = null;
         if (node.state) {
             SMTool._initDefaultTracks(node);
             SMTool._applyTracksToState(node);
@@ -746,6 +747,7 @@ SMTool._onSeqAlphaChange = function (nid, ti, value) {
     if (!seq) return;
     seq.alpha = parseInt(value) / 100;
     if (node.state) { var e = node.state.getCurrent(ti); if (e) e.alpha = seq.alpha; }
+    if (node) node._dirty = true;
 };
 SMTool._onSeqBlendChange = function (nid, ti, value) {
     var node = SMData.nodes.get(nid);
@@ -785,6 +787,7 @@ SMTool._onSeqEnableToggle = function (nid, ti, checked) {
         }
     }
     SMTool._refreshTrackPanel(node);
+    if (node) node._dirty = true;
 };
 
 // ★ 结束轨道动画模式模块 ★
@@ -864,6 +867,7 @@ SMTool._onTrackAnimChange = function (nid, trackIdx, animName) {
     }
     SMTool._updateStateRowColors();
     SMTool._updateDuplicateHighlights();
+    node._dirty = true;
     // ★ 同步更新所有动画流路径中的状态名
     if (trackIdx === 0) {
         SMTool._syncFlowPathAnim(nid, animName);
@@ -889,6 +893,7 @@ SMTool._onTrackAlphaChange = function (nid, trackIdx, value) {
     if (entry) {
         entry.alpha = alpha;
     }
+    node._dirty = true;
 
     // 更新显示值
     var row = document.querySelector('#trackPanel-' + nid + ' .track-row[data-track="' + trackIdx + '"]');
@@ -905,6 +910,7 @@ SMTool._onTrackBlendChange = function (nid, trackIdx, blendMode) {
     if (trackIdx < 0 || trackIdx >= node.tracks.length) return;
 
     node.tracks[trackIdx].mixBlend = blendMode;
+    node._dirty = true;
 
     var is4x = (node._spineVer === '4.3' || node._spineVer === '4.2');
     if (is4x) {
@@ -923,6 +929,7 @@ SMTool._onTrackEnableToggle = function (nid, trackIdx, checked) {
 
     node.tracks[trackIdx].enabled = checked;
     SMTool._applyTracksToState(node);
+    node._dirty = true;
     // 刷新面板以更新 disabled 样式
     SMTool._refreshTrackPanel(node);
 };
@@ -941,6 +948,7 @@ SMTool._onTrackLoopToggle = function (nid, trackIdx) {
         var entry = node.state.getCurrent(trackIdx);
         if (entry) entry.loop = newLoop;
     }
+    node._dirty = true;
     var row = document.querySelector('#trackPanel-' + nid + ' .track-row[data-track="' + trackIdx + '"]');
     if (row) {
         var btn = row.querySelector('.track-loop-btn');
@@ -966,6 +974,7 @@ SMTool._onTrackMixDurationChange = function (nid, trackIdx, value) {
     if (isNaN(d) || d < 0) d = 0;
     if (d > 5) d = 5;
     node.tracks[trackIdx].mixDuration = d;
+    node._dirty = true;
 
     // ★ 同步到当前活跃的 TrackEntry（影响正在播放的过渡）
     if (node.state) {

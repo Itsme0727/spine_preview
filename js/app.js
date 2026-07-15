@@ -486,8 +486,6 @@ SMTool.init = function () {
 
     // 滚轮缩放（面板内滚动内容，不缩放画布）
     window.addEventListener('wheel', function (e) {
-        // ★ 调试模式：滚轮始终用于缩放动画层
-        if (SMData._debugMode) { e.preventDefault(); SMTool._onWheel(e); return; }
         if (!e.target.closest('.state-list') && !e.target.closest('.anim-bar') && !e.target.closest('.anim-select') && !e.target.closest('.ip-body') && !e.target.closest('#conditionEditor') && !e.target.closest('#dataFloatPanel') && !e.target.closest('#animPreviewPanel') && !e.target.closest('#screenshotOverlay') && !e.target.closest('#searchPanel')) {
             e.preventDefault();
             SMTool._onWheel(e);
@@ -1512,31 +1510,6 @@ SMTool.init = function () {
         node.width = 280;
         node._hideValue = -1;
         node._hideDirection = 'left';
-        SMData.nodes.set(id, node);
-        SMTool._createEl(node);
-        SMTool._updatePos(node);
-        SMData.selectedNodes.clear();
-        SMData.selectedNodes.add(id);
-        SMData.selectedNode = id;
-        SMTool._updateSel();
-        SMTool._updateSB();
-    };
-
-    // ★ 大循环播放节点
-    SMTool.addLoopNode = function () {
-        SMTool.addLoopNodeAt(
-            Math.random() * 200 - 100 + window.innerWidth / 2,
-            Math.random() * 200 - 100 + window.innerHeight / 2
-        );
-    };
-    SMTool.addLoopNodeAt = function (wx, wy) {
-        SMTool.pushUndo();
-        var id = SMData.nextId++;
-        var node = new SpineNodeData(id);
-        node.nodeType = 'loop';
-        node.name = '大循环播放';
-        node.x = wx; node.y = wy;
-        node.width = 280;
         SMData.nodes.set(id, node);
         SMTool._createEl(node);
         SMTool._updatePos(node);
@@ -3282,13 +3255,6 @@ SMTool._applySpeedToSelected = function (speed) {
         // 同步浮窗预览
         SMTool._syncPreviewSpeed(nid, speed);
     });
-};
-
-// ★ 右键菜单：插入图片（已禁用——请使用数据面板的"📁 选取图片"添加截图）
-SMTool.ctxInsertImage = function () {
-    document.getElementById('ctxMenu').style.display = 'none';
-    document.getElementById('sbStatus').textContent = '⚠️ 请使用数据面板中的"📁 选取图片"为骨骼/皮肤/插槽添加截图';
-    setTimeout(function () { document.getElementById('sbStatus').textContent = ''; }, 3000);
 };
 
 // ★ 更新入口节点名称

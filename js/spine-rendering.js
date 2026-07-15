@@ -492,26 +492,56 @@ SMTool._loop = function (now) {
         var spd = (typeof node._playbackSpeed === 'number' && node._playbackSpeed !== 1.0) ? node._playbackSpeed : 1.0;
         node.state.update(dt * spd);
 
-        // ★ 轨道动画模式：检测所有序列链是否真正播完，播完后自动重新循环
-        if (node._trackMode && node._trackSequence && node._trackSequence.length > 0) {
-            var allDone = true;
-            var hasTracks = false;
-            for (var tsi = 0; tsi < node._trackSequence.length; tsi++) {
-                var tseq = node._trackSequence[tsi];
-                if (tseq.loopSeq !== false && tseq.enabled !== false && tseq.animations.length > 0) {
-                    hasTracks = true;
-                    var entry = node.state.getCurrent(tsi);
-                    // 轨道空 → 已完成
-                    if (!entry) continue;
-                    // 有排队的下一动画（addAnimation 链） → 尚未结束，继续播放
-                    if (entry.next || entry._next) { allDone = false; break; }
-                    // 当前动画仍在播放 → 继续
-                    if (typeof entry.isComplete === 'function' && !entry.isComplete()) { allDone = false; break; }
-                    if (entry.isComplete === false) { allDone = false; break; }
+        // ★ 轨道动画模式：双向 alpha 淡入淡出状态机
+        //    baseTrack alpha 1→0，overlayTrack alpha 0→1（mixBlend='replace'）
+        //    仅在有 mixOut>0 过渡时激活 _cfState
+        if (node._trackMode && node._cfState) {
+            var cf = node._cfState;
+            var cfIs4x = (node._spineVer === '4.3' || node._spineVer === '4.2');
+
+            if (cf.phase === 'waiting') {
+                var baseEntry = node.state.getCurrent(cf.baseTrack);
+                if (baseEntry) {
+                    var animDur = (baseEntry.animation || baseEntry._animation).duration;
+                    if (animDur > 0) {
+                        var remaining = Math.max(0, animDur - baseEntry.trackTime);
+                        if (remaining <= cf.mixOut + 0.001) {
+                            var seq = node._trackSequence[cf.ti];
+                            var nextAnim = seq.animations[cf.nextAnimIdx];
+                            var ovEntry = node.state.setAnimation(cf.overlayTrack, nextAnim.name, false);
+                            if (ovEntry) {
+                                ovEntry.alpha = 0;
+                                ovEntry.mixBlend = SMTool._mixBlendValue('replace');
+                                ovEntry.mixDuration = 0;
+                                cf.phase = 'crossfading';
+                                cf.elapsed = 0;
+                            }
+                        }
+                    }
                 }
-            }
-            if (hasTracks && allDone) {
-                SMTool._applyTrackSequence(node);
+            } else if (cf.phase === 'crossfading') {
+                cf.elapsed += dt * spd;
+                var progress = Math.min(1, cf.elapsed / Math.max(cf.mixOut, 0.001));
+                var baseE = node.state.getCurrent(cf.baseTrack);
+                var ovE = node.state.getCurrent(cf.overlayTrack);
+                if (baseE) baseE.alpha = Math.max(0, (1 - progress) * cf.seqAlpha);
+                if (ovE) ovE.alpha = progress * cf.seqAlpha;
+
+                if (progress >= 1) {
+                    // 淡入完成：交接给 baseTrack
+                    var seq2 = node._trackSequence[cf.ti];
+                    var nextAnim2 = seq2.animations[cf.nextAnimIdx];
+                    node.state.clearTrack(cf.baseTrack);
+                    var newEntry = node.state.setAnimation(cf.baseTrack, nextAnim2.name, false);
+                    if (newEntry) {
+                        newEntry.alpha = cf.seqAlpha;
+                        if (cfIs4x && cf.seqMixBlend) newEntry.mixBlend = SMTool._mixBlendValue(cf.seqMixBlend);
+                        newEntry.mixDuration = 0;
+                    }
+                    node.state.clearTrack(cf.overlayTrack);
+                    // 继续序列（排队后续动画或循环）
+                    SMTool._continueSeqAfterCf(node, cf.ti, cf.nextAnimIdx);
+                }
             }
         }
 
@@ -539,9 +569,11 @@ SMTool._loop = function (now) {
             }
         }
 
-        if (shouldAnimate) {
+        if (shouldAnimate || node._dirty) {
             // ★ 仅对动画节点应用骨骼变换（时间更新已在上方完成）
+            //    _dirty=true 时即使静态模式/未选中也强制应用，确保轨道参数修改后即时更新画面
             node.state.apply(node.skeleton);
+            if (node._dirty) node._dirty = false;
         }
         node.skeleton.updateWorldTransform(node._physParam);
 
@@ -667,22 +699,6 @@ SMTool._loop = function (now) {
 
 // ---- 缩放 ----
 SMTool._onWheel = function (e) {
-    // ★ 调试模式：滚轮缩放动画层
-    if (SMData._debugMode) {
-        e.preventDefault();
-        var dm = SMData._debugMode;
-        var node = SMData.nodes.get(dm.nodeId);
-        if (node) {
-            var factor = e.deltaY > 0 ? 0.935 : 1.065;
-            var newScale = (node._customScale || 1.0) * factor;
-            newScale = Math.max(0.2, Math.min(5.0, newScale));
-            node._customScale = newScale;
-            SMTool._syncDebugToSameSource(node);
-            SMTool._updateDebugBar(node);
-        }
-        return;
-    }
-
     var oz = SMData.view.zoom;
     var factor = e.deltaY > 0 ? 0.935 : 1.065;
     SMData.view.zoom = Math.max(0.03, Math.min(5, SMData.view.zoom * factor));
@@ -999,13 +1015,6 @@ SMTool._initAnimPreview = function (node) {
             var state = new SP.AnimationState(stateData);
             // 复制源节点的全部轨道配置（不只是 track 0）
             SMTool._applyPreviewTracks(pp, state, stateData, sd, node);
-            // ★ 浮窗预览始终循环播放（轨道序列模式由序列链自行管理循环，不强制 loop=true）
-            if (!node._trackMode) {
-                for (var ti3 = 0; ti3 < 5; ti3++) {
-                    var e3 = state.getCurrent(ti3);
-                    if (e3) e3.loop = true;
-                }
-            }
             // ★ 先配置好动画再设置 pp.state，避免空状态帧闪烁
             pp.state = state;
             // 🔒 [LOCK-C] END
@@ -1080,9 +1089,8 @@ SMTool._initAnimPreview = function (node) {
             SMTool._renderAnimPreview(performance.now());
             // 🔒 [LOCK-D] END
 
-            // 更新面板标题（轨道模式显示轨道名称）
-            var titleAnim = (node._trackMode && pp.animName) ? pp.animName : targetAnim;
-            SMTool._updateAppTitle('🎬 ' + titleAnim, node.sourceFile || '');
+            // 更新面板标题
+            SMTool._updateAppTitle('🎬 ' + targetAnim, node.sourceFile || '');
 
         } catch (e) {
             console.error('[AnimPreview] Setup failed:', e);
@@ -1183,14 +1191,69 @@ SMTool._renderAnimPreview = function (now) {
         pp.state.update(dt * previewSpeed);
     }
 
-    // ================================================================
-    // 🔒🔒🔒 [LOCK-SUPER-FLOW-PREVIEW] 动画流浮窗切换核心逻辑
-    // ⚠️⚠️⚠️ 最严重警告：此处代码极易改出闪烁/卡顿/抽搐的bug，
-    //   一旦改坏极难修复回原样。禁止随意修改！
-    //   修改前必须明确询问用户"是否同意修改 LOCK-SUPER-FLOW-PREVIEW"，
-    //   用户明确回答"同意修改"后方可改动。
-    // ================================================================
-    // ★ 单节点动画播完后延迟 1 秒自动从头重播
+    // ★ 预览面板双向 alpha 十字淡入淡出状态机（与主渲染循环逻辑一致）
+    if (pp._cfState && pp.nodeId != null) {
+        var ppCf = pp._cfState;
+        var ppIs4x = (pp._spineVer === '4.3' || pp._spineVer === '4.2');
+        var srcNode2 = SMData.nodes.get(pp.nodeId);
+        if (srcNode2 && srcNode2._trackSequence) {
+            if (ppCf.phase === 'waiting') {
+                var ppBaseEntry = pp.state.getCurrent(ppCf.baseTrack);
+                if (ppBaseEntry) {
+                    var ppAnimDur = (ppBaseEntry.animation || ppBaseEntry._animation).duration;
+                    if (ppAnimDur > 0) {
+                        var ppRemaining = Math.max(0, ppAnimDur - ppBaseEntry.trackTime);
+                        if (ppRemaining <= ppCf.mixOut + 0.001) {
+                            var ppSeq = srcNode2._trackSequence[ppCf.ti];
+                            var ppNextAnim = ppSeq.animations[ppCf.nextAnimIdx];
+                            var ppOvEntry = pp.state.setAnimation(ppCf.overlayTrack, ppNextAnim.name, false);
+                            if (ppOvEntry) {
+                                ppOvEntry.alpha = 0;
+                                ppOvEntry.mixBlend = SMTool._mixBlendValue('replace');
+                                ppOvEntry.mixDuration = 0;
+                                ppCf.phase = 'crossfading';
+                                ppCf.elapsed = 0;
+                            }
+                        }
+                    }
+                }
+            } else if (ppCf.phase === 'crossfading') {
+                ppCf.elapsed += dt * previewSpeed;
+                var ppProgress = Math.min(1, ppCf.elapsed / Math.max(ppCf.mixOut, 0.001));
+                var ppBaseE = pp.state.getCurrent(ppCf.baseTrack);
+                var ppOvE = pp.state.getCurrent(ppCf.overlayTrack);
+                if (ppBaseE) ppBaseE.alpha = Math.max(0, (1 - ppProgress) * ppCf.seqAlpha);
+                if (ppOvE) ppOvE.alpha = ppProgress * ppCf.seqAlpha;
+
+                if (ppProgress >= 1) {
+                    var ppSeq2 = srcNode2._trackSequence[ppCf.ti];
+                    var ppNextAnim2 = ppSeq2.animations[ppCf.nextAnimIdx];
+                    pp.state.clearTrack(ppCf.baseTrack);
+                    var ppNewEntry = pp.state.setAnimation(ppCf.baseTrack, ppNextAnim2.name, false);
+                    if (ppNewEntry) {
+                        ppNewEntry.alpha = ppCf.seqAlpha;
+                        if (ppIs4x && ppCf.seqMixBlend) ppNewEntry.mixBlend = SMTool._mixBlendValue(ppCf.seqMixBlend);
+                        ppNewEntry.mixDuration = 0;
+                    }
+                    pp.state.clearTrack(ppCf.overlayTrack);
+                    // 预览面板继续序列
+                    if (typeof SMTool._continueSeqAfterCf === 'function') {
+                        var ppSrcNode = SMData.nodes.get(pp.nodeId);
+                        if (ppSrcNode) SMTool._continueSeqAfterCf(ppSrcNode, ppCf.ti, ppCf.nextAnimIdx);
+                    }
+                    // 同步主节点的 _cfState
+                    if (srcNode2) {
+                        srcNode2._cfState = null;
+                        if (typeof SMTool._continueSeqAfterCf === 'function') {
+                            SMTool._continueSeqAfterCf(srcNode2, ppCf.ti, ppCf.nextAnimIdx);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ★ 单节点动画播完后无缝从头重播（直接 setAnimation，不销毁重建）
     if (!pp._flowFrozen && pp.state && !pp._layerSkeletons) {
         var trackEntry = pp.state.getCurrent(0);
         var isComplete = false;
@@ -1204,20 +1267,25 @@ SMTool._renderAnimPreview = function (now) {
             } catch (e) { isComplete = false; }
         }
         if (isComplete) {
-            if (!pp._singleLoopTimer) {
-                pp._singleLoopTimer = setTimeout(function () {
-                    pp._singleLoopTimer = null;
-                    var srcNode = SMData.nodes.get(pp.nodeId);
-                    if (srcNode && srcNode.nodeType === 'spine') {
-                        SMTool._initAnimPreview(srcNode);
-                    }
-                }, 1000);
-            }
-        } else {
+            // ★ 清除旧 timer（防止旧代码残留）
             if (pp._singleLoopTimer) {
                 clearTimeout(pp._singleLoopTimer);
                 pp._singleLoopTimer = null;
             }
+            // ★ 使用 _loopRestartGuard 防止同一完成帧重复重启
+            if (!pp._loopRestartGuard) {
+                pp._loopRestartGuard = true;
+                // 获取当前动画名（回退到骨架首个动画）
+                var restartAnim = pp.animName;
+                if (!restartAnim && pp._skeletonData && pp._skeletonData.animations && pp._skeletonData.animations.length > 0) {
+                    restartAnim = pp._skeletonData.animations[0].name;
+                }
+                if (restartAnim) {
+                    pp.state.setAnimation(0, restartAnim, false);
+                }
+            }
+        } else {
+            pp._loopRestartGuard = false;
         }
     }
 
@@ -1233,15 +1301,8 @@ SMTool._renderAnimPreview = function (now) {
     if (useVer === '4.3' || useVer === '4.2') {
         if (pp._sceneRenderer) {
             try {
-                // ★ 每帧同步相机（与主画布渲染保持一致，防止动画循环包裹点时
-                //    SceneRenderer 内部状态过期导致的画面抽搐）
-                pp._sceneRenderer.camera.position.set(cw / 2, ch / 2, 0);
-                pp._sceneRenderer.camera.viewportWidth = cw;
-                pp._sceneRenderer.camera.viewportHeight = ch;
-                pp._sceneRenderer.camera.update();
+                // ★ SceneRenderer 需要 begin/end 包围 drawSkeleton 才能刷出画面
                 pp._sceneRenderer.begin();
-                // ★ begin() 可能重置 viewport，重新应用预览专属视口
-                gl.viewport(0, 0, canvas.width, canvas.height);
                 pp._sceneRenderer.drawSkeleton(pp.skeleton, pp._premultipliedAlpha || false);
                 pp._sceneRenderer.end();
             } catch (e) { /* ignore */ }
@@ -1438,6 +1499,7 @@ SMTool._destroyAnimPreview = function () {
     pp._boundsSize = null;
     pp._premultipliedAlpha = false;
     pp._lastTime = 0;
+    pp._loopRestartGuard = false;
 
     // ★ 清除层级播放高亮状态，防止主画布节点残留冻结/置灰
     SMData._layerPlayingNodes = null;
@@ -1453,9 +1515,6 @@ SMTool._updateAnimPreviewAnim = function (animName) {
     var node = SMData.nodes.get(pp.nodeId);
     if (!node || !node.state) return;
 
-    // ================================================================
-    // 🔒🔒🔒 [LOCK-SUPER-FLOW-PREVIEW] 同锁：与上方联动，不可单独修改
-    // ================================================================
     // ★ 完整复制源节点的轨道混合配置
     SMTool._applyPreviewTracks(pp, pp.state, new (SMTool._getSpineRuntime(pp._spineVer)).AnimationStateData(pp._skeletonData), pp._skeletonData, node);
     pp.animName = node.currentAnim || animName;
@@ -1472,16 +1531,6 @@ SMTool._applyPreviewTracks = function (pp, previewState, stateData, skeletonData
     // ★ 清除轨道后立刻重置骨骼到绑定姿态，防止上一动画最后一帧残留闪烁
     if (pp.skeleton) pp.skeleton.setToSetupPose();
 
-    // ★ 轨道动画模式：使用轨道序列而非简单轨道
-    if (sourceNode._trackMode && sourceNode._trackSequence && sourceNode._trackSequence.length > 0) {
-        SMTool._applyPreviewTrackSequence(pp, previewState, skeletonData, sourceNode);
-        pp.animName = sourceNode._trackName || '动画混合';
-        return;
-    }
-
-    // ================================================================
-    // 🔒🔒🔒 [LOCK-SUPER-FLOW-PREVIEW] 同锁：与上方动画流切换逻辑联动，不可单独修改
-    // ================================================================
     var tracks = sourceNode.tracks;
     if (!tracks || tracks.length === 0) {
         // 没有轨道配置 → 只播放 currentAnim
@@ -1542,15 +1591,19 @@ SMTool._applyPreviewTracks = function (pp, previewState, stateData, skeletonData
     pp.skeleton.updateWorldTransform(pp._physParam);
 };
 
-// ★ 预览专用：将源节点的轨道序列复制到预览 AnimationState
-//    与 _applyTrackSequence 逻辑一致，但操作预览独立的 state/skeleton
+// ★ 将源节点的轨道序列配置复制到预览 AnimationState（与 _applyTrackSequence 双轨架构对应）
 SMTool._applyPreviewTrackSequence = function (pp, previewState, skeletonData, sourceNode) {
-    // ★ 必须先清空所有旧轨道，防止切换节点时残留上一节点的动画
-    previewState.clearTracks();
+    if (!previewState || !sourceNode || !sourceNode._trackMode) return;
+    if (!sourceNode._trackSequence || sourceNode._trackSequence.length === 0) return;
+
+    // ★ Bug1修复：先复位骨架
     if (pp.skeleton) pp.skeleton.setToSetupPose();
+    previewState.clearTracks();
 
     var is4x = (pp._spineVer === '4.3' || pp._spineVer === '4.2');
-    var seqs = sourceNode._trackSequence || [];
+    var seqs = sourceNode._trackSequence;
+
+    pp._cfState = null;
 
     for (var ti = 0; ti < seqs.length; ti++) {
         var seq = seqs[ti];
@@ -1558,34 +1611,46 @@ SMTool._applyPreviewTrackSequence = function (pp, previewState, skeletonData, so
         var anims = seq.animations;
         if (!anims || anims.length === 0) continue;
 
-        // 验证首动画存在
-        var animExists = false;
-        for (var ai = 0; ai < skeletonData.animations.length; ai++) {
-            if (skeletonData.animations[ai].name === anims[0].name) { animExists = true; break; }
-        }
-        if (!animExists) continue;
+        var baseTrack = ti * 2;
+        var overlayTrack = ti * 2 + 1;
 
-        // 首动画（不循环，序列链控制流转）
-        var entry = previewState.setAnimation(ti, anims[0].name, false);
+        // 首动画 → 基础轨
+        var first = anims[0];
+        var entry = previewState.setAnimation(baseTrack, first.name, false);
         if (!entry) continue;
         entry.alpha = (seq.alpha !== undefined) ? seq.alpha : 1.0;
         if (is4x && seq.mixBlend) entry.mixBlend = SMTool._mixBlendValue(seq.mixBlend);
         entry.mixDuration = 0;
 
         // 后续动画链
-        for (var ai2 = 1; ai2 < anims.length; ai2++) {
-            var prev = anims[ai2 - 1];
-            var cur = anims[ai2];
-            var nextEntry = previewState.addAnimation(ti, cur.name, false, 0);
-            if (nextEntry) {
-                nextEntry.alpha = seq.alpha;
-                if (is4x && seq.mixBlend) nextEntry.mixBlend = SMTool._mixBlendValue(seq.mixBlend);
-                nextEntry.mixDuration = (prev.mixOut !== undefined && prev.mixOut > 0) ? prev.mixOut : 0;
+        for (var ai = 1; ai < anims.length; ai++) {
+            var prev = anims[ai - 1];
+            var cur = anims[ai];
+            if (prev.mixOut > 0) {
+                if (!pp._cfState) {
+                    pp._cfState = {
+                        ti: ti, baseTrack: baseTrack, overlayTrack: overlayTrack,
+                        animIdx: ai - 1, nextAnimIdx: ai,
+                        mixOut: prev.mixOut, elapsed: 0,
+                        phase: 'waiting',
+                        seqAlpha: seq.alpha,
+                        seqMixBlend: seq.mixBlend || 'replace',
+                        loopSeq: seq.loopSeq !== false
+                    };
+                }
+                break;
+            } else {
+                entry = previewState.addAnimation(baseTrack, cur.name, false, 0);
+                if (entry) {
+                    entry.alpha = seq.alpha;
+                    if (is4x && seq.mixBlend) entry.mixBlend = SMTool._mixBlendValue(seq.mixBlend);
+                    entry.mixDuration = 0;
+                }
             }
         }
     }
 
-    // ★ 立即应用第一帧，消除 setup pose 闪烁
+    // ★ 立即应用第一帧
     previewState.update(0);
     previewState.apply(pp.skeleton);
     pp.skeleton.updateWorldTransform(pp._physParam);

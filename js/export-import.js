@@ -907,6 +907,33 @@ SMTool._serializeData = function () {
         view: SMData.view
     };
 
+    // ★★★ 纹理数据全局去重（核心修复：多节点共享图集时避免 JSON 体积爆炸）★★★
+    // 问题：当 N 个节点共享同一图集，每个节点的 _srcTexDataUrl/_srcTexDataUrls 都存储
+    //      完整 base64 纹理数据，导致 JSON 体积 = N × 纹理大小，极易 OOM。
+    // 方案：收集所有唯一纹理 dataUrl → 建全局索引表 _texDataStore，节点只存索引引用。
+    var texIndexMap = {};      // { dataUrl: index }
+    var texDataStore = [];     // [dataUrl, ...]
+    var atlasIndexMap = {};    // { atlasText: index }
+    var atlasTextStore = [];   // [atlasText, ...]
+
+    function _getTexRef(dataUrl) {
+        if (!dataUrl || typeof dataUrl !== 'string' || dataUrl.indexOf('data:image/') !== 0) return -1;
+        if (texIndexMap.hasOwnProperty(dataUrl)) return texIndexMap[dataUrl];
+        var idx = texDataStore.length;
+        texIndexMap[dataUrl] = idx;
+        texDataStore.push(dataUrl);
+        return idx;
+    }
+
+    function _getAtlasRef(atlasText) {
+        if (!atlasText || typeof atlasText !== 'string') return -1;
+        if (atlasIndexMap.hasOwnProperty(atlasText)) return atlasIndexMap[atlasText];
+        var idx = atlasTextStore.length;
+        atlasIndexMap[atlasText] = idx;
+        atlasTextStore.push(atlasText);
+        return idx;
+    }
+
     // 序列化连线
     for (var i = 0; i < SMData.connections.length; i++) {
         var c = SMData.connections[i];
@@ -931,6 +958,23 @@ SMTool._serializeData = function () {
     var result = nodesIter.next();
     while (!result.done) {
         var n = result.value;
+
+        // ★ 纹理去重：将 _srcTexDataUrls 中的 dataUrl 替换为索引引用
+        var texRefs = null;
+        if (n._srcTexDataUrls && n._srcTexDataUrls.length > 0) {
+            texRefs = [];
+            for (var ti = 0; ti < n._srcTexDataUrls.length; ti++) {
+                var page = n._srcTexDataUrls[ti];
+                var ref = _getTexRef(page.dataUrl);
+                texRefs.push({ name: page.name, texRef: ref });
+            }
+        }
+        // ★ 单纹理也去重
+        var texRef = _getTexRef(n._srcTexDataUrl);
+
+        // ★ 图集文本去重
+        var atlasRef = _getAtlasRef(n._srcAtlasText);
+
         data.nodes.push({
             id: n.id,
             name: n.name,
@@ -954,11 +998,15 @@ SMTool._serializeData = function () {
             _trackSequence: n._trackSequence || [],   // ★ 轨道序列数据
             _srcSkelJson: n._srcSkelJson,
             _srcSkelBinBase64: n._srcSkelBinBase64,
-            _srcAtlasText: n._srcAtlasText,
-            _srcTexDataUrl: n._srcTexDataUrl,
-            _srcTexDataUrls: n._srcTexDataUrls,
+            // ★ 纹理/图集去重：优先使用全局索引引用（体积小），回退旧格式（兼容旧版导入）
+            _srcAtlasText: (atlasRef < 0) ? (n._srcAtlasText || '') : '',
+            _srcTexDataUrl: (texRef < 0) ? (n._srcTexDataUrl || '') : '',
+            _srcTexDataUrls: (texRefs === null) ? (n._srcTexDataUrls || []) : [],
             _srcType: n._srcType,
             _srcFileNames: n._srcFileNames,
+            _texRef: texRef,                          // ★ 纹理全局索引（≥0 时有效，替代 _srcTexDataUrl）
+            _texRefs: texRefs,                        // ★ 多纹理全局索引（替代 _srcTexDataUrls）
+            _atlasRef: atlasRef,                      // ★ 图集文本全局索引（≥0 时有效，替代 _srcAtlasText）
             _textContent: n._textContent,
             _lineBreakPositions: n._lineBreakPositions,  // ★ 标题节点换行位置（字符索引数组）
             _exitText: n._exitText,
@@ -1028,17 +1076,35 @@ SMTool._serializeData = function () {
     data.flowMode = SMData.flowMode || 'full';
     data.renderMode = SMData.renderMode || 'perf';
 
+    // ★★ 保存纹理去重存储表（如果为空则不写入，节省空间）
+    if (texDataStore.length > 0) data._texDataStore = texDataStore;
+    if (atlasTextStore.length > 0) data._atlasTextStore = atlasTextStore;
+
     return JSON.stringify(data, null, 2);
 };
 
-// ---- 显示保存提示气泡（左下角） ----
-SMTool._showSaveToast = function (msg) {
+// ---- 显示保存提示气泡（顶部工具栏下方） ----
+// msg: 主提示文本
+// path: 可选，保存路径（显示为亮黄色）
+SMTool._showSaveToast = function (msg, path) {
     var toast = document.getElementById('autoSaveToast');
     if (!toast) return;
 
     // 更新提示文本
     var textEl = toast.querySelector('.ast-text');
     if (textEl) textEl.textContent = msg || '已保存';
+
+    // 更新路径文本
+    var pathEl = toast.querySelector('.ast-path');
+    if (pathEl) {
+        if (path) {
+            pathEl.textContent = ' 路径：' + path;
+            pathEl.style.display = 'inline';
+        } else {
+            pathEl.textContent = '';
+            pathEl.style.display = 'none';
+        }
+    }
 
     // 重置动画：先移除再强制回流后添加
     toast.classList.remove('show');
@@ -1050,6 +1116,21 @@ SMTool._showSaveToast = function (msg) {
     toast._hideTimer = setTimeout(function () {
         toast.classList.remove('show');
     }, 2500);
+};
+
+// ---- 从保存句柄推导可读路径 ----
+SMTool._resolveSavePath = function () {
+    // 优先从目录句柄获取
+    if (SMData._assetsDirHandle && SMData._assetsDirHandle.name) {
+        return SMData._assetsDirHandle.name + '/spine-state-machine.json';
+    }
+    // 从上次保存路径获取
+    if (SMData._lastSavePath) return SMData._lastSavePath;
+    // 拖入文件的句柄
+    if (SMData._dragSaveHandle && SMData._dragSaveHandle.name) {
+        return SMData._dragSaveHandle.name;
+    }
+    return '';
 };
 
 // ================================================================
@@ -1182,7 +1263,15 @@ SMTool.exportAsZip = function () {
     }
 
     // ★ 第三步：序列化 JSON（现在 _shotRefs 指向正确的 ZIP 内路径）
-    var jsonStr = SMTool._serializeData();
+    var jsonStr;
+    try {
+        jsonStr = SMTool._serializeData();
+    } catch (serErr) {
+        console.error('[ZIP] 序列化失败:', serErr);
+        document.getElementById('sbStatus').textContent = '❌ 导出失败：数据过大，请减少节点数量';
+        setTimeout(function () { document.getElementById('sbStatus').textContent = ''; }, 4000);
+        return;
+    }
 
     // ★ 第四步：构建 ZIP
     var zipParts = [];
@@ -1291,13 +1380,17 @@ SMTool.exportAsZip = function () {
     a.click();
     URL.revokeObjectURL(url);
 
-    document.getElementById('sbStatus').textContent = '✅ 已导出工程包（含 ' + imgSids.length + ' 张图片）';
+    document.getElementById('sbStatus').textContent = '✅ 已导出工程包到下载目录（含 ' + imgSids.length + ' 张图片）';
     setTimeout(function () { document.getElementById('sbStatus').textContent = ''; }, 3000);
 };
 
 // ---- 静默覆写 JSON 到指定文件句柄（用于拖入文件的直接覆写）----
 SMTool._writeJsonToFileHandle = function (fileHandle) {
-    var json = SMTool._serializeData();
+    var json;
+    try { json = SMTool._serializeData(); } catch (e) {
+        console.error('[Save] 序列化失败:', e);
+        return Promise.reject(e);
+    }
     var blob = new Blob([json], { type: 'application/json' });
     return fileHandle.createWritable().then(function (writable) {
         return writable.write(blob).then(function () {
@@ -1312,7 +1405,11 @@ SMTool._writeFileSilently = function () {
 
     // ★ 先保存伴随 JPG 图片（填充 _boneShotRefs），再写 JSON（只含路径引用）
     return SMTool._saveCompanionImages(SMData._assetsDirHandle).then(function () {
-        var json = SMTool._serializeData();
+        var json;
+        try { json = SMTool._serializeData(); } catch (e) {
+            console.error('[Save] 序列化失败:', e);
+            return Promise.reject(e);
+        }
         var blob = new Blob([json], { type: 'application/json' });
         return SMData._assetsDirHandle.getFileHandle('spine-state-machine.json', { create: true }).then(function (fileHandle) {
             SMData._saveFileHandle = fileHandle;
@@ -1327,7 +1424,12 @@ SMTool._writeFileSilently = function () {
 
 // ---- 通过浏览器下载（降级方案） ----
 SMTool._downloadFile = function (filename) {
-    var json = SMTool._serializeData();
+    var json;
+    try { json = SMTool._serializeData(); } catch (e) {
+        console.error('[Save] 序列化失败:', e);
+        alert('保存失败：工程数据过大，请减少节点数量后重试。\n（多个动画共享相同图集时，建议先保存再继续添加。）');
+        return;
+    }
     var b = new Blob([json], { type: 'application/json' });
     var u = URL.createObjectURL(b);
     var a = document.createElement('a');
@@ -1345,7 +1447,7 @@ SMTool._startAutoSave = function () {
 
         if (SMData._assetsDirHandle) {
             SMTool._writeFileSilently().then(function () {
-                SMTool._showSaveToast('已自动保存');
+                SMTool._showSaveToast('已自动保存到本地', SMTool._resolveSavePath());
             }).catch(function (err) {
                 console.error('[AutoSave] 静默保存失败:', err);
                 SMData._assetsDirHandle = null;
@@ -1354,14 +1456,14 @@ SMTool._startAutoSave = function () {
         } else if (SMData._dragSaveHandle) {
             // 拖入文件的句柄 → 直接覆写 JSON
             SMTool._writeJsonToFileHandle(SMData._dragSaveHandle).then(function () {
-                SMTool._showSaveToast('已自动保存');
+                SMTool._showSaveToast('已自动保存到本地', SMData._dragSaveHandle.name);
             }).catch(function (err) {
                 console.error('[AutoSave] 覆写失败:', err);
                 SMData._dragSaveHandle = null;
             });
         } else {
             SMTool._downloadFile('spine-state-machine.json');
-            SMTool._showSaveToast('已自动保存');
+            SMTool._showSaveToast('已自动保存到本地（下载目录）');
         }
     }, 30000);
 };
@@ -1381,7 +1483,7 @@ SMTool.exportData = function () {
     // ★ 优先级 1：已有目录句柄 → 静默覆写（含截图）
     if (SMData._assetsDirHandle) {
         SMTool._writeFileSilently().then(function () {
-            SMTool._showSaveToast('已保存');
+            SMTool._showSaveToast('已保存到本地', SMTool._resolveSavePath());
         }).catch(function (err) {
             console.error('[Export] 静默保存失败:', err);
             SMData._assetsDirHandle = null;
@@ -1396,7 +1498,7 @@ SMTool.exportData = function () {
     if (SMData._dragSaveHandle) {
         SMTool._writeJsonToFileHandle(SMData._dragSaveHandle).then(function () {
             if (!SMData._hasEverSaved) { SMData._hasEverSaved = true; SMTool._startAutoSave(); }
-            SMTool._showSaveToast('已保存');
+            SMTool._showSaveToast('已保存到本地', SMData._dragSaveHandle.name);
         }).catch(function (err) {
             console.error('[Export] 直接覆写失败:', err);
             SMData._dragSaveHandle = null;
@@ -1413,7 +1515,11 @@ SMTool.exportData = function () {
             return SMTool._saveCompanionImages(dirHandle).then(function () {
                 return dirHandle.getFileHandle('spine-state-machine.json', { create: true }).then(function (fileHandle) {
                     SMData._saveFileHandle = fileHandle;
-                    var json = SMTool._serializeData();
+                    var json;
+                    try { json = SMTool._serializeData(); } catch (e) {
+                        console.error('[Export] 序列化失败:', e);
+                        return Promise.reject(e);
+                    }
                     var blob = new Blob([json], { type: 'application/json' });
                     return fileHandle.createWritable().then(function (writable) {
                         return writable.write(blob).then(function () {
@@ -1424,19 +1530,21 @@ SMTool.exportData = function () {
             });
         }).then(function () {
             if (!SMData._hasEverSaved) { SMData._hasEverSaved = true; SMTool._startAutoSave(); }
-            SMTool._showSaveToast('已保存');
+            var savePath = SMData._assetsDirHandle ? SMData._assetsDirHandle.name + '/spine-state-machine.json' : '';
+            SMData._lastSavePath = savePath;
+            SMTool._showSaveToast('已保存到本地', savePath);
         }).catch(function (err) {
             if (err.name === 'AbortError') return;
             // ★ SecurityError = file:// 协议被浏览器拦截 → 告知原因并自动导出 ZIP 兜底
             if (err.name === 'SecurityError') {
-                SMTool._showSaveToast('file:// 协议无法授权保存文件夹，已自动导出 ZIP');
+                SMTool._showSaveToast('已自动导出 ZIP 到本地（下载目录）');
                 SMTool.exportAsZip();
                 return;
             }
             console.error('[Export] 保存失败:', err);
             SMTool._downloadFile('spine-state-machine.json');
             if (!SMData._hasEverSaved) { SMData._hasEverSaved = true; SMTool._startAutoSave(); }
-            SMTool._showSaveToast('已保存（仅JSON）');
+            SMTool._showSaveToast('已保存到本地（下载目录）');
         });
         return;
     }
@@ -1832,9 +1940,27 @@ SMTool._processImportJson = function (jsonText, fileHandle) {
             node.premultipliedAlpha = nd.premultipliedAlpha || false;
             node._srcSkelJson = nd._srcSkelJson || null;
             node._srcSkelBinBase64 = nd._srcSkelBinBase64 || null;
-            node._srcAtlasText = nd._srcAtlasText || '';
-            node._srcTexDataUrl = nd._srcTexDataUrl || '';
-            node._srcTexDataUrls = nd._srcTexDataUrls || [];
+            // ★ 纹理去重恢复：优先从全局存储表 _texDataStore 还原，回退旧格式（兼容旧工程）
+            if (d._texDataStore && nd._texRef !== undefined && nd._texRef >= 0) {
+                node._srcTexDataUrl = d._texDataStore[nd._texRef] || '';
+            } else {
+                node._srcTexDataUrl = nd._srcTexDataUrl || '';
+            }
+            if (d._texDataStore && nd._texRefs && nd._texRefs.length > 0) {
+                node._srcTexDataUrls = [];
+                for (var _tri = 0; _tri < nd._texRefs.length; _tri++) {
+                    var _tr = nd._texRefs[_tri];
+                    node._srcTexDataUrls.push({ name: _tr.name, dataUrl: d._texDataStore[_tr.texRef] || '' });
+                }
+            } else {
+                node._srcTexDataUrls = nd._srcTexDataUrls || [];
+            }
+            // ★ 图集文本去重恢复：优先从 _atlasTextStore 还原
+            if (d._atlasTextStore && nd._atlasRef !== undefined && nd._atlasRef >= 0) {
+                node._srcAtlasText = d._atlasTextStore[nd._atlasRef] || '';
+            } else {
+                node._srcAtlasText = nd._srcAtlasText || '';
+            }
             node._srcType = nd._srcType || '';
             node._srcFileNames = nd._srcFileNames || [];
             node._textContent = nd._textContent || '';

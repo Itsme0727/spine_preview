@@ -7,7 +7,7 @@
     <meta http-equiv="Expires" content="0" />
     <title>Spine Animation State Machine</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link rel="stylesheet" href="css/styles.css?v=20260714b">
+    <link rel="stylesheet" href="css/styles.css?v=20260629a">
 </head>
 <body>
     <!-- ===== 画布层 ===== -->
@@ -121,7 +121,6 @@
         <div class="ctx-item" onclick="SMTool.ctxDuplicateNode()">📋 复制节点</div>
         <div class="ctx-sep"></div>
         <div class="ctx-item" onclick="SMTool.ctxAddTitle()">📝 标题</div>
-        <div class="ctx-item" onclick="SMTool.ctxInsertImage()">🖼️ 插入图片</div>
     </div>
 
     <!-- ===== 标签悬浮提示 ===== -->
@@ -155,10 +154,11 @@
         <span id="sbStatus"></span>
     </div>
 
-    <!-- ===== 自动保存提示气泡（左下角） ===== -->
+    <!-- ===== 自动保存提示气泡（顶部工具栏下方） ===== -->
     <div id="autoSaveToast">
         <span class="ast-icon">💾</span>
-        <span class="ast-text">已自动保存</span>
+        <span class="ast-text">已保存</span>
+        <span class="ast-path"></span>
     </div>
 
     <!-- ===== 渲染模式切换 ===== -->
@@ -257,16 +257,16 @@
         10. app.js — 主入口（汇总 + 初始化）
          ================================================================ -->
     <script src="js/lib/spine-loader.js?v=20260609"></script>
-    <script src="js/data-model.js?v=20260714c"></script>
+    <script src="js/data-model.js?v=20260618a"></script>
     <script src="js/spine-loading.js?v=20260629a"></script>
-    <script src="js/spine-rendering.js?v=20260714h"></script>
+    <script src="js/spine-rendering.js?v=20260629a"></script>
     <script src="js/grid-connections.js?v=20260617"></script>
     <script src="js/minimap.js?v=20260617"></script>
-    <script src="js/ui-dom.js?v=20260714n"></script>
+    <script src="js/ui-dom.js?v=20260618a"></script>
     <script src="js/interaction.js?v=20260618b"></script>
     <script src="js/export-import.js?v=20260617e"></script>
     <script src="js/export-ai-json.js?v=20260617"></script>
-    <script src="js/layer-node-v2.js?v=20260714a"></script>
-    <script src="js/app.js?v=20260704a"></script>
+    <script src="js/layer-node-v2.js?v=20260629a"></script>
+    <script src="js/app.js?v=20260626h"></script>
 </body>
 </html>

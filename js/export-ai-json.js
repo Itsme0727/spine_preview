@@ -482,5 +482,5 @@ SMTool.exportAIJson = function () {
     a.download = 'animation-flow-ai.json';
     a.click();
     URL.revokeObjectURL(url);
-    SMTool._showSaveToast('已导出 AI JSON v2（' + groupsOutput.length + ' 组, ' + totalFlows + ' 个动画流）');
+    SMTool._showSaveToast('已导出 AI JSON v2 到本地（下载目录）', 'animation-flow-ai.json（' + groupsOutput.length + ' 组, ' + totalFlows + ' 个动画流）');
 };
