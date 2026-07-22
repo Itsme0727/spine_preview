@@ -515,6 +515,8 @@ SMTool._loop = function (now) {
                                 ovEntry.mixDuration = 0;
                                 cf.phase = 'crossfading';
                                 cf.elapsed = 0;
+                                // ★ 新动画已设到 overlayTrack，强制本帧应用骨骼姿态
+                                node._dirty = true;
                             }
                         }
                     }
@@ -539,8 +541,98 @@ SMTool._loop = function (now) {
                         newEntry.mixDuration = 0;
                     }
                     node.state.clearTrack(cf.overlayTrack);
-                    // 继续序列（排队后续动画或循环）
-                    SMTool._continueSeqAfterCf(node, cf.ti, cf.nextAnimIdx);
+                    // ★ 清空状态，防止下一帧重复触发
+                    node._cfState = null;
+                    // ★ 手动序列模式：索引前进到下一个动画
+                    if (!node._seqIdx) node._seqIdx = {};
+                    var nxt = cf.nextAnimIdx + 1;
+                    if (nxt >= seq2.animations.length) nxt = (cf.loopSeq !== false) ? 0 : seq2.animations.length - 1;
+                    node._seqIdx[cf.ti] = nxt;
+                    node._dirty = true;
+                }
+            }
+        }
+
+        // ★ 轨道动画模式：手动序列索引跟踪 + 循环重启
+        //    不再依赖 Spine 的 addAnimation 队列（跨版本行为不一致）。
+        //    改为：setAnimation 只设当前动画 → 检测 isComplete() → 切到下一个索引。
+        if (node._trackMode && node._trackSequence) {
+            // 初始化序列索引存储
+            if (!node._seqIdx) node._seqIdx = {};
+            
+            for (var si = 0; si < node._trackSequence.length; si++) {
+                var rSeq = node._trackSequence[si];
+                if (!rSeq.enabled) { delete node._seqIdx[si]; continue; }
+                if (rSeq.loopSeq === false) { delete node._seqIdx[si]; continue; }
+                if (node._cfState && node._cfState.ti === si) continue;
+                
+                var rBTrack = si * 2;
+                var rOTrack = si * 2 + 1;
+                var rAnims = rSeq.animations;
+                if (!rAnims || rAnims.length === 0) continue;
+                
+                // 确保索引在有效范围内
+                if (node._seqIdx[si] === undefined || node._seqIdx[si] >= rAnims.length) {
+                    node._seqIdx[si] = 0;
+                }
+                
+                // 如果当前轨道为空（还没开始或已被清空），启动第一个动画
+                var bEntry = node.state.getCurrent(rBTrack);
+                var oEntry = node.state.getCurrent(rOTrack);
+                var isIdle = true;
+                
+                if (bEntry) {
+                    try {
+                        if (typeof bEntry.isComplete === 'function') isIdle = bEntry.isComplete();
+                        else if (bEntry.isComplete !== undefined) isIdle = !!bEntry.isComplete;
+                    } catch (e) {}
+                }
+                if (oEntry) {
+                    var oIdle = true;
+                    try {
+                        if (typeof oEntry.isComplete === 'function') oIdle = oEntry.isComplete();
+                        else if (oEntry.isComplete !== undefined) oIdle = !!oEntry.isComplete;
+                    } catch (e) {}
+                    isIdle = isIdle && oIdle;
+                }
+                
+                if (isIdle) {
+                    // ★ 当前动画播完 → 切换到下一个索引
+                    var nextIdx = node._seqIdx[si];
+                    var selAnim = rAnims[nextIdx];
+                    
+                    var rstEntry = node.state.setAnimation(rBTrack, selAnim.name, false);
+                    if (rstEntry) {
+                        rstEntry.alpha = (rSeq.alpha !== undefined) ? rSeq.alpha : 1.0;
+                        if ((node._spineVer === '4.3' || node._spineVer === '4.2') && rSeq.mixBlend) {
+                            rstEntry.mixBlend = SMTool._mixBlendValue(rSeq.mixBlend);
+                        }
+                        rstEntry.mixDuration = 0;
+                        
+                        // ★ 索引前进，到头则回到 0
+                        node._seqIdx[si] = (nextIdx + 1) % rAnims.length;
+                        
+                        // ★ 处理 mixOut：如果有混合时间，启动 crossfade
+                        if (selAnim.mixOut > 0) {
+                            var nextSeqIdx = node._seqIdx[si]; // 已经 advance 过了，这是下一个动画的索引
+                            // 下一个动画的 mixOut 是当前动画的 mixOut
+                            // 实际上，selAnim.mixOut 是当前动画到下一个的过渡时间
+                            // 设置 crossfade 状态让渲染循环处理混合
+                            if (!node._cfState) {
+                                node._cfState = {
+                                    ti: si, baseTrack: rBTrack, overlayTrack: rOTrack,
+                                    animIdx: nextIdx, nextAnimIdx: node._seqIdx[si],
+                                    mixOut: selAnim.mixOut, elapsed: 0,
+                                    phase: 'waiting',
+                                    seqAlpha: rSeq.alpha,
+                                    seqMixBlend: rSeq.mixBlend || 'replace',
+                                    loopSeq: rSeq.loopSeq !== false
+                                };
+                            }
+                        }
+                        
+                        node._dirty = true;
+                    }
                 }
             }
         }
@@ -1236,18 +1328,56 @@ SMTool._renderAnimPreview = function (now) {
                         ppNewEntry.mixDuration = 0;
                     }
                     pp.state.clearTrack(ppCf.overlayTrack);
-                    // 预览面板继续序列
-                    if (typeof SMTool._continueSeqAfterCf === 'function') {
-                        var ppSrcNode = SMData.nodes.get(pp.nodeId);
-                        if (ppSrcNode) SMTool._continueSeqAfterCf(ppSrcNode, ppCf.ti, ppCf.nextAnimIdx);
-                    }
-                    // 同步主节点的 _cfState
-                    if (srcNode2) {
+                    // ★ 清空已完成状态，防止下一帧重复触发
+                    pp._cfState = null;
+                    // ★ 手动序列模式：前进索引
+                    var ppSrcNode3 = SMData.nodes.get(pp.nodeId);
+                    if (ppSrcNode3) {
+                        if (!ppSrcNode3._seqIdx) ppSrcNode3._seqIdx = {};
+                        var ppNxt = ppCf.nextAnimIdx + 1;
+                        var ppSeq3 = ppSrcNode3._trackSequence[ppCf.ti];
+                        if (ppNxt >= ppSeq3.animations.length) ppNxt = (ppCf.loopSeq !== false) ? 0 : ppSeq3.animations.length - 1;
+                        ppSrcNode3._seqIdx[ppCf.ti] = ppNxt;
+                        // 同步清理主节点的 crossfade 状态
                         srcNode2._cfState = null;
-                        if (typeof SMTool._continueSeqAfterCf === 'function') {
-                            SMTool._continueSeqAfterCf(srcNode2, ppCf.ti, ppCf.nextAnimIdx);
-                        }
                     }
+                }
+            }
+        }
+    }
+
+    // ★ 预览面板：轨道模式序列循环重启（与主渲染循环逻辑一致，手动索引跟踪）
+    var ppSrcNode3 = pp.nodeId != null ? SMData.nodes.get(pp.nodeId) : null;
+    if (ppSrcNode3 && ppSrcNode3._trackMode && ppSrcNode3._trackSequence && !pp._flowFrozen) {
+        if (!ppSrcNode3._seqIdx) ppSrcNode3._seqIdx = {};
+        for (var ppSi = 0; ppSi < ppSrcNode3._trackSequence.length; ppSi++) {
+            var ppRSeq2 = ppSrcNode3._trackSequence[ppSi];
+            if (!ppRSeq2.enabled || ppRSeq2.loopSeq === false) continue;
+            if (pp._cfState && pp._cfState.ti === ppSi) continue;
+            
+            var ppBT2 = ppSi * 2;
+            var ppOT2 = ppSi * 2 + 1;
+            var ppAnims2 = ppRSeq2.animations;
+            if (!ppAnims2 || ppAnims2.length === 0) continue;
+            
+            if (ppSrcNode3._seqIdx[ppSi] === undefined || ppSrcNode3._seqIdx[ppSi] >= ppAnims2.length) {
+                ppSrcNode3._seqIdx[ppSi] = 0;
+            }
+            
+            var ppBE2 = pp.state.getCurrent(ppBT2);
+            var ppOE2 = pp.state.getCurrent(ppOT2);
+            var ppIdle2 = true;
+            if (ppBE2) { try { if (typeof ppBE2.isComplete === 'function') ppIdle2 = ppBE2.isComplete(); else if (ppBE2.isComplete !== undefined) ppIdle2 = !!ppBE2.isComplete; } catch(e) {} }
+            if (ppOE2) { try { if (typeof ppOE2.isComplete === 'function') ppIdle2 = ppIdle2 && ppOE2.isComplete(); else if (ppOE2.isComplete !== undefined) ppIdle2 = ppIdle2 && !!ppOE2.isComplete; } catch(e) {} }
+            
+            if (ppIdle2) {
+                var ppNextIdx2 = ppSrcNode3._seqIdx[ppSi];
+                var ppSelAnim2 = ppAnims2[ppNextIdx2];
+                var ppRstEntry2 = pp.state.setAnimation(ppBT2, ppSelAnim2.name, false);
+                if (ppRstEntry2) {
+                    ppRstEntry2.alpha = (ppRSeq2.alpha !== undefined) ? ppRSeq2.alpha : 1.0;
+                    ppRstEntry2.mixDuration = 0;
+                    ppSrcNode3._seqIdx[ppSi] = (ppNextIdx2 + 1) % ppAnims2.length;
                 }
             }
         }
@@ -1527,6 +1657,12 @@ SMTool._updateAnimPreviewAnim = function (animName) {
 
 // ---- 将源节点的轨道混合配置复制到预览 AnimationState ----
 SMTool._applyPreviewTracks = function (pp, previewState, stateData, skeletonData, sourceNode) {
+    // ★ 轨道动画模式：使用序列配置（双轨架构），而非旧的 node.tracks
+    if (sourceNode._trackMode && sourceNode._trackSequence && sourceNode._trackSequence.length > 0) {
+        SMTool._applyPreviewTrackSequence(pp, previewState, skeletonData, sourceNode);
+        return;
+    }
+
     previewState.clearTracks();
     // ★ 清除轨道后立刻重置骨骼到绑定姿态，防止上一动画最后一帧残留闪烁
     if (pp.skeleton) pp.skeleton.setToSetupPose();

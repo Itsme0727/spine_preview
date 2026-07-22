@@ -1840,9 +1840,13 @@ SMTool.init = function () {
                 // 更新动画（即时切换，无需重载）
                 if (existing.state && existing.currentAnim !== (nd.currentAnim || '')) {
                     try {
-                        if (!existing.tracks || existing.tracks.length === 0) SMTool._initDefaultTracks(existing);
-                        existing.tracks[0].animName = nd.currentAnim || '';
-                        SMTool._applyTracksToState(existing);
+                        if (existing._trackMode && existing._trackSequence && existing._trackSequence.length > 0) {
+                            SMTool._applyTrackSequence(existing);
+                        } else {
+                            if (!existing.tracks || existing.tracks.length === 0) SMTool._initDefaultTracks(existing);
+                            existing.tracks[0].animName = nd.currentAnim || '';
+                            SMTool._applyTracksToState(existing);
+                        }
                     } catch (e) { /* 忽略 */ }
                 }
                 existing.currentAnim = nd.currentAnim || '';

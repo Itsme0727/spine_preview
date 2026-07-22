@@ -701,6 +701,9 @@ SMTool._addTrackSeq = function (nid) {
     });
     if (node.state) SMTool._applyTrackSequence(node);
     SMTool._refreshTrackPanel(node);
+    if (SMData._animPreview.visible && SMData._animPreview.nodeId === nid) {
+        SMTool._initAnimPreview(node);
+    }
 };
 SMTool._removeTrackSeq = function (nid, ti) {
     var node = SMData.nodes.get(nid);
@@ -708,6 +711,9 @@ SMTool._removeTrackSeq = function (nid, ti) {
     node._trackSequence.splice(ti, 1);
     if (node.state) SMTool._applyTrackSequence(node);
     SMTool._refreshTrackPanel(node);
+    if (SMData._animPreview.visible && SMData._animPreview.nodeId === nid) {
+        SMTool._initAnimPreview(node);
+    }
 };
 SMTool._addSeqAnim = function (nid, ti) {
     var node = SMData.nodes.get(nid);
@@ -715,6 +721,9 @@ SMTool._addSeqAnim = function (nid, ti) {
     node._trackSequence[ti].animations.push({ name: node.animations[0] ? node.animations[0].name : '', mixOut: 0 });
     if (node.state) SMTool._applyTrackSequence(node);
     SMTool._refreshTrackPanel(node);
+    if (SMData._animPreview.visible && SMData._animPreview.nodeId === nid) {
+        SMTool._initAnimPreview(node);
+    }
 };
 SMTool._removeSeqAnim = function (nid, ti, ai) {
     var node = SMData.nodes.get(nid);
@@ -723,6 +732,9 @@ SMTool._removeSeqAnim = function (nid, ti, ai) {
     seq.animations.splice(ai, 1);
     if (node.state) SMTool._applyTrackSequence(node);
     SMTool._refreshTrackPanel(node);
+    if (SMData._animPreview.visible && SMData._animPreview.nodeId === nid) {
+        SMTool._initAnimPreview(node);
+    }
 };
 SMTool._onSeqAnimChange = function (nid, ti, ai, name) {
     var node = SMData.nodes.get(nid);
@@ -730,6 +742,12 @@ SMTool._onSeqAnimChange = function (nid, ti, ai, name) {
     if (!seq || !seq.animations[ai]) return;
     seq.animations[ai].name = name;
     if (node.state) SMTool._applyTrackSequence(node);
+    // ★ 刷新轨道面板 DOM，确保下拉框与数据一致
+    SMTool._refreshTrackPanel(node);
+    // ★ 同步预览浮窗（若面板已打开）
+    if (SMData._animPreview.visible && SMData._animPreview.nodeId === nid) {
+        SMTool._initAnimPreview(node);
+    }
     SMTool._updateStateRowColors();
 };
 SMTool._onSeqMixOutChange = function (nid, ti, ai, value) {
@@ -740,13 +758,23 @@ SMTool._onSeqMixOutChange = function (nid, ti, ai, value) {
     seq.animations[ai].mixOut = d;
     // ★ 混合时间变更后重建序列链，使新 mixDuration 即时生效
     if (node.state) SMTool._applyTrackSequence(node);
+    // ★ 同步预览浮窗
+    if (SMData._animPreview.visible && SMData._animPreview.nodeId === nid) {
+        SMTool._initAnimPreview(node);
+    }
 };
 SMTool._onSeqAlphaChange = function (nid, ti, value) {
     var node = SMData.nodes.get(nid);
     var seq = node && node._trackSequence[ti];
     if (!seq) return;
     seq.alpha = parseInt(value) / 100;
-    if (node.state) { var e = node.state.getCurrent(ti); if (e) e.alpha = seq.alpha; }
+    if (node.state) {
+        // ★ 双轨架构：同时更新 baseTrack 和 overlayTrack 的 alpha
+        var bAlpha = node.state.getCurrent(ti * 2);
+        if (bAlpha) bAlpha.alpha = seq.alpha;
+        var oAlpha = node.state.getCurrent(ti * 2 + 1);
+        if (oAlpha) oAlpha.alpha = seq.alpha;
+    }
     if (node) node._dirty = true;
 };
 SMTool._onSeqBlendChange = function (nid, ti, value) {
@@ -755,6 +783,10 @@ SMTool._onSeqBlendChange = function (nid, ti, value) {
     if (!seq) return;
     seq.mixBlend = value;
     if (node.state) SMTool._applyTrackSequence(node);
+    // ★ 同步预览浮窗
+    if (SMData._animPreview.visible && SMData._animPreview.nodeId === nid) {
+        SMTool._initAnimPreview(node);
+    }
 };
 SMTool._onSeqLoopToggle = function (nid, ti, checked) {
     var node = SMData.nodes.get(nid);
@@ -763,6 +795,10 @@ SMTool._onSeqLoopToggle = function (nid, ti, checked) {
     seq.loopSeq = checked;
     // ★ 循环开关变更后重建序列链，使新设置即时生效
     if (node.state) SMTool._applyTrackSequence(node);
+    // ★ 同步预览浮窗
+    if (SMData._animPreview.visible && SMData._animPreview.nodeId === nid) {
+        SMTool._initAnimPreview(node);
+    }
 };
 
 SMTool._onSeqEnableToggle = function (nid, ti, checked) {
@@ -772,8 +808,11 @@ SMTool._onSeqEnableToggle = function (nid, ti, checked) {
     seq.enabled = checked;
     if (node.state) {
         if (!checked) {
-            // 禁用：清空该轨道
-            node.state.clearTrack(ti);
+            // 禁用：清空该序列的配对轨道（双轨架构：baseTrack=ti*2, overlayTrack=ti*2+1）
+            node.state.clearTrack(ti * 2);
+            node.state.clearTrack(ti * 2 + 1);
+            // ★ 同时清理该序列的 crossfade 状态
+            if (node._cfState && node._cfState.ti === ti) node._cfState = null;
         } else {
             // 启用：只重建该轨道（不清除其他轨道）
             SMTool._applySingleTrackSeq(node, ti);
@@ -787,6 +826,10 @@ SMTool._onSeqEnableToggle = function (nid, ti, checked) {
         }
     }
     SMTool._refreshTrackPanel(node);
+    // ★ 同步预览浮窗
+    if (SMData._animPreview.visible && SMData._animPreview.nodeId === nid) {
+        SMTool._initAnimPreview(node);
+    }
     if (node) node._dirty = true;
 };
 
@@ -5671,10 +5714,24 @@ SMTool._unfreezeAllNodes = function () {
             }
             // 如果有冻结轨道但 _pausedByFlow 为 false（状态标记丢失），回退暴力恢复
             if (anyFrozen && !n._pausedByFlow) {
-                try { n.state.clearTracks(); SMTool._applyTracksToState(n); } catch (e2) {}
+                try {
+                    n.state.clearTracks();
+                    if (n._trackMode && n._trackSequence && n._trackSequence.length > 0) {
+                        SMTool._applyTrackSequence(n);
+                    } else {
+                        SMTool._applyTracksToState(n);
+                    }
+                } catch (e2) {}
             }
         } catch (e) {
-            try { n.state.clearTracks(); SMTool._applyTracksToState(n); } catch (e2) {}
+            try {
+                n.state.clearTracks();
+                if (n._trackMode && n._trackSequence && n._trackSequence.length > 0) {
+                    SMTool._applyTrackSequence(n);
+                } else {
+                    SMTool._applyTracksToState(n);
+                }
+            } catch (e2) {}
         }
         n._pausedByFlow = false;
         n._savedTracks = undefined;
@@ -5708,7 +5765,12 @@ SMTool._forceResetAllNodes = function () {
                 n.currentAnim = n.tracks[0].animName || '';
             }
             try {
-                SMTool._applyTracksToState(n);
+                // ★ 轨道动画模式：使用序列配置恢复，不覆盖为旧的 node.tracks
+                if (n._trackMode && n._trackSequence && n._trackSequence.length > 0) {
+                    SMTool._applyTrackSequence(n);
+                } else {
+                    SMTool._applyTracksToState(n);
+                }
                 n.state.update(0);
                 n.state.apply(n.skeleton);
                 n.skeleton.updateWorldTransform(n._physParam);
@@ -5783,7 +5845,12 @@ SMTool._resumeAllNodes = function () {
             try {
                 n.skeleton.setToSetupPose();
                 n.state.clearTracks();
-                SMTool._applyTracksToState(n);
+                // ★ 轨道动画模式：使用序列配置恢复，不覆盖为旧的 node.tracks
+                if (n._trackMode && n._trackSequence && n._trackSequence.length > 0) {
+                    SMTool._applyTrackSequence(n);
+                } else {
+                    SMTool._applyTracksToState(n);
+                }
             } catch (e) { /* 忽略 */ }
             n._pausedByFlow = false;
             n._savedTracks = undefined;
