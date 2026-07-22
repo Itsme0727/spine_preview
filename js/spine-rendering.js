@@ -458,7 +458,7 @@ SMTool._loop = function (now) {
         // 规则：只解冻 timeScale，不做 _applyTracksToState（避免重置正常动画）
         if (node.state && node.skeletonData && !SMData._flowPanel.expanded && !SMData._fullPlayback.isPlaying) {
             try {
-                for (var wdi = 0; wdi < 5; wdi++) {
+                for (var wdi = 0; wdi < 10; wdi++) {
                     var wdEntry = node.state.getCurrent(wdi);
                     if (wdEntry && wdEntry.timeScale === 0) {
                         wdEntry.timeScale = 1.0;
@@ -492,149 +492,10 @@ SMTool._loop = function (now) {
         var spd = (typeof node._playbackSpeed === 'number' && node._playbackSpeed !== 1.0) ? node._playbackSpeed : 1.0;
         node.state.update(dt * spd);
 
-        // ★ 轨道动画模式：双向 alpha 淡入淡出状态机
-        //    baseTrack alpha 1→0，overlayTrack alpha 0→1（mixBlend='replace'）
-        //    仅在有 mixOut>0 过渡时激活 _cfState
-        if (node._trackMode && node._cfState) {
-            var cf = node._cfState;
-            var cfIs4x = (node._spineVer === '4.3' || node._spineVer === '4.2');
-
-            if (cf.phase === 'waiting') {
-                var baseEntry = node.state.getCurrent(cf.baseTrack);
-                if (baseEntry) {
-                    var animDur = (baseEntry.animation || baseEntry._animation).duration;
-                    if (animDur > 0) {
-                        var remaining = Math.max(0, animDur - baseEntry.trackTime);
-                        if (remaining <= cf.mixOut + 0.001) {
-                            var seq = node._trackSequence[cf.ti];
-                            var nextAnim = seq.animations[cf.nextAnimIdx];
-                            var ovEntry = node.state.setAnimation(cf.overlayTrack, nextAnim.name, false);
-                            if (ovEntry) {
-                                ovEntry.alpha = 0;
-                                ovEntry.mixBlend = SMTool._mixBlendValue('replace');
-                                ovEntry.mixDuration = 0;
-                                cf.phase = 'crossfading';
-                                cf.elapsed = 0;
-                                // ★ 新动画已设到 overlayTrack，强制本帧应用骨骼姿态
-                                node._dirty = true;
-                            }
-                        }
-                    }
-                }
-            } else if (cf.phase === 'crossfading') {
-                cf.elapsed += dt * spd;
-                var progress = Math.min(1, cf.elapsed / Math.max(cf.mixOut, 0.001));
-                var baseE = node.state.getCurrent(cf.baseTrack);
-                var ovE = node.state.getCurrent(cf.overlayTrack);
-                if (baseE) baseE.alpha = Math.max(0, (1 - progress) * cf.seqAlpha);
-                if (ovE) ovE.alpha = progress * cf.seqAlpha;
-
-                if (progress >= 1) {
-                    // 淡入完成：交接给 baseTrack
-                    var seq2 = node._trackSequence[cf.ti];
-                    var nextAnim2 = seq2.animations[cf.nextAnimIdx];
-                    node.state.clearTrack(cf.baseTrack);
-                    var newEntry = node.state.setAnimation(cf.baseTrack, nextAnim2.name, false);
-                    if (newEntry) {
-                        newEntry.alpha = cf.seqAlpha;
-                        if (cfIs4x && cf.seqMixBlend) newEntry.mixBlend = SMTool._mixBlendValue(cf.seqMixBlend);
-                        newEntry.mixDuration = 0;
-                    }
-                    node.state.clearTrack(cf.overlayTrack);
-                    // ★ 清空状态，防止下一帧重复触发
-                    node._cfState = null;
-                    // ★ 手动序列模式：索引前进到下一个动画
-                    if (!node._seqIdx) node._seqIdx = {};
-                    var nxt = cf.nextAnimIdx + 1;
-                    if (nxt >= seq2.animations.length) nxt = (cf.loopSeq !== false) ? 0 : seq2.animations.length - 1;
-                    node._seqIdx[cf.ti] = nxt;
-                    node._dirty = true;
-                }
-            }
-        }
-
-        // ★ 轨道动画模式：手动序列索引跟踪 + 循环重启
-        //    不再依赖 Spine 的 addAnimation 队列（跨版本行为不一致）。
-        //    改为：setAnimation 只设当前动画 → 检测 isComplete() → 切到下一个索引。
+        // ★ 轨道动画模式：维持 Spine AnimationState 原生队列。
+        //    A→B 的 mixDuration、mixingFrom/mixingTo 和多轨道覆盖全部由 Runtime 计算。
         if (node._trackMode && node._trackSequence) {
-            // 初始化序列索引存储
-            if (!node._seqIdx) node._seqIdx = {};
-            
-            for (var si = 0; si < node._trackSequence.length; si++) {
-                var rSeq = node._trackSequence[si];
-                if (!rSeq.enabled) { delete node._seqIdx[si]; continue; }
-                if (rSeq.loopSeq === false) { delete node._seqIdx[si]; continue; }
-                if (node._cfState && node._cfState.ti === si) continue;
-                
-                var rBTrack = si * 2;
-                var rOTrack = si * 2 + 1;
-                var rAnims = rSeq.animations;
-                if (!rAnims || rAnims.length === 0) continue;
-                
-                // 确保索引在有效范围内
-                if (node._seqIdx[si] === undefined || node._seqIdx[si] >= rAnims.length) {
-                    node._seqIdx[si] = 0;
-                }
-                
-                // 如果当前轨道为空（还没开始或已被清空），启动第一个动画
-                var bEntry = node.state.getCurrent(rBTrack);
-                var oEntry = node.state.getCurrent(rOTrack);
-                var isIdle = true;
-                
-                if (bEntry) {
-                    try {
-                        if (typeof bEntry.isComplete === 'function') isIdle = bEntry.isComplete();
-                        else if (bEntry.isComplete !== undefined) isIdle = !!bEntry.isComplete;
-                    } catch (e) {}
-                }
-                if (oEntry) {
-                    var oIdle = true;
-                    try {
-                        if (typeof oEntry.isComplete === 'function') oIdle = oEntry.isComplete();
-                        else if (oEntry.isComplete !== undefined) oIdle = !!oEntry.isComplete;
-                    } catch (e) {}
-                    isIdle = isIdle && oIdle;
-                }
-                
-                if (isIdle) {
-                    // ★ 当前动画播完 → 切换到下一个索引
-                    var nextIdx = node._seqIdx[si];
-                    var selAnim = rAnims[nextIdx];
-                    
-                    var rstEntry = node.state.setAnimation(rBTrack, selAnim.name, false);
-                    if (rstEntry) {
-                        rstEntry.alpha = (rSeq.alpha !== undefined) ? rSeq.alpha : 1.0;
-                        if ((node._spineVer === '4.3' || node._spineVer === '4.2') && rSeq.mixBlend) {
-                            rstEntry.mixBlend = SMTool._mixBlendValue(rSeq.mixBlend);
-                        }
-                        rstEntry.mixDuration = 0;
-                        
-                        // ★ 索引前进，到头则回到 0
-                        node._seqIdx[si] = (nextIdx + 1) % rAnims.length;
-                        
-                        // ★ 处理 mixOut：如果有混合时间，启动 crossfade
-                        if (selAnim.mixOut > 0) {
-                            var nextSeqIdx = node._seqIdx[si]; // 已经 advance 过了，这是下一个动画的索引
-                            // 下一个动画的 mixOut 是当前动画的 mixOut
-                            // 实际上，selAnim.mixOut 是当前动画到下一个的过渡时间
-                            // 设置 crossfade 状态让渲染循环处理混合
-                            if (!node._cfState) {
-                                node._cfState = {
-                                    ti: si, baseTrack: rBTrack, overlayTrack: rOTrack,
-                                    animIdx: nextIdx, nextAnimIdx: node._seqIdx[si],
-                                    mixOut: selAnim.mixOut, elapsed: 0,
-                                    phase: 'waiting',
-                                    seqAlpha: rSeq.alpha,
-                                    seqMixBlend: rSeq.mixBlend || 'replace',
-                                    loopSeq: rSeq.loopSeq !== false
-                                };
-                            }
-                        }
-                        
-                        node._dirty = true;
-                    }
-                }
-            }
+            SMTool._maintainNativeTrackSequences(node, node.state, node._trackSequence, node._spineVer);
         }
 
         // ★ 事件帧气泡：始终检测飘动（不受 renderMode / 选中状态影响）
@@ -662,12 +523,24 @@ SMTool._loop = function (now) {
         }
 
         if (shouldAnimate || node._dirty) {
+            // ★ 在 apply 前记录“上一帧不可见”的 Slot，并清理未关键帧骨骼残留。
+            //    注意：只恢复骨骼，不重置 Slot/Attachment，避免破坏显示与透明度动画。
+            if (node._trackMode && node._trackSequence) {
+                SMTool._prepareTrackMixSlotGuard(node, node.state, node.skeleton);
+                SMTool._resetTrackBoneBaseline(node, node.state, node.skeleton);
+            }
+
             // ★ 仅对动画节点应用骨骼变换（时间更新已在上方完成）
             //    _dirty=true 时即使静态模式/未选中也强制应用，确保轨道参数修改后即时更新画面
             node.state.apply(node.skeleton);
             if (node._dirty) node._dirty = false;
         }
         node.skeleton.updateWorldTransform(node._physParam);
+
+        // ★ 新出现附件防飞入：仅在父骨骼于混合期发生明显位移时，渲染期延后淡入。
+        if (node._trackMode && node._trackSequence) {
+            SMTool._applyTrackMixSlotGuard(node, node.state, node.skeleton);
+        }
 
         // ★ 防御：修复 skeleton 根位置 NaN（空默认皮肤的 spine 文件可能出现）
         if (isNaN(node.skeleton.x)) node.skeleton.x = 0;
@@ -731,6 +604,9 @@ SMTool._loop = function (now) {
         if (!SMData._hideBoneImgs) {
             SMTool._renderNodeBoneImages(node, gl, nodeW, nodeH, sx, glY, sw, sh);
         }
+
+        // 渲染完成立即还原 Slot 原始 Alpha，绝不把防飞入门控写回动画状态。
+        SMTool._restoreTrackMixSlotGuard(node);
 
         result = nodesIter.next();
     }
@@ -1283,108 +1159,14 @@ SMTool._renderAnimPreview = function (now) {
         pp.state.update(dt * previewSpeed);
     }
 
-    // ★ 预览面板双向 alpha 十字淡入淡出状态机（与主渲染循环逻辑一致）
-    if (pp._cfState && pp.nodeId != null) {
-        var ppCf = pp._cfState;
-        var ppIs4x = (pp._spineVer === '4.3' || pp._spineVer === '4.2');
-        var srcNode2 = SMData.nodes.get(pp.nodeId);
-        if (srcNode2 && srcNode2._trackSequence) {
-            if (ppCf.phase === 'waiting') {
-                var ppBaseEntry = pp.state.getCurrent(ppCf.baseTrack);
-                if (ppBaseEntry) {
-                    var ppAnimDur = (ppBaseEntry.animation || ppBaseEntry._animation).duration;
-                    if (ppAnimDur > 0) {
-                        var ppRemaining = Math.max(0, ppAnimDur - ppBaseEntry.trackTime);
-                        if (ppRemaining <= ppCf.mixOut + 0.001) {
-                            var ppSeq = srcNode2._trackSequence[ppCf.ti];
-                            var ppNextAnim = ppSeq.animations[ppCf.nextAnimIdx];
-                            var ppOvEntry = pp.state.setAnimation(ppCf.overlayTrack, ppNextAnim.name, false);
-                            if (ppOvEntry) {
-                                ppOvEntry.alpha = 0;
-                                ppOvEntry.mixBlend = SMTool._mixBlendValue('replace');
-                                ppOvEntry.mixDuration = 0;
-                                ppCf.phase = 'crossfading';
-                                ppCf.elapsed = 0;
-                            }
-                        }
-                    }
-                }
-            } else if (ppCf.phase === 'crossfading') {
-                ppCf.elapsed += dt * previewSpeed;
-                var ppProgress = Math.min(1, ppCf.elapsed / Math.max(ppCf.mixOut, 0.001));
-                var ppBaseE = pp.state.getCurrent(ppCf.baseTrack);
-                var ppOvE = pp.state.getCurrent(ppCf.overlayTrack);
-                if (ppBaseE) ppBaseE.alpha = Math.max(0, (1 - ppProgress) * ppCf.seqAlpha);
-                if (ppOvE) ppOvE.alpha = ppProgress * ppCf.seqAlpha;
-
-                if (ppProgress >= 1) {
-                    var ppSeq2 = srcNode2._trackSequence[ppCf.ti];
-                    var ppNextAnim2 = ppSeq2.animations[ppCf.nextAnimIdx];
-                    pp.state.clearTrack(ppCf.baseTrack);
-                    var ppNewEntry = pp.state.setAnimation(ppCf.baseTrack, ppNextAnim2.name, false);
-                    if (ppNewEntry) {
-                        ppNewEntry.alpha = ppCf.seqAlpha;
-                        if (ppIs4x && ppCf.seqMixBlend) ppNewEntry.mixBlend = SMTool._mixBlendValue(ppCf.seqMixBlend);
-                        ppNewEntry.mixDuration = 0;
-                    }
-                    pp.state.clearTrack(ppCf.overlayTrack);
-                    // ★ 清空已完成状态，防止下一帧重复触发
-                    pp._cfState = null;
-                    // ★ 手动序列模式：前进索引
-                    var ppSrcNode3 = SMData.nodes.get(pp.nodeId);
-                    if (ppSrcNode3) {
-                        if (!ppSrcNode3._seqIdx) ppSrcNode3._seqIdx = {};
-                        var ppNxt = ppCf.nextAnimIdx + 1;
-                        var ppSeq3 = ppSrcNode3._trackSequence[ppCf.ti];
-                        if (ppNxt >= ppSeq3.animations.length) ppNxt = (ppCf.loopSeq !== false) ? 0 : ppSeq3.animations.length - 1;
-                        ppSrcNode3._seqIdx[ppCf.ti] = ppNxt;
-                        // 同步清理主节点的 crossfade 状态
-                        srcNode2._cfState = null;
-                    }
-                }
-            }
-        }
-    }
-
-    // ★ 预览面板：轨道模式序列循环重启（与主渲染循环逻辑一致，手动索引跟踪）
-    var ppSrcNode3 = pp.nodeId != null ? SMData.nodes.get(pp.nodeId) : null;
-    if (ppSrcNode3 && ppSrcNode3._trackMode && ppSrcNode3._trackSequence && !pp._flowFrozen) {
-        if (!ppSrcNode3._seqIdx) ppSrcNode3._seqIdx = {};
-        for (var ppSi = 0; ppSi < ppSrcNode3._trackSequence.length; ppSi++) {
-            var ppRSeq2 = ppSrcNode3._trackSequence[ppSi];
-            if (!ppRSeq2.enabled || ppRSeq2.loopSeq === false) continue;
-            if (pp._cfState && pp._cfState.ti === ppSi) continue;
-            
-            var ppBT2 = ppSi * 2;
-            var ppOT2 = ppSi * 2 + 1;
-            var ppAnims2 = ppRSeq2.animations;
-            if (!ppAnims2 || ppAnims2.length === 0) continue;
-            
-            if (ppSrcNode3._seqIdx[ppSi] === undefined || ppSrcNode3._seqIdx[ppSi] >= ppAnims2.length) {
-                ppSrcNode3._seqIdx[ppSi] = 0;
-            }
-            
-            var ppBE2 = pp.state.getCurrent(ppBT2);
-            var ppOE2 = pp.state.getCurrent(ppOT2);
-            var ppIdle2 = true;
-            if (ppBE2) { try { if (typeof ppBE2.isComplete === 'function') ppIdle2 = ppBE2.isComplete(); else if (ppBE2.isComplete !== undefined) ppIdle2 = !!ppBE2.isComplete; } catch(e) {} }
-            if (ppOE2) { try { if (typeof ppOE2.isComplete === 'function') ppIdle2 = ppIdle2 && ppOE2.isComplete(); else if (ppOE2.isComplete !== undefined) ppIdle2 = ppIdle2 && !!ppOE2.isComplete; } catch(e) {} }
-            
-            if (ppIdle2) {
-                var ppNextIdx2 = ppSrcNode3._seqIdx[ppSi];
-                var ppSelAnim2 = ppAnims2[ppNextIdx2];
-                var ppRstEntry2 = pp.state.setAnimation(ppBT2, ppSelAnim2.name, false);
-                if (ppRstEntry2) {
-                    ppRstEntry2.alpha = (ppRSeq2.alpha !== undefined) ? ppRSeq2.alpha : 1.0;
-                    ppRstEntry2.mixDuration = 0;
-                    ppSrcNode3._seqIdx[ppSi] = (ppNextIdx2 + 1) % ppAnims2.length;
-                }
-            }
-        }
+    // ★ 预览浮窗与主画布使用完全相同的 Spine 原生轨道队列。
+    var ppTrackSource = pp.nodeId != null ? SMData.nodes.get(pp.nodeId) : null;
+    if (ppTrackSource && ppTrackSource._trackMode && ppTrackSource._trackSequence && !pp._flowFrozen) {
+        SMTool._maintainNativeTrackSequences(pp, pp.state, ppTrackSource._trackSequence, pp._spineVer);
     }
 
     // ★ 单节点动画播完后无缝从头重播（直接 setAnimation，不销毁重建）
-    if (!pp._flowFrozen && pp.state && !pp._layerSkeletons) {
+    if (!pp._flowFrozen && pp.state && !pp._layerSkeletons && !(ppTrackSource && ppTrackSource._trackMode)) {
         var trackEntry = pp.state.getCurrent(0);
         var isComplete = false;
         if (trackEntry) {
@@ -1419,8 +1201,22 @@ SMTool._renderAnimPreview = function (now) {
         }
     }
 
+    if (ppTrackSource && ppTrackSource._trackMode && ppTrackSource._trackSequence) {
+        // 预览对象也保存轨道标记，使稳定器与主画布共用完全相同的判断路径。
+        pp._trackMode = true;
+        pp._trackSequence = ppTrackSource._trackSequence;
+        SMTool._prepareTrackMixSlotGuard(pp, pp.state, pp.skeleton);
+        SMTool._resetTrackBoneBaseline(pp, pp.state, pp.skeleton);
+    } else {
+        pp._trackMode = false;
+        pp._trackSequence = null;
+        SMTool._restoreTrackMixSlotGuard(pp);
+    }
     pp.state.apply(pp.skeleton);
     pp.skeleton.updateWorldTransform(pp._physParam);
+    if (ppTrackSource && ppTrackSource._trackMode && ppTrackSource._trackSequence) {
+        SMTool._applyTrackMixSlotGuard(pp, pp.state, pp.skeleton);
+    }
 
     // 渲染
     gl.viewport(0, 0, canvas.width, canvas.height);
@@ -1453,6 +1249,9 @@ SMTool._renderAnimPreview = function (now) {
 
     // ★ 渲染预览浮窗骨骼挂图
     SMTool._renderPreviewBoneImages(pp);
+
+    // 与主画布一致：绘制完成后立刻还原 Slot Alpha。
+    SMTool._restoreTrackMixSlotGuard(pp);
 };
 
 // ---- 同步预览面板视口（缩放面板时调用，重新计算相机/投影/骨架位置） ----
@@ -1714,7 +1513,7 @@ SMTool._applyPreviewTracks = function (pp, previewState, stateData, skeletonData
     if (SMData._fullPlayback && SMData._fullPlayback.isPlaying) {
         var hasLoopMode = sourceNode.loop !== false && !!(sourceNode._loopMode || (sourceNode._loopCount !== undefined && sourceNode._loopCount !== 1));
         if (!hasLoopMode) {
-            for (var ti = 0; ti < 5; ti++) {
+            for (var ti = 0; ti < 10; ti++) {
                 var e = previewState.getCurrent(ti);
                 if (e) e.loop = false;
             }
@@ -1727,66 +1526,26 @@ SMTool._applyPreviewTracks = function (pp, previewState, stateData, skeletonData
     pp.skeleton.updateWorldTransform(pp._physParam);
 };
 
-// ★ 将源节点的轨道序列配置复制到预览 AnimationState（与 _applyTrackSequence 双轨架构对应）
+// ★ 将源节点的轨道序列配置复制到预览 AnimationState。
+//    与主画布共用同一套原生队列构建器，避免预览与实际画面出现两套计算结果。
 SMTool._applyPreviewTrackSequence = function (pp, previewState, skeletonData, sourceNode) {
     if (!previewState || !sourceNode || !sourceNode._trackMode) return;
-    if (!sourceNode._trackSequence || sourceNode._trackSequence.length === 0) return;
+    var seqs = sourceNode._trackSequence || [];
+    pp._trackMode = true;
+    pp._trackSequence = seqs;
+    if (seqs.length === 0) return;
 
-    // ★ Bug1修复：先复位骨架
+    SMTool._restoreTrackMixSlotGuard(pp);
+    pp._trackMixSlotGuards = {};
     if (pp.skeleton) pp.skeleton.setToSetupPose();
     previewState.clearTracks();
-
-    var is4x = (pp._spineVer === '4.3' || pp._spineVer === '4.2');
-    var seqs = sourceNode._trackSequence;
-
+    pp._trackQueueRuntime = {};
     pp._cfState = null;
 
     for (var ti = 0; ti < seqs.length; ti++) {
-        var seq = seqs[ti];
-        if (!seq.enabled) continue;
-        var anims = seq.animations;
-        if (!anims || anims.length === 0) continue;
-
-        var baseTrack = ti * 2;
-        var overlayTrack = ti * 2 + 1;
-
-        // 首动画 → 基础轨
-        var first = anims[0];
-        var entry = previewState.setAnimation(baseTrack, first.name, false);
-        if (!entry) continue;
-        entry.alpha = (seq.alpha !== undefined) ? seq.alpha : 1.0;
-        if (is4x && seq.mixBlend) entry.mixBlend = SMTool._mixBlendValue(seq.mixBlend);
-        entry.mixDuration = 0;
-
-        // 后续动画链
-        for (var ai = 1; ai < anims.length; ai++) {
-            var prev = anims[ai - 1];
-            var cur = anims[ai];
-            if (prev.mixOut > 0) {
-                if (!pp._cfState) {
-                    pp._cfState = {
-                        ti: ti, baseTrack: baseTrack, overlayTrack: overlayTrack,
-                        animIdx: ai - 1, nextAnimIdx: ai,
-                        mixOut: prev.mixOut, elapsed: 0,
-                        phase: 'waiting',
-                        seqAlpha: seq.alpha,
-                        seqMixBlend: seq.mixBlend || 'replace',
-                        loopSeq: seq.loopSeq !== false
-                    };
-                }
-                break;
-            } else {
-                entry = previewState.addAnimation(baseTrack, cur.name, false, 0);
-                if (entry) {
-                    entry.alpha = seq.alpha;
-                    if (is4x && seq.mixBlend) entry.mixBlend = SMTool._mixBlendValue(seq.mixBlend);
-                    entry.mixDuration = 0;
-                }
-            }
-        }
+        SMTool._buildNativeTrackSequence(pp, previewState, seqs, pp._spineVer, ti, false);
     }
 
-    // ★ 立即应用第一帧
     previewState.update(0);
     previewState.apply(pp.skeleton);
     pp.skeleton.updateWorldTransform(pp._physParam);

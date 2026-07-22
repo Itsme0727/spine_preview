@@ -591,7 +591,9 @@ SMTool._toggleTrackMode = function (nid) {
         SMTool._initDefaultTrackSequence(node);
         if (node.state) SMTool._applyTrackSequence(node);
     } else {
-        node._cfState = null;   // ★ 退出轨道模式时清理 crossfade 状态
+        node._cfState = null;
+        node._seqIdx = null;
+        node._trackQueueRuntime = null;
         node._seqStates = null;
         if (node.state) {
             SMTool._initDefaultTracks(node);
@@ -629,8 +631,8 @@ SMTool._buildTrackSequencePanel = function (node) {
         var alphaPct = Math.round((seq.alpha !== undefined ? seq.alpha : 1) * 100);
         var loopChecked = seq.loopSeq !== false ? ' checked' : '';
         var enabledChecked = seq.enabled !== false ? ' checked' : '';
-        var blendReplace = (seq.mixBlend === 'replace') ? ' selected' : '';
-        var blendAdd = (seq.mixBlend === 'add' || !seq.mixBlend) ? ' selected' : '';
+        var blendReplace = (seq.mixBlend === 'replace' || !seq.mixBlend) ? ' selected' : '';
+        var blendAdd = (seq.mixBlend === 'add') ? ' selected' : '';
 
         html += '<div class="tseq-track-header' + (seq.enabled === false ? ' tseq-disabled' : '') + '">' +
             '<b>T' + ti + '</b> ' + (isBase ? '基础' : '叠加') +
@@ -697,7 +699,7 @@ SMTool._addTrackSeq = function (nid) {
     if (node._trackSequence.length >= 10) return;
     node._trackSequence.push({
         animations: [{ name: node.animations[0] ? node.animations[0].name : '', mixOut: 0 }],
-        loopSeq: true, alpha: 1.0, enabled: true, mixBlend: 'add'
+        loopSeq: true, alpha: 1.0, enabled: true, mixBlend: 'replace'
     });
     if (node.state) SMTool._applyTrackSequence(node);
     SMTool._refreshTrackPanel(node);
@@ -769,11 +771,11 @@ SMTool._onSeqAlphaChange = function (nid, ti, value) {
     if (!seq) return;
     seq.alpha = parseInt(value) / 100;
     if (node.state) {
-        // ★ 双轨架构：同时更新 baseTrack 和 overlayTrack 的 alpha
-        var bAlpha = node.state.getCurrent(ti * 2);
-        if (bAlpha) bAlpha.alpha = seq.alpha;
-        var oAlpha = node.state.getCurrent(ti * 2 + 1);
-        if (oAlpha) oAlpha.alpha = seq.alpha;
+        // 当前动画和已排队动画统一更新，避免切到下一状态时 alpha 跳回旧值。
+        SMTool._setNativeTrackAlpha(node, node.state, ti, seq.alpha);
+    }
+    if (SMData._animPreview.visible && SMData._animPreview.nodeId === nid && SMData._animPreview.state) {
+        SMTool._setNativeTrackAlpha(SMData._animPreview, SMData._animPreview.state, ti, seq.alpha);
     }
     if (node) node._dirty = true;
 };
@@ -808,13 +810,11 @@ SMTool._onSeqEnableToggle = function (nid, ti, checked) {
     seq.enabled = checked;
     if (node.state) {
         if (!checked) {
-            // 禁用：清空该序列的配对轨道（双轨架构：baseTrack=ti*2, overlayTrack=ti*2+1）
-            node.state.clearTrack(ti * 2);
-            node.state.clearTrack(ti * 2 + 1);
-            // ★ 同时清理该序列的 crossfade 状态
-            if (node._cfState && node._cfState.ti === ti) node._cfState = null;
+            // 一条 UI 轨道对应一条 Spine Runtime 轨道。
+            node.state.clearTrack(ti);
+            if (node._trackQueueRuntime) delete node._trackQueueRuntime[ti];
         } else {
-            // 启用：只重建该轨道（不清除其他轨道）
+            // 启用：只重建该轨道，不打断其他轨道。
             SMTool._applySingleTrackSeq(node, ti);
         }
         // ★ 即时应用到骨架（先重置骨骼防止残留旧轨道画面）
@@ -3703,7 +3703,7 @@ SMTool._restartPreview = function () {
             SMTool._applyPreviewTrackSequence(pp, pp.state, pp._skeletonData, srcNode2);
         } else {
             // 普通模式：仅回卷轨道时间
-            for (var ti = 0; ti < 5; ti++) {
+            for (var ti = 0; ti < 10; ti++) {
                 var entry = pp.state.getCurrent(ti);
                 if (entry) {
                     entry.trackTime = 0;
@@ -5579,7 +5579,7 @@ SMTool._freezeAllNodes = function () {
             } catch (e) {}
             // 尝试通过 timeScale=0 冻结所有轨道的动画，保留当前帧
             try {
-                for (var ti = 0; ti < 5; ti++) {
+                for (var ti = 0; ti < 10; ti++) {
                     var entry = n.state.getCurrent(ti);
                     if (entry) { entry.timeScale = 0; }
                 }
@@ -5619,7 +5619,7 @@ SMTool._freezeAllNodesExceptLayer = function (layerNode) {
             n._pausedByFlow = false;
             try { n.state.apply(n.skeleton); n.skeleton.updateWorldTransform(n._physParam); } catch (e) {}
             try {
-                for (var ti = 0; ti < 5; ti++) {
+                for (var ti = 0; ti < 10; ti++) {
                     var entry = n.state.getCurrent(ti);
                     if (entry) { entry.timeScale = 1; }
                 }
@@ -5628,7 +5628,7 @@ SMTool._freezeAllNodesExceptLayer = function (layerNode) {
             // ★ 非层关联节点：冻结
             try { n.state.apply(n.skeleton); n.skeleton.updateWorldTransform(n._physParam); } catch (e) {}
             try {
-                for (var ti = 0; ti < 5; ti++) {
+                for (var ti = 0; ti < 10; ti++) {
                     var entry = n.state.getCurrent(ti);
                     if (entry) { entry.timeScale = 0; }
                 }
@@ -5705,7 +5705,7 @@ SMTool._unfreezeAllNodes = function () {
         // ★ 扫描所有轨道，修复任何 timeScale===0 的残留冻结（不限 _pausedByFlow 标记）
         try {
             var anyFrozen = false;
-            for (var ti = 0; ti < 5; ti++) {
+            for (var ti = 0; ti < 10; ti++) {
                 var entry = n.state.getCurrent(ti);
                 if (entry && entry.timeScale === 0) {
                     entry.timeScale = 1.0;
@@ -5805,7 +5805,7 @@ SMTool._pauseAllNodesExcept = function (exceptId) {
             // timeScale=0 只冻结动画进度，保留当前帧画面不变。
             // ================================================================
             try {
-                for (var ti = 0; ti < 5; ti++) {
+                for (var ti = 0; ti < 10; ti++) {
                     var entry = n.state.getCurrent(ti);
                     if (entry) entry.timeScale = 0;
                 }
@@ -5903,7 +5903,7 @@ SMTool._applyStepToMainNode = function (stepNode) {
                     // ★ 动画组播放：若节点显式配置了循环模式，则自然循环；无则强制不循环
                     var hasLoopMode = spineNode.loop !== false && !!(spineNode._loopMode || (spineNode._loopCount !== undefined && spineNode._loopCount !== 1));
                     if (!hasLoopMode) {
-                        for (var ti = 0; ti < 5; ti++) {
+                        for (var ti = 0; ti < 10; ti++) {
                             var e = spineNode.state.getCurrent(ti);
                             if (e) e.loop = false;
                         }

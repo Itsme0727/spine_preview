@@ -2855,7 +2855,7 @@ SMTool.init = function () {
                 var n = nr.value;
                 if (n.state && n.skeletonData) {
                     try {
-                        for (var ti = 0; ti < 5; ti++) {
+                        for (var ti = 0; ti < 10; ti++) {
                             var entry = n.state.getCurrent(ti);
                             if (entry && entry.timeScale === 0) {
                                 entry.timeScale = 1.0;
