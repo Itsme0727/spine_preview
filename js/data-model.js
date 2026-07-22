@@ -540,6 +540,37 @@ SMTool._setTrackMix = function (node, fromAnim, toAnim, duration) {
 };
 
 // 将节点的轨道配置应用到 Spine AnimationState
+// 模式切换前统一清空 Runtime 表现。配置数据（_trackSequence / tracks）保留，
+// 但 TrackEntry、mixingFrom、临时 Slot Alpha 和上一模式的骨骼姿势全部丢弃。
+SMTool._clearAnimationModeRuntime = function (node) {
+    if (!node) return;
+    SMTool._restoreTrackMixSlotGuard(node);
+    node._trackMixSlotGuards = {};
+    node._pendingTrackMixSlotRestore = null;
+    node._trackQueueRuntime = {};
+    node._trackSeqLoop = {};
+    node._cfState = null;
+    node._seqIdx = null;
+    node._seqStates = null;
+    node._lastEventCheckTime = 0;
+
+    if (node.state) {
+        try { node.state.clearTracks(); } catch (e) {}
+    }
+    if (node.skeleton) {
+        try { node.skeleton.setToSetupPose(); } catch (e) {}
+        try {
+            if (node.state) {
+                node.state.update(0);
+                node.state.apply(node.skeleton);
+            }
+            node.skeleton.updateWorldTransform(node._physParam);
+        } catch (e) {}
+    }
+    node._dirty = true;
+    SMData._forceRedraw = true;
+};
+
 SMTool._applyTracksToState = function (node) {
     if (!node.state || !node.skeletonData) return;
 
@@ -547,13 +578,14 @@ SMTool._applyTracksToState = function (node) {
         SMTool._initDefaultTracks(node);
     }
 
+    // 普通模式必须从干净的 Setup Pose 开始，否则轨道模式未被新动画控制的
+    // 骨骼、Slot 或 Attachment 会残留在画面中。
+    SMTool._clearAnimationModeRuntime(node);
     var state = node.state;
     var is4x = (node._spineVer === '4.3' || node._spineVer === '4.2');
 
     // ★ 先应用过渡表，确保同轨动画切换有平滑过渡
     SMTool._applyMixTable(node);
-
-    state.clearTracks();
 
     var prevAnim = {};  // 记录每个轨道上一次的动画名，用于后续设置过渡
 
@@ -589,6 +621,11 @@ SMTool._applyTracksToState = function (node) {
     if (node.tracks.length > 0) {
         node.currentAnim = node.tracks[0].animName;
         node.loop = node.tracks[0].loop !== false;
+    }
+    if (node.skeleton) {
+        state.update(0);
+        state.apply(node.skeleton);
+        node.skeleton.updateWorldTransform(node._physParam);
     }
     node._dirty = true;
     SMData._forceRedraw = true;
@@ -701,6 +738,53 @@ SMTool._sanitizeTrackSequenceAnimations = function (owner, seq) {
         out.push({ name: a.name, mixOut: mix });
     }
     return out;
+};
+
+// 读取动画时长（秒）。该函数只读，不修改节点或 Runtime 状态。
+SMTool._animationDurationSeconds = function (owner, animationName) {
+    if (!owner || !animationName) return 0;
+    var data = owner.skeletonData || owner._skeletonData;
+    var lists = [];
+    if (data && data.animations) lists.push(data.animations);
+    if (owner.animations && (!data || owner.animations !== data.animations)) lists.push(owner.animations);
+    for (var li = 0; li < lists.length; li++) {
+        var list = lists[li] || [];
+        for (var i = 0; i < list.length; i++) {
+            if (list[i] && list[i].name === animationName) {
+                var duration = Number(list[i].duration);
+                return isFinite(duration) && duration > 0 ? duration : 0;
+            }
+        }
+    }
+    return 0;
+};
+
+// 一条 UI 轨道完成一轮序列所需的真实时间。
+// mixOut 表示当前动画结束前多少秒开始下一动画，因此总时长需要扣除重叠区间。
+SMTool._trackSequenceDurationSeconds = function (owner, seq) {
+    if (!seq || seq.enabled === false) return 0;
+    var animations = SMTool._sanitizeTrackSequenceAnimations(owner, seq);
+    if (animations.length === 0) return 0;
+    var total = SMTool._animationDurationSeconds(owner, animations[0].name);
+    for (var i = 1; i < animations.length; i++) {
+        var previousDuration = SMTool._animationDurationSeconds(owner, animations[i - 1].name);
+        var currentDuration = SMTool._animationDurationSeconds(owner, animations[i].name);
+        var overlap = Math.max(0, Number(animations[i - 1].mixOut) || 0);
+        overlap = Math.min(overlap, previousDuration);
+        total += Math.max(0, currentDuration - overlap);
+    }
+    return Math.max(0, total);
+};
+
+// 多条轨道同时播放，节点一轮时长取所有启用轨道中的最大值。
+SMTool._trackNodeDurationSeconds = function (owner) {
+    if (!owner || !owner._trackMode) return 0;
+    var seqs = owner._trackSequence || [];
+    var maxDuration = 0;
+    for (var i = 0; i < seqs.length; i++) {
+        maxDuration = Math.max(maxDuration, SMTool._trackSequenceDurationSeconds(owner, seqs[i]));
+    }
+    return maxDuration;
 };
 
 // 追加一个完整循环周期。调用前，当前队列尾部必须是本序列的最后一个动画。

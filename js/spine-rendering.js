@@ -1363,18 +1363,32 @@ SMTool._destroyAnimPreview = function () {
 
     // ★ 销毁层级节点预览的多层骨架资源
     if (pp._layerSkeletons) {
-        for (var ls = 0; ls < pp._layerSkeletons.length; ls++) {
-            var lsk = pp._layerSkeletons[ls];
-            if (lsk.batcher) { try { lsk.batcher.dispose(); } catch (e) {} }
-            if (lsk.shader) { try { lsk.shader.dispose(); } catch (e) {} }
-            if (lsk.skeletonRenderer) { try { lsk.skeletonRenderer.dispose(); } catch (e) {} }
-            if (lsk.glTextures) {
-                for (var gt = 0; gt < lsk.glTextures.length; gt++) {
-                    try { lsk.glTextures[gt].dispose(); } catch (e) {}
+        var disposedLayerEntries = new Set();
+        var _disposeLayerEntry = function (entry) {
+            if (!entry || disposedLayerEntries.has(entry)) return;
+            disposedLayerEntries.add(entry);
+            var chain = entry._chainSkeletons || [];
+            for (var ci = 0; ci < chain.length; ci++) {
+                if (chain[ci] !== entry) _disposeLayerEntry(chain[ci]);
+            }
+            var nested = entry._nestedLayerSkeletons || [];
+            for (var ni = 0; ni < nested.length; ni++) _disposeLayerEntry(nested[ni]);
+            if (entry.state) { try { entry.state.clearTracks(); } catch (e) {} }
+            if (entry.sceneRenderer) { try { entry.sceneRenderer.dispose(); } catch (e) {} }
+            if (entry.batcher) { try { entry.batcher.dispose(); } catch (e) {} }
+            if (entry.shader) { try { entry.shader.dispose(); } catch (e) {} }
+            if (entry.skeletonRenderer) { try { entry.skeletonRenderer.dispose(); } catch (e) {} }
+            if (entry.glTextures) {
+                for (var gt = 0; gt < entry.glTextures.length; gt++) {
+                    try { entry.glTextures[gt].dispose(); } catch (e) {}
                 }
             }
+        };
+        for (var ls = 0; ls < pp._layerSkeletons.length; ls++) {
+            _disposeLayerEntry(pp._layerSkeletons[ls]);
         }
         pp._layerSkeletons = null;
+        SMTool._layerManagedContexts4x = null;
     }
     pp._layerPreview = false;
     pp._layerPosMode = null;
@@ -1382,6 +1396,14 @@ SMTool._destroyAnimPreview = function () {
     if (pp._singleLoopTimer) { clearTimeout(pp._singleLoopTimer); pp._singleLoopTimer = null; }
     if (pp._loopRestartTimer) { clearTimeout(pp._loopRestartTimer); pp._loopRestartTimer = null; }
     // ★★ 清理嵌套播放树缓存
+    if (pp._subtreeCache && typeof _disposeLayerEntry === 'function') {
+        var subtreeKeys = Object.keys(pp._subtreeCache);
+        for (var sti = 0; sti < subtreeKeys.length; sti++) {
+            var cachedTree = pp._subtreeCache[subtreeKeys[sti]];
+            var cachedSkeletons = cachedTree && cachedTree.skeletons ? cachedTree.skeletons : [];
+            for (var csi = 0; csi < cachedSkeletons.length; csi++) _disposeLayerEntry(cachedSkeletons[csi]);
+        }
+    }
     pp._subtreeCache = {};
     pp._playbackTree = null;
     pp._layerPlaybackState = null;

@@ -1,0 +1,307 @@
+
+Character.png
+size: 2007,685
+format: RGBA8888
+filter: Linear,Linear
+repeat: none
+BG_Declare/Bubble
+  rotate: false
+  xy: 1076, 26
+  size: 134, 133
+  orig: 136, 136
+  offset: 1, 2
+  index: -1
+BG_Declare/FX_Exp_Light
+  rotate: false
+  xy: 1219, 154
+  size: 206, 119
+  orig: 218, 128
+  offset: 6, 4
+  index: -1
+BG_Declare/FX_Glow
+  rotate: false
+  xy: 1885, 64
+  size: 53, 53
+  orig: 75, 75
+  offset: 11, 11
+  index: -1
+BG_Declare/FX_Light
+  rotate: true
+  xy: 691, 6
+  size: 204, 212
+  orig: 218, 228
+  offset: 7, 8
+  index: -1
+BG_Declare/Fx_Star4
+  rotate: false
+  xy: 1736, 8
+  size: 89, 84
+  orig: 100, 100
+  offset: 6, 8
+  index: -1
+BG_Declare/Star_20
+  rotate: false
+  xy: 1940, 71
+  size: 44, 43
+  orig: 70, 70
+  offset: 13, 14
+  index: -1
+Character/Star_20
+  rotate: false
+  xy: 1940, 71
+  size: 44, 43
+  orig: 70, 70
+  offset: 13, 14
+  index: -1
+Character/BG_Person_Glow
+  rotate: true
+  xy: 1456, 276
+  size: 167, 226
+  orig: 167, 226
+  offset: 0, 0
+  index: -1
+Character/Cornucopia
+  rotate: false
+  xy: 1324, 445
+  size: 374, 238
+  orig: 374, 238
+  offset: 0, 0
+  index: -1
+Character/Cornucopia_01
+  rotate: false
+  xy: 407, 14
+  size: 215, 30
+  orig: 219, 31
+  offset: 2, 0
+  index: -1
+Character/FX_Light_BG
+  rotate: false
+  xy: 905, 168
+  size: 218, 228
+  orig: 218, 228
+  offset: 0, 0
+  index: -1
+Character/FX_Light_Spot_1
+  rotate: false
+  xy: 1954, 116
+  size: 51, 48
+  orig: 70, 70
+  offset: 11, 11
+  index: -1
+Character/FX_Rainbow1
+  rotate: true
+  xy: 1639, 107
+  size: 49, 102
+  orig: 64, 128
+  offset: 4, 11
+  index: -1
+Character/FX_Rainbow_2
+  rotate: false
+  xy: 1484, 122
+  size: 153, 152
+  orig: 168, 167
+  offset: 7, 7
+  index: -1
+Character/FX_Spotlight
+  rotate: true
+  xy: 1887, 119
+  size: 45, 65
+  orig: 58, 92
+  offset: 7, 17
+  index: -1
+Character/Gold_coins
+  rotate: false
+  xy: 624, 15
+  size: 49, 29
+  orig: 49, 29
+  offset: 0, 0
+  index: -1
+Character/Gold_coins_A
+  rotate: false
+  xy: 464, 212
+  size: 398, 159
+  orig: 404, 164
+  offset: 1, 1
+  index: -1
+Character/Gold_coins_B
+  rotate: false
+  xy: 2, 5
+  size: 403, 224
+  orig: 405, 227
+  offset: 1, 1
+  index: -1
+Character/Gold_coins_C
+  rotate: false
+  xy: 464, 373
+  size: 422, 310
+  orig: 424, 313
+  offset: 1, 1
+  index: -1
+Character/Light_Spot_4
+  rotate: true
+  xy: 1637, 14
+  size: 91, 97
+  orig: 128, 128
+  offset: 19, 16
+  index: -1
+Character/Purple_gemstone
+  rotate: true
+  xy: 1743, 94
+  size: 62, 40
+  orig: 65, 47
+  offset: 2, 4
+  index: -1
+Character/Rainbow_04
+  rotate: true
+  xy: 1372, 32
+  size: 120, 110
+  orig: 128, 128
+  offset: 4, 9
+  index: -1
+Character/Sapphire
+  rotate: true
+  xy: 1885, 10
+  size: 52, 53
+  orig: 57, 57
+  offset: 4, 1
+  index: -1
+Character/Yuanbao
+  rotate: false
+  xy: 1639, 158
+  size: 144, 111
+  orig: 146, 113
+  offset: 1, 1
+  index: -1
+Character/arm_a1_L_01
+  rotate: true
+  xy: 407, 46
+  size: 164, 282
+  orig: 164, 282
+  offset: 0, 0
+  index: -1
+Character/arm_a2_R_01
+  rotate: true
+  xy: 1700, 520
+  size: 163, 296
+  orig: 163, 296
+  offset: 0, 0
+  index: -1
+Character/belts
+  rotate: true
+  xy: 1125, 161
+  size: 235, 92
+  orig: 235, 92
+  offset: 0, 0
+  index: -1
+Character/body_1
+  rotate: false
+  xy: 1684, 271
+  size: 181, 165
+  orig: 181, 165
+  offset: 0, 0
+  index: -1
+Character/body_2
+  rotate: false
+  xy: 1219, 275
+  size: 235, 168
+  orig: 235, 168
+  offset: 0, 0
+  index: -1
+Character/brow_L
+  rotate: true
+  xy: 1427, 181
+  size: 92, 47
+  orig: 95, 49
+  offset: 2, 1
+  index: -1
+Character/brow_R
+  rotate: false
+  xy: 1785, 108
+  size: 92, 54
+  orig: 96, 57
+  offset: 2, 2
+  index: -1
+Character/cap_1
+  rotate: false
+  xy: 888, 447
+  size: 434, 236
+  orig: 434, 236
+  offset: 0, 0
+  index: -1
+Character/cap_2
+  rotate: false
+  xy: 1700, 438
+  size: 293, 80
+  orig: 296, 83
+  offset: 1, 1
+  index: -1
+Character/cap_3_R
+  rotate: true
+  xy: 905, 7
+  size: 159, 169
+  orig: 161, 171
+  offset: 1, 1
+  index: -1
+Character/cap_4_R
+  rotate: true
+  xy: 1867, 273
+  size: 163, 122
+  orig: 163, 122
+  offset: 0, 0
+  index: -1
+Character/face
+  rotate: false
+  xy: 2, 231
+  size: 460, 452
+  orig: 460, 452
+  offset: 0, 0
+  index: -1
+Character/mouth
+  rotate: false
+  xy: 1484, 20
+  size: 151, 100
+  orig: 151, 100
+  offset: 0, 0
+  index: -1
+Character/mustache_L
+  rotate: true
+  xy: 1785, 164
+  size: 105, 100
+  orig: 105, 100
+  offset: 0, 0
+  index: -1
+Character/mustache_R
+  rotate: false
+  xy: 1887, 166
+  size: 105, 105
+  orig: 105, 105
+  offset: 0, 0
+  index: -1
+Character/palm_a_L_01
+  rotate: true
+  xy: 1212, 37
+  size: 115, 158
+  orig: 115, 158
+  offset: 0, 0
+  index: -1
+Character/shadow
+  rotate: false
+  xy: 888, 398
+  size: 299, 47
+  orig: 309, 54
+  offset: 5, 2
+  index: -1
+Character/shoe_R
+  rotate: true
+  xy: 1827, 26
+  size: 80, 56
+  orig: 80, 56
+  offset: 0, 0
+  index: -1
+FX/Add_Point_2
+  rotate: false
+  xy: 1076, 2
+  size: 22, 22
+  orig: 40, 40
+  offset: 9, 9
+  index: -1

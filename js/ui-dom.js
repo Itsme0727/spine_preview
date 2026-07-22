@@ -585,16 +585,15 @@ SMTool._toggleTrackMode = function (nid) {
     var node = SMData.nodes.get(nid);
     if (!node || node.nodeType !== 'spine') return;
 
-    node._trackMode = !node._trackMode;
+    var nextTrackMode = !node._trackMode;
+    // 在改变模式标记之前销毁旧模式的全部 Runtime 表现，配置本身仍保留。
+    SMTool._clearAnimationModeRuntime(node);
+    node._trackMode = nextTrackMode;
 
     if (node._trackMode) {
         SMTool._initDefaultTrackSequence(node);
         if (node.state) SMTool._applyTrackSequence(node);
     } else {
-        node._cfState = null;
-        node._seqIdx = null;
-        node._trackQueueRuntime = null;
-        node._seqStates = null;
         if (node.state) {
             SMTool._initDefaultTracks(node);
             SMTool._applyTracksToState(node);
@@ -608,6 +607,13 @@ SMTool._toggleTrackMode = function (nid) {
 
     if (SMData._animPreview.visible && SMData._animPreview.nodeId === nid) {
         SMTool._initAnimPreview(node);
+    } else if (SMData._animPreview.visible && SMData._layerAllChainNodes && SMData._layerAllChainNodes.has(nid)) {
+        // 并行预览使用独立 Skeleton/AnimationState 克隆；原节点切换模式后必须整体重建，
+        // 否则浮窗仍会继续显示旧模式的轨道队列。
+        var activeLayerNode = SMData.nodes.get(SMData._animPreview.nodeId);
+        if (activeLayerNode && activeLayerNode.nodeType === 'layer' && typeof SMTool._showLayerPreview === 'function') {
+            SMTool._showLayerPreview(activeLayerNode);
+        }
     }
     if (typeof SMTool._syncLayerAnim === 'function') SMTool._syncLayerAnim(nid);
     SMTool._syncFlowPathAnim(nid, node.currentAnim);
@@ -6112,23 +6118,8 @@ SMTool._playFullStep = function () {
     } else if (spineNode && spineNode.nodeType === 'loop') {
         duration = 0;  // ★ 大循环节点：立即触发
     } else if (spineNode && spineNode._trackMode && spineNode._trackSequence && spineNode._trackSequence.length > 0) {
-        // ★ 轨道动画模式：计算序列链的真实总时长（各轨道同时播放，取最长的）
-        var maxTrackDur = 0;
-        for (var tsi3 = 0; tsi3 < spineNode._trackSequence.length; tsi3++) {
-            var tseq3 = spineNode._trackSequence[tsi3];
-            if (!tseq3.enabled) continue;
-            var trackDur = 0;
-            for (var aij = 0; aij < (tseq3.animations || []).length; aij++) {
-                var anmName = tseq3.animations[aij].name;
-                for (var di2 = 0; di2 < spineNode.skeletonData.animations.length; di2++) {
-                    if (spineNode.skeletonData.animations[di2].name === anmName) {
-                        trackDur += spineNode.skeletonData.animations[di2].duration;
-                        break;
-                    }
-                }
-            }
-            if (trackDur > maxTrackDur) maxTrackDur = trackDur;
-        }
+        // 轨道同时播放，且相邻动画的混合区间会发生时间重叠。
+        var maxTrackDur = SMTool._trackNodeDurationSeconds(spineNode);
         duration = (maxTrackDur > 0 ? maxTrackDur : 1) * 1000;
     } else if (spineNode && spineNode.skeletonData) {
         for (var di = 0; di < spineNode.skeletonData.animations.length; di++) {

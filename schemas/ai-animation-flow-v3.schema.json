@@ -1,0 +1,289 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spine-preview.local/schemas/ai-animation-flow-v3.schema.json",
+  "title": "Spine Preview AI Animation Flow Exchange Format v3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "formatVersion",
+    "metadata",
+    "units",
+    "coordinateSystem",
+    "resourcePackaging",
+    "resources",
+    "canvas",
+    "graph",
+    "executionModel",
+    "parallelCompositions",
+    "gameProtocol",
+    "readableFlowSummaries",
+    "reconstructionGuide",
+    "validation"
+  ],
+  "properties": {
+    "format": { "const": "spine-preview-ai-animation-flow" },
+    "formatVersion": { "const": "3.0.0" },
+    "schema": { "type": "string" },
+    "metadata": {
+      "type": "object",
+      "required": ["generatedAt", "generator", "purpose"],
+      "properties": {
+        "generatedAt": { "type": "string", "format": "date-time" },
+        "generator": { "type": "string" },
+        "language": { "type": "string" },
+        "purpose": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "units": { "type": "object", "additionalProperties": true },
+    "coordinateSystem": { "type": "object", "additionalProperties": true },
+    "resourcePackaging": {
+      "type": "object",
+      "required": ["mode", "binaryPayloadsIncludedInJson", "exactReconstructionRequirement"],
+      "properties": {
+        "mode": { "enum": ["external-companion-files", "embedded"] },
+        "binaryPayloadsIncludedInJson": { "type": "boolean" },
+        "exactReconstructionRequirement": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "resources": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/resource" }
+    },
+    "canvas": {
+      "type": "object",
+      "required": ["view", "showGrid", "renderMode", "flowMode", "groups"],
+      "properties": {
+        "view": {
+          "type": "object",
+          "required": ["x", "y", "zoom"],
+          "properties": {
+            "x": { "type": "number" },
+            "y": { "type": "number" },
+            "zoom": { "type": "number", "exclusiveMinimum": 0 }
+          },
+          "additionalProperties": true
+        },
+        "showGrid": { "type": "boolean" },
+        "renderMode": { "type": "string" },
+        "flowMode": { "type": "string" },
+        "groups": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/group" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "graph": {
+      "type": "object",
+      "required": ["nodes", "edges", "entryNodeIds", "exitNodeIds"],
+      "properties": {
+        "nodes": { "type": "array", "items": { "$ref": "#/$defs/node" } },
+        "edges": { "type": "array", "items": { "$ref": "#/$defs/edge" } },
+        "entryNodeIds": { "type": "array", "items": { "type": "string" } },
+        "exitNodeIds": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "executionModel": { "type": "object", "additionalProperties": { "type": "string" } },
+    "parallelCompositions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/parallelComposition" }
+    },
+    "gameProtocol": {
+      "type": "object",
+      "required": ["protocolName", "protocolVersion", "coverage", "entities", "states", "transitions", "events", "bindings", "runtimeRules"],
+      "properties": {
+        "protocolName": { "const": "AI Game Animation Protocol" },
+        "protocolVersion": { "type": "string" },
+        "coverage": { "type": "object", "additionalProperties": { "type": "string" } },
+        "entities": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+        "states": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+        "transitions": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+        "events": { "type": "object", "additionalProperties": true },
+        "bindings": { "type": "object", "additionalProperties": true },
+        "runtimeRules": { "type": "object", "additionalProperties": true }
+      },
+      "additionalProperties": false
+    },
+    "readableFlowSummaries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["flowIndex", "nodeIds", "edgeIds", "isCycle", "expression"],
+        "properties": {
+          "flowIndex": { "type": "integer", "minimum": 1 },
+          "nodeIds": { "type": "array", "items": { "type": "string" } },
+          "edgeIds": { "type": "array", "items": { "type": "string" } },
+          "isCycle": { "type": "boolean" },
+          "cycleReturnsToNodeId": { "type": ["string", "null"] },
+          "expression": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "reconstructionGuide": { "type": "object", "additionalProperties": true },
+    "validation": {
+      "type": "object",
+      "required": ["status", "diagnostics"],
+      "properties": {
+        "status": { "enum": ["not-run", "valid", "valid-with-warnings", "invalid"] },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["severity", "code", "message"],
+            "properties": {
+              "severity": { "enum": ["info", "warning", "error"] },
+              "code": { "type": "string" },
+              "message": { "type": "string" },
+              "nodeId": { "type": "string" },
+              "edgeId": { "type": "string" }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "resource": {
+      "type": "object",
+      "required": ["id", "kind", "logicalName", "spineVersion", "skeletonFormat", "files", "availability", "loadingContract"],
+      "properties": {
+        "id": { "type": "string" },
+        "kind": { "const": "spine-skeleton-package" },
+        "logicalName": { "type": "string" },
+        "spineVersion": { "type": "string" },
+        "skeletonFormat": { "enum": ["json", "binary-skel"] },
+        "files": { "type": "object", "additionalProperties": true },
+        "availability": { "type": "object", "additionalProperties": { "type": "boolean" } },
+        "loadingContract": { "type": "object", "additionalProperties": { "type": "boolean" } }
+      },
+      "additionalProperties": false
+    },
+    "group": {
+      "type": "object",
+      "required": ["id", "originalCanvasId", "title", "color", "nodeIds"],
+      "properties": {
+        "id": { "type": "string" },
+        "originalCanvasId": { "type": ["integer", "string"] },
+        "title": { "type": "string" },
+        "color": { "type": "string" },
+        "sortIndex": { "type": ["string", "null"] },
+        "nodeIds": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "node": {
+      "type": "object",
+      "required": ["id", "originalCanvasId", "type", "name", "displayName", "canvas", "runtimeTransform", "semantics"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^node:" },
+        "originalCanvasId": { "type": ["integer", "string"] },
+        "type": { "type": "string" },
+        "name": { "type": "string" },
+        "displayName": { "type": "string" },
+        "canvas": {
+          "type": "object",
+          "required": ["positionPixels", "scale", "groupId"],
+          "properties": {
+            "positionPixels": { "$ref": "#/$defs/point" },
+            "scale": { "type": "number" },
+            "groupId": { "type": ["string", "null"] }
+          },
+          "additionalProperties": false
+        },
+        "runtimeTransform": {
+          "type": "object",
+          "required": ["authored", "position", "rotationDegrees", "scale", "anchorNormalized", "sortingLayer", "editorCanvasFallback"],
+          "properties": {
+            "authored": { "type": "boolean" },
+            "position": { "type": ["object", "null"] },
+            "rotationDegrees": { "type": ["number", "null"] },
+            "scale": { "type": ["object", "number", "null"] },
+            "anchorNormalized": { "type": ["object", "null"] },
+            "sortingLayer": { "type": ["string", "number", "null"] },
+            "editorCanvasFallback": { "$ref": "#/$defs/point" }
+          },
+          "additionalProperties": false
+        },
+        "semantics": {
+          "type": "object",
+          "required": ["kind"],
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "edge": {
+      "type": "object",
+      "required": ["id", "originalCanvasId", "from", "to", "condition", "visual"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^edge:" },
+        "originalCanvasId": { "type": ["integer", "string"] },
+        "from": { "$ref": "#/$defs/edgeEndpointFrom" },
+        "to": { "$ref": "#/$defs/edgeEndpointTo" },
+        "condition": {
+          "type": "object",
+          "required": ["kind", "raw", "ast", "evaluationContract"],
+          "properties": {
+            "kind": { "enum": ["always", "user-authored-expression"] },
+            "raw": { "type": "string" },
+            "ast": { "type": ["object", "array", "null"] },
+            "evaluationContract": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "visual": { "type": "object", "additionalProperties": true }
+      },
+      "additionalProperties": false
+    },
+    "edgeEndpointFrom": {
+      "type": "object",
+      "required": ["nodeId", "port", "parallelLayerNumber"],
+      "properties": {
+        "nodeId": { "type": "string" },
+        "port": { "type": "string" },
+        "parallelLayerNumber": { "type": ["integer", "null"], "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "edgeEndpointTo": {
+      "type": "object",
+      "required": ["nodeId", "port"],
+      "properties": {
+        "nodeId": { "type": "string" },
+        "port": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "parallelComposition": {
+      "type": "object",
+      "required": ["id", "nodeId", "scheduling", "completionBarrier", "zOrderRule", "positionRule", "layers", "recursiveExecutionTree"],
+      "properties": {
+        "id": { "type": "string" },
+        "nodeId": { "type": "string" },
+        "scheduling": { "type": "string" },
+        "completionBarrier": { "type": "string" },
+        "zOrderRule": { "type": "string" },
+        "positionRule": { "type": "string" },
+        "layers": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+        "recursiveExecutionTree": { "type": ["object", "null"], "additionalProperties": true }
+      },
+      "additionalProperties": false
+    },
+    "point": {
+      "type": "object",
+      "required": ["x", "y"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

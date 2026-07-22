@@ -2088,15 +2088,19 @@ SMTool._processImportJson = function (jsonText, fileHandle) {
             // 恢复 WebGL 渲染
             if (node._srcAtlasText && (node._srcTexDataUrl || (node._srcTexDataUrls && node._srcTexDataUrls.length > 0)) &&
                 (node._srcSkelJson || node._srcSkelBinBase64)) {
-                SMTool._loadFromSourceData(node).then(function () {
-                    SMTool._updateEl(node);
-                    // ★ 轨道模式：恢复后应用序列
-                    if (node._trackMode && node.state) {
-                        SMTool._applyTrackSequence(node);
-                    }
-                }).catch(function (err) {
-                    console.error('[Import] Failed to restore rendering:', err);
-                });
+                // var 是函数作用域；必须为每个异步加载保存独立节点引用，
+                // 否则所有回调都会错误地操作循环中的最后一个节点。
+                (function (restoringNode) {
+                    SMTool._loadFromSourceData(restoringNode).then(function () {
+                        SMTool._updateEl(restoringNode);
+                        // ★ 轨道模式：恢复后应用序列
+                        if (restoringNode._trackMode && restoringNode.state) {
+                            SMTool._applyTrackSequence(restoringNode);
+                        }
+                    }).catch(function (err) {
+                        console.error('[Import] Failed to restore rendering for node #' + restoringNode.id + ':', err);
+                    });
+                })(node);
             }
         }
 
