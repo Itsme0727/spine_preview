@@ -88,8 +88,14 @@ var SMData = {
         activePathIdx: -1,   // 当前播放的路径索引
         currentStep: 0,      // 当前播放到第几个节点
         isPlaying: false,
+        _isPaused: false,
         _stepped: false,     // 是否手动导航过（prev/next）
-        _timer: null
+        _timer: null,        // 兼容旧工程；统一帧时钟启用后不再用于步骤推进
+        _runToken: 0,
+        _clockStep: -1,
+        _stepElapsed: 0,
+        _stepDuration: 0,
+        _clockMode: 'idle'
     },
 
     // ---- 撤销/重做 ----
@@ -150,6 +156,7 @@ var SMData = {
         _physParam: null,     // 物理参数
         _lastTime: 0,         // 上一帧时间
         _loopRestartGuard: false,  // ★ 循环重启防重入
+        _playbackOwner: null, // {type:'single'|'parallel'|'flow', ...}，浮窗控制按钮的唯一归属依据
 
         // ★★ 嵌套并行播放状态（金字塔模型）
         // activeTreeNodeId: 当前在浮窗面板中渲染的树节点 ID
@@ -787,6 +794,38 @@ SMTool._trackNodeDurationSeconds = function (owner) {
     return maxDuration;
 };
 
+// 为“只播放一轮”的运行上下文创建轨道序列视图。
+// 不能只把 TrackEntry.loop 改为 false：原始构建器可能已经按 loopSeq 预排了下一整轮。
+SMTool._finiteTrackSequences = function (seqs) {
+    var source = seqs || [];
+    var result = [];
+    for (var i = 0; i < source.length; i++) {
+        var seq = source[i];
+        if (!seq) {
+            result.push(seq);
+            continue;
+        }
+        var copy = {};
+        for (var key in seq) {
+            if (Object.prototype.hasOwnProperty.call(seq, key)) copy[key] = seq[key];
+        }
+        copy.loopSeq = false;
+        if (seq.animations) {
+            copy.animations = [];
+            for (var ai = 0; ai < seq.animations.length; ai++) {
+                var anim = seq.animations[ai];
+                var animCopy = {};
+                for (var animKey in anim) {
+                    if (Object.prototype.hasOwnProperty.call(anim, animKey)) animCopy[animKey] = anim[animKey];
+                }
+                copy.animations.push(animCopy);
+            }
+        }
+        result.push(copy);
+    }
+    return result;
+};
+
 // 追加一个完整循环周期。调用前，当前队列尾部必须是本序列的最后一个动画。
 SMTool._appendNativeSequenceCycle = function (owner, state, trackIndex, runtimeInfo, seq, spineVer) {
     if (!runtimeInfo || !runtimeInfo.animations || runtimeInfo.animations.length < 2) return;
@@ -1120,11 +1159,12 @@ SMTool._applyTrackMixSlotGuard = function (owner, state, skeleton) {
 };
 
 // ★ 将全部轨道序列配置应用到 Spine AnimationState。
-SMTool._applyTrackSequence = function (node) {
+SMTool._applyTrackSequence = function (node, options) {
     if (!node.state || !node._trackMode) return;
 
     var state = node.state;
     var seqs = node._trackSequence || [];
+    var buildSeqs = options && options.finitePass ? SMTool._finiteTrackSequences(seqs) : seqs;
     SMTool._restoreTrackMixSlotGuard(node);
     node._trackMixSlotGuards = {};
     if (node.skeleton) node.skeleton.setToSetupPose();
@@ -1133,9 +1173,9 @@ SMTool._applyTrackSequence = function (node) {
     node._cfState = null; // 兼容旧工程字段：彻底停用双轨淡入淡出状态机。
     node._seqIdx = null;
 
-    for (var ti = 0; ti < seqs.length; ti++) {
-        SMTool._buildNativeTrackSequence(node, state, seqs, node._spineVer, ti, false);
-        node._trackSeqLoop[ti] = !!(seqs[ti] && seqs[ti].loopSeq !== false);
+    for (var ti = 0; ti < buildSeqs.length; ti++) {
+        SMTool._buildNativeTrackSequence(node, state, buildSeqs, node._spineVer, ti, false);
+        node._trackSeqLoop[ti] = !!(buildSeqs[ti] && buildSeqs[ti].loopSeq !== false);
     }
 
     if (node.skeleton) {

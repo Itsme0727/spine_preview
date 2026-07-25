@@ -310,7 +310,11 @@ SMTool._loop = function (now) {
     SMTool._fc++;
 
     var gl = SMTool._sharedGL;
-    if (!gl) return;
+    if (!gl) {
+        SMTool._renderAnimPreview(now);
+        if (typeof SMTool._tickFullPlayback === 'function') SMTool._tickFullPlayback(dt, now);
+        return;
+    }
 
     var WGL38 = window.spine38 && window.spine38.webgl;
     var sharedCanvas = SMTool._sharedCanvas;
@@ -363,6 +367,8 @@ SMTool._loop = function (now) {
         }
         SMTool._renderSnapLines();
         if ((SMTool._fc & 3) === 0) SMTool._renderMinimap();
+        SMTool._renderAnimPreview(now);
+        if (typeof SMTool._tickFullPlayback === 'function') SMTool._tickFullPlayback(dt, now);
         return;
     }
     hasVisibleNode = false; // 重置，后续真正遍历时再标记
@@ -662,7 +668,12 @@ SMTool._loop = function (now) {
     SMTool._renderSnapLines();
     // ★ 优化：鸟瞰图每 4 帧渲染一次（约 15fps），减少 2D canvas 开销
     if ((SMTool._fc & 3) === 0) SMTool._renderMinimap();
+    // 浮窗先消费本帧时间，再由唯一的完整流程时钟决定是否切步。
+    // 若本帧到达流程边界，切步函数会同步覆盖浮窗为下一轮第 0 帧。
     SMTool._renderAnimPreview(now);
+    if (typeof SMTool._tickFullPlayback === 'function') {
+        SMTool._tickFullPlayback(dt, now);
+    }
 };
 
 // ---- 缩放 ----
@@ -705,6 +716,7 @@ SMTool._initAnimPreview = function (node) {
 
     // 先销毁旧预览
     SMTool._destroyAnimPreview();
+    var previewInitToken = pp._initToken;
 
     // ================================================================
     // 🔒🔒🔒 [LOCK-B] 阻止渲染循环在 setup 完成前绘制
@@ -830,6 +842,8 @@ SMTool._initAnimPreview = function (node) {
     // 🔒 [LOCK-2] END
 
     function doSetup() {
+        // 图片异步加载期间如果已切换模式/节点，旧初始化任务必须静默失效。
+        if (pp._initToken !== previewInitToken) return;
         try {
             var atlas;
             if (useVer === '4.3' || useVer === '4.2') {
@@ -1022,8 +1036,13 @@ SMTool._initAnimPreview = function (node) {
                             break;
                         }
                     }
-                    // 重置回时间 0
-                    if (entry2) { entry2.trackTime = 0; }
+                    // 重置回真正的第 0 帧。仅修改 trackTime 不足以清除中间采样留下的、
+                    // 在第 0 帧没有关键帧的骨骼/插槽属性，必须先恢复 setup pose。
+                    sk.setToSetupPose();
+                    for (var resetTi = 0; resetTi < 10; resetTi++) {
+                        var resetEntry = state.getCurrent(resetTi);
+                        if (resetEntry) resetEntry.trackTime = 0;
+                    }
                     state.apply(sk);
                     if (foundBounds2) {
                         sk.x = cw / 2 - (animOff2.x + animSize2.x / 2);
@@ -1054,7 +1073,12 @@ SMTool._initAnimPreview = function (node) {
             // ================================================================
             pp.visible = true;
             pp._readyToRender = true;
+            // 同步首绘必须严格保持在第 0 帧；下一次 RAF 才开始推进时间。
+            var wasFlowFrozen = !!pp._flowFrozen;
+            pp._flowFrozen = true;
             SMTool._renderAnimPreview(performance.now());
+            pp._flowFrozen = wasFlowFrozen;
+            pp._lastTime = performance.now();
             // 🔒 [LOCK-D] END
 
             // 更新面板标题
@@ -1161,12 +1185,20 @@ SMTool._renderAnimPreview = function (now) {
 
     // ★ 预览浮窗与主画布使用完全相同的 Spine 原生轨道队列。
     var ppTrackSource = pp.nodeId != null ? SMData.nodes.get(pp.nodeId) : null;
-    if (ppTrackSource && ppTrackSource._trackMode && ppTrackSource._trackSequence && !pp._flowFrozen) {
+    var fullPlayback = SMData._fullPlayback;
+    var previewOwner = pp._playbackOwner;
+    var flowOwnsPreviewClock = !!(previewOwner && previewOwner.type === 'flow' && fullPlayback &&
+        previewOwner.pathIdx === fullPlayback.activePathIdx &&
+        (fullPlayback.isPlaying || fullPlayback._isPaused));
+    var previewTrackHasExplicitLoop = ppTrackSource && ppTrackSource.loop !== false &&
+        !!(ppTrackSource._loopMode || (ppTrackSource._loopCount !== undefined && ppTrackSource._loopCount !== 1));
+    if (ppTrackSource && ppTrackSource._trackMode && ppTrackSource._trackSequence && !pp._flowFrozen &&
+        (!flowOwnsPreviewClock || previewTrackHasExplicitLoop)) {
         SMTool._maintainNativeTrackSequences(pp, pp.state, ppTrackSource._trackSequence, pp._spineVer);
     }
 
     // ★ 单节点动画播完后无缝从头重播（直接 setAnimation，不销毁重建）
-    if (!pp._flowFrozen && pp.state && !pp._layerSkeletons && !(ppTrackSource && ppTrackSource._trackMode)) {
+    if (!pp._flowFrozen && !flowOwnsPreviewClock && pp.state && !pp._layerSkeletons && !(ppTrackSource && ppTrackSource._trackMode)) {
         var trackEntry = pp.state.getCurrent(0);
         var isComplete = false;
         if (trackEntry) {
@@ -1345,6 +1377,7 @@ SMTool._resetAnimPreviewZoom = function () {
 SMTool._destroyAnimPreview = function () {
     var pp = SMData._animPreview;
     if (!pp) return;
+    pp._initToken = (pp._initToken || 0) + 1;
 
     // ================================================================
     // 🔒🔒🔒 [LOCK-A] 销毁预览时禁止 gl.clear()
@@ -1489,13 +1522,20 @@ SMTool._applyPreviewTracks = function (pp, previewState, stateData, skeletonData
     if (pp.skeleton) pp.skeleton.setToSetupPose();
 
     var tracks = sourceNode.tracks;
+    var previewFlowOwner = pp._playbackOwner && pp._playbackOwner.type === 'flow';
     if (!tracks || tracks.length === 0) {
         // 没有轨道配置 → 只播放 currentAnim
         var anim = sourceNode.currentAnim || (sourceNode.animations[0] && sourceNode.animations[0].name) || '';
         if (anim) {
-            previewState.setAnimation(0, anim, sourceNode.loop !== false);
+            var noTrackLoopMode = sourceNode.loop !== false &&
+                !!(sourceNode._loopMode || (sourceNode._loopCount !== undefined && sourceNode._loopCount !== 1));
+            previewState.setAnimation(0, anim,
+                previewFlowOwner ? noTrackLoopMode : sourceNode.loop !== false);
         }
         pp.animName = anim;
+        previewState.update(0);
+        previewState.apply(pp.skeleton);
+        pp.skeleton.updateWorldTransform(pp._physParam);
         return;
     }
 
@@ -1532,7 +1572,7 @@ SMTool._applyPreviewTracks = function (pp, previewState, stateData, skeletonData
     // ▲ flow 播放时强制不循环（flow 控制节奏）；非 flow 时跟随节点自身循环设置
     // ★ 但若源节点显式配置了循环模式（次数/时间），则让动画自然循环播放，
     //    由动画流定时器（timerDelay）控制何时推进到下一步，避免画面冻结。
-    if (SMData._fullPlayback && SMData._fullPlayback.isPlaying) {
+    if (previewFlowOwner) {
         var hasLoopMode = sourceNode.loop !== false && !!(sourceNode._loopMode || (sourceNode._loopCount !== undefined && sourceNode._loopCount !== 1));
         if (!hasLoopMode) {
             for (var ti = 0; ti < 10; ti++) {
@@ -1564,13 +1604,59 @@ SMTool._applyPreviewTrackSequence = function (pp, previewState, skeletonData, so
     pp._trackQueueRuntime = {};
     pp._cfState = null;
 
-    for (var ti = 0; ti < seqs.length; ti++) {
-        SMTool._buildNativeTrackSequence(pp, previewState, seqs, pp._spineVer, ti, false);
+    var flowControlsSequence = pp._playbackOwner && pp._playbackOwner.type === 'flow';
+    var sequenceHasExplicitLoop = sourceNode.loop !== false &&
+        !!(sourceNode._loopMode || (sourceNode._loopCount !== undefined && sourceNode._loopCount !== 1));
+    var previewBuildSequences = flowControlsSequence && !sequenceHasExplicitLoop ?
+        SMTool._finiteTrackSequences(seqs) : seqs;
+    for (var ti = 0; ti < previewBuildSequences.length; ti++) {
+        SMTool._buildNativeTrackSequence(pp, previewState, previewBuildSequences, pp._spineVer, ti, false);
     }
 
     previewState.update(0);
     previewState.apply(pp.skeleton);
     pp.skeleton.updateWorldTransform(pp._physParam);
+};
+
+// 流程切步专用：即使前后节点使用同一骨架、同一动画名，也必须清轨并重建第 0 帧。
+// 普通点击节点仍可沿用当前预览进度，不受此函数影响。
+SMTool._restartAnimPreviewStateAtZero = function (pp, sourceNode) {
+    if (!pp || !sourceNode || !pp.state || !pp.skeleton || !pp._skeletonData) return;
+    if (pp._singleLoopTimer) {
+        clearTimeout(pp._singleLoopTimer);
+        pp._singleLoopTimer = null;
+    }
+    pp._loopRestartGuard = false;
+    pp.nodeId = sourceNode.id;
+
+    if (sourceNode._trackMode && sourceNode._trackSequence && sourceNode._trackSequence.length > 0) {
+        SMTool._applyPreviewTrackSequence(pp, pp.state, pp._skeletonData, sourceNode);
+        pp.animName = sourceNode.currentAnim || '';
+    } else {
+        var stateData = new (SMTool._getSpineRuntime(pp._spineVer)).AnimationStateData(pp._skeletonData);
+        SMTool._applyPreviewTracks(pp, pp.state, stateData, pp._skeletonData, sourceNode);
+    }
+
+    // 再执行一次 setup→time0→apply，清除混合链或未设关键帧属性留下的上一节点姿态。
+    pp.skeleton.setToSetupPose();
+    for (var ti = 0; ti < 10; ti++) {
+        var entry = pp.state.getCurrent(ti);
+        if (entry) {
+            entry.trackTime = 0;
+            entry.timeScale = 1;
+        }
+    }
+    pp.state.update(0);
+    pp.state.apply(pp.skeleton);
+    pp.skeleton.updateWorldTransform(pp._physParam);
+    pp._lastTime = performance.now();
+
+    // 立即覆盖旧画布，且这次同步绘制不允许推进任何时间。
+    var wasFrozen = !!pp._flowFrozen;
+    pp._flowFrozen = true;
+    SMTool._renderAnimPreview(pp._lastTime);
+    pp._flowFrozen = wasFrozen;
+    pp._lastTime = performance.now();
 };
 
 // ---- 同步预览浮窗的 PMA 和皮肤到源节点状态 ----
@@ -3003,9 +3089,11 @@ SMTool._renderLayerPreviewBoneImages = function (pp) {
 
     // ★★ 递归渲染函数：处理一层（含嵌套子层）的所有骨架挂点图片
     var _renderSkeletonBoneImages = function (layerEntry) {
-        // 获取当前活跃的链骨架
-        var activeIdx = (layerEntry._chainSkeletons && layerEntry._chainSkeletons.length > 0) ? (layerEntry._chainIdx || 0) : -1;
-        var skeletons = (activeIdx >= 0 && layerEntry._chainSkeletons) ? [layerEntry._chainSkeletons[activeIdx]] : (!layerEntry._chainSkeletons ? [layerEntry] : []);
+        // 与主画面使用同一个真实绘制条目。若当前链节点是延时器/隐藏器，
+        // 保留上一个实际动画；新一轮开头则显示首个实际动画的第 0 帧。
+        var renderEntry = layerEntry._renderEntry ||
+            (SMTool._firstRenderableLayerEntry ? SMTool._firstRenderableLayerEntry(layerEntry) : null);
+        var skeletons = renderEntry ? [renderEntry] : (!layerEntry._chainSkeletons ? [layerEntry] : []);
         for (var ski = 0; ski < skeletons.length; ski++) {
             var skEntry = skeletons[ski];
             if (!skEntry || !skEntry.skeleton) continue;

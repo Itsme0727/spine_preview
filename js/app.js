@@ -637,6 +637,9 @@ SMTool.init = function () {
 
     // 双击重置控制点 / 编辑组标题 / 进入组编辑模式
     window.addEventListener('dblclick', function (e) {
+        // 浮窗控制按钮的双击由两个独立 click 处理（暂停→继续），禁止落入画布双击逻辑。
+        if (e.target && e.target.closest && e.target.closest('#animPreviewPanel button')) return;
+
         // ★ 优先检测：双击组标题 → 编辑组名
         if (SMData._groupTitleRects) {
             for (var gi = 0; gi < SMData._groupTitleRects.length; gi++) {

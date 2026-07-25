@@ -216,8 +216,8 @@
                 <button class="app-zoom-reset" id="appZoomReset" title="恢复 100%" onclick="SMTool._resetAnimPreviewZoom()">1:1</button>
             </div>
             <!-- 刷新从头播放按钮 + 暂停/继续播放按钮（右下角） -->
-            <button class="app-restart-btn" id="appRestartBtn" onclick="SMTool._restartPreview()" title="刷新从头播放">↺</button>
-            <button class="app-pause-btn" id="appPauseBtn" onclick="SMTool._togglePreviewPause()" title="暂停 / 继续播放">⏸</button>
+            <button class="app-restart-btn" id="appRestartBtn" onclick="event.stopPropagation(); SMTool._restartPreview()" ondblclick="event.stopPropagation()" title="刷新从头播放">↺</button>
+            <button class="app-pause-btn" id="appPauseBtn" onclick="event.stopPropagation(); SMTool._togglePreviewPause()" ondblclick="event.stopPropagation()" title="暂停 / 继续播放">⏸</button>
         </div>
         <div class="app-resize-handle"></div>
     </div>
@@ -259,14 +259,14 @@
     <script src="js/lib/spine-loader.js?v=20260609"></script>
     <script src="js/data-model.js?v=20260723-core3"></script>
     <script src="js/spine-loading.js?v=20260629a"></script>
-    <script src="js/spine-rendering.js?v=20260723-core2"></script>
+    <script src="js/spine-rendering.js?v=20260725-playback1"></script>
     <script src="js/grid-connections.js?v=20260617"></script>
     <script src="js/minimap.js?v=20260617"></script>
-    <script src="js/ui-dom.js?v=20260723-core3"></script>
+    <script src="js/ui-dom.js?v=20260725-playback1"></script>
     <script src="js/interaction.js?v=20260618b"></script>
     <script src="js/export-import.js?v=20260723-core2"></script>
     <script src="js/export-ai-json.js?v=20260723-ai-v3b"></script>
-    <script src="js/layer-node-v2.js?v=20260723-core2"></script>
+    <script src="js/layer-node-v2.js?v=20260725-playback1"></script>
     <script src="js/app.js?v=20260626h"></script>
 </body>
 </html>

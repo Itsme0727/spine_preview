@@ -948,7 +948,7 @@ SMTool._initPlaybackTreeState = function (tree, existingStates) {
 };
 
 /** 为层级节点设置浮窗预览 — 统一加载所有连线节点到预览 GL */
-SMTool._showLayerPreview = function (layerNode) {
+SMTool._showLayerPreview = function (layerNode, playbackOwner) {
     var pp = SMData._animPreview;
     var ld = SMTool._layerData(layerNode);
     var panel = document.getElementById('animPreviewPanel');
@@ -1023,8 +1023,21 @@ SMTool._showLayerPreview = function (layerNode) {
     panel.style.display = 'flex';
     pp.visible = true;
     pp.nodeId = layerNode.id;
+    var activeFlow = SMData._fullPlayback;
+    var activePath = activeFlow && activeFlow.activePathIdx >= 0 ? SMData._fullPaths[activeFlow.activePathIdx] : null;
+    var activeFlowStep = activePath && activePath.nodes ? activePath.nodes[activeFlow.currentStep] : null;
+    if (playbackOwner && playbackOwner.type) {
+        pp._playbackOwner = playbackOwner;
+    } else if (activeFlowStep && activeFlowStep.id === layerNode.id && (activeFlow.isPlaying || activeFlow._isPaused)) {
+        pp._playbackOwner = { type: 'flow', pathIdx: activeFlow.activePathIdx, nodeId: layerNode.id };
+    } else {
+        pp._playbackOwner = { type: 'parallel', nodeId: layerNode.id };
+    }
     // ★ 重置"所有分支已完成"标记（新预览周期）
     pp._allLayersCompletedOnce = false;
+    pp._parallelCycleId = (pp._parallelCycleId || 0) + 1;
+    pp._parallelBarrierCommitted = false;
+    pp._parallelRestarting = false;
 
     // 确定 Spine 版本 — 优先从直连 Spine 节点获取，全是延时器时沿链查找
     var firstNode = null;
@@ -1436,6 +1449,16 @@ SMTool._showLayerPreview = function (layerNode) {
         SMData._layerAllChainNodes = initAllIds;
         // ★ 同步主画布 CSS 高亮/置灰效果
         SMTool._updateLayerPlayingHighlights(initActiveIds, initAllIds, {});
+
+        // 原子提交共同第 0 帧。直接嵌套 layer 第一遍只激活子树，
+        // 所以冻结状态下连续绘制两次，第二遍把子树第 0 帧一并合成。
+        var initialNow = performance.now();
+        var initialFrozen = !!pp._flowFrozen;
+        pp._flowFrozen = true;
+        SMTool._renderLayerPreview(null, pp, initialNow);
+        SMTool._renderLayerPreview(null, pp, initialNow);
+        pp._flowFrozen = initialFrozen;
+        pp._lastTime = performance.now();
     }
 };
 
@@ -1567,7 +1590,11 @@ SMTool._loadOneSkeletonToGL = function (gl, SP, WGL, srcNode, physParam, cw, ch,
     var state = new SP.AnimationState(stateData);
     var animName = srcNode.currentAnim || (srcNode.animations[0] && srcNode.animations[0].name) || '';
     if (!srcNode._trackMode && animName) {
-        state.setAnimation(0, animName, srcNode.loop !== false);
+        // 并行链中的普通动画节点默认只播放一次。只有显式配置了循环时间/次数时，
+        // 才允许 AnimationState 自身回卷；否则完成判定前的一次回卷会造成“各层独立循环”的错觉。
+        var hasExplicitLoop = srcNode.loop !== false &&
+            !!(srcNode._loopMode || (srcNode._loopCount !== undefined && srcNode._loopCount !== 1));
+        state.setAnimation(0, animName, hasExplicitLoop);
         state.update(0);
         state.apply(sk);
     }
@@ -1607,8 +1634,12 @@ SMTool._loadOneSkeletonToGL = function (gl, SP, WGL, srcNode, physParam, cw, ch,
         _trackElapsed: 0
     };
     if (loadedEntry._trackMode) {
-        for (var tsi = 0; tsi < loadedEntry._trackSequence.length; tsi++) {
-            SMTool._buildNativeTrackSequence(loadedEntry, state, loadedEntry._trackSequence, useVer, tsi, false);
+        var trackHasExplicitLoop = srcNode.loop !== false &&
+            !!(srcNode._loopMode || (srcNode._loopCount !== undefined && srcNode._loopCount !== 1));
+        var layerBuildSequences = trackHasExplicitLoop ?
+            loadedEntry._trackSequence : SMTool._finiteTrackSequences(loadedEntry._trackSequence);
+        for (var tsi = 0; tsi < layerBuildSequences.length; tsi++) {
+            SMTool._buildNativeTrackSequence(loadedEntry, state, layerBuildSequences, useVer, tsi, false);
         }
         state.update(0);
         state.apply(sk);
@@ -1915,8 +1946,12 @@ SMTool._resetLayerAnimationEntry = function (entry) {
     entry._trackQueueRuntime = {};
     entry.skeleton.setToSetupPose();
     if (entry._trackMode && entry._trackSequence) {
-        for (var ti = 0; ti < entry._trackSequence.length; ti++) {
-            SMTool._buildNativeTrackSequence(entry, entry.state, entry._trackSequence, entry.useVer, ti, false);
+        var trackHasExplicitLoop = srcNode && srcNode.loop !== false &&
+            !!(srcNode._loopMode || (srcNode._loopCount !== undefined && srcNode._loopCount !== 1));
+        var resetSequences = trackHasExplicitLoop ?
+            entry._trackSequence : SMTool._finiteTrackSequences(entry._trackSequence);
+        for (var ti = 0; ti < resetSequences.length; ti++) {
+            SMTool._buildNativeTrackSequence(entry, entry.state, resetSequences, entry.useVer, ti, false);
         }
     } else {
         var animName = entry._chainAnimName || (srcNode && srcNode.currentAnim) || '';
@@ -1928,6 +1963,42 @@ SMTool._resetLayerAnimationEntry = function (entry) {
     entry.state.update(0);
     entry.state.apply(entry.skeleton);
     entry.skeleton.updateWorldTransform(entry.physParam);
+};
+
+// 有限次数的轨道序列到达最后一轮时，将画面钉在整条序列的真实末帧。
+// 否则原生循环队列会在边界先进入下一轮首帧，再被外层屏障冻结。
+SMTool._freezeLayerTrackSequenceAtFinalFrame = function (entry) {
+    if (!entry || !entry.state || !entry.skeleton || !entry._trackSequence) return;
+    var elapsed = entry._trackElapsed || 0;
+    try {
+        entry.state.clearTracks();
+        entry.skeleton.setToSetupPose();
+        entry._trackQueueRuntime = {};
+        var finiteSequences = SMTool._finiteTrackSequences(entry._trackSequence);
+        for (var ti = 0; ti < finiteSequences.length; ti++) {
+            SMTool._buildNativeTrackSequence(entry, entry.state, finiteSequences, entry.useVer, ti, false);
+        }
+        entry.state.update(Math.max(0, SMTool._trackNodeDurationSeconds(entry)));
+        entry.state.apply(entry.skeleton);
+        entry.skeleton.updateWorldTransform(entry.physParam);
+    } catch (e) {}
+    entry._trackElapsed = elapsed;
+};
+
+// 返回一层中真正可绘制的 Spine 条目。层运行时对象可能就是链首条目本身，
+// 因此绝不能再把其他链条目的 skeleton/state 回写到层对象上。
+SMTool._firstRenderableLayerEntry = function (ls) {
+    if (!ls) return null;
+    var chain = ls._chainSkeletons || [];
+    for (var i = 0; i < chain.length; i++) {
+        var entry = chain[i];
+        if (entry && !entry._isDelayer && !entry._isHider && !entry._isVirtualLayer &&
+            entry.skeleton && entry.state) {
+            return entry;
+        }
+    }
+    return (!ls._isDelayer && !ls._isHider && !ls._isVirtualLayer &&
+        ls.skeleton && ls.state) ? ls : null;
 };
 
 // 重置一整层的运行状态。用于自动大循环，避免只归零索引却保留上一轮 TrackTime。
@@ -1944,7 +2015,64 @@ SMTool._resetLayerRuntimeEntry = function (ls) {
     ls._hideRemaining = 0;
     ls._pendingHide = undefined;
     var chain = ls._chainSkeletons || [];
-    for (var i = 0; i < chain.length; i++) SMTool._resetLayerAnimationEntry(chain[i]);
+    for (var i = 0; i < chain.length; i++) {
+        var entry = chain[i];
+        if (entry && !entry._isDelayer && !entry._isHider && !entry._isVirtualLayer) {
+            SMTool._resetLayerAnimationEntry(entry);
+        }
+    }
+    // 新一轮在任何逻辑延时开始之前，都先锁定首个实际动画的第 0 帧。
+    // 这里只保存绘制指针，不改写链首条目自己的 Spine 资源引用。
+    ls._renderEntry = SMTool._firstRenderableLayerEntry(ls);
+};
+
+// 将并行播放的所有层作为一个同步批次重置，并立即绘制共同的第 0 帧。
+// 自动大循环和浮窗“从头播放”按钮必须共用此入口，避免各层保留各自 TrackTime。
+SMTool._restartLayerPreviewCycle = function (pp, now) {
+    if (!pp || !pp._layerSkeletons || pp._layerSkeletons.length === 0) return;
+    if (pp._parallelRestarting) return;
+    pp._parallelRestarting = true;
+    if (pp._loopRestartTimer) {
+        clearTimeout(pp._loopRestartTimer);
+        pp._loopRestartTimer = null;
+    }
+
+    try {
+        var list = pp._layerSkeletons;
+        for (var i = 0; i < list.length; i++) SMTool._resetLayerRuntimeEntry(list[i]);
+
+        // 嵌套并行树也属于同一个屏障批次。缓存可以复用，但运行时状态必须一起归零。
+        var cache = pp._subtreeCache || {};
+        var cacheKeys = Object.keys(cache);
+        for (var ci = 0; ci < cacheKeys.length; ci++) {
+            var cachedTree = cache[cacheKeys[ci]];
+            var cachedSkeletons = cachedTree && cachedTree.skeletons ? cachedTree.skeletons : [];
+            for (var si = 0; si < cachedSkeletons.length; si++) {
+                SMTool._resetLayerRuntimeEntry(cachedSkeletons[si]);
+            }
+            if (cachedTree && cachedTree.subTree) {
+                cachedTree.nodeStates = SMTool._initPlaybackTreeState(cachedTree.subTree, null);
+            }
+        }
+
+        pp._parallelCycleId = (pp._parallelCycleId || 0) + 1;
+        pp._parallelBarrierCommitted = false;
+        pp._allLayersCompletedOnce = false;
+        if (pp._layerPlaybackState) pp._layerPlaybackState.treeCompleted = false;
+        pp._startupDelayFrames = 0;
+        pp._needsLayerReinit = false;
+        pp._lastTime = now || performance.now();
+
+        // 冻结状态下同步画两次，直接嵌套层也在同一原子批次显示第 0 帧。
+        var wasFrozen = !!pp._flowFrozen;
+        pp._flowFrozen = true;
+        SMTool._renderLayerPreview(null, pp, pp._lastTime);
+        SMTool._renderLayerPreview(null, pp, pp._lastTime);
+        pp._flowFrozen = wasFrozen;
+        pp._lastTime = now || performance.now();
+    } finally {
+        pp._parallelRestarting = false;
+    }
 };
 
 /**
@@ -1987,8 +2115,12 @@ SMTool._advanceLayerChain = function (ls, dt, frozen) {
             if (chainSrc && typeof chainSrc._playbackSpeed === 'number') chainSpd = chainSrc._playbackSpeed;
         }
         if (!isFinite(chainSpd) || chainSpd === 0) chainSpd = 1.0;
-        if (active._trackMode) {
+        var activeTrackLoopMode = (chainSrc && chainSrc.loop !== false) ?
+            (chainSrc._loopMode || ((chainSrc._loopCount !== undefined && chainSrc._loopCount !== 1) ? 'count' : null)) : null;
+        if (active._trackMode && activeTrackLoopMode) {
             SMTool._maintainNativeTrackSequences(active, active.state, active._trackSequence, active.useVer);
+        }
+        if (active._trackMode) {
             SMTool._prepareTrackMixSlotGuard(active, active.state, active.skeleton);
             SMTool._resetTrackBoneBaseline(active, active.state, active.skeleton);
         }
@@ -2000,7 +2132,7 @@ SMTool._advanceLayerChain = function (ls, dt, frozen) {
         if (active._trackMode) {
             var sequenceDuration = SMTool._trackNodeDurationSeconds(active);
             active._trackElapsed = (active._trackElapsed || 0) + dt * Math.abs(chainSpd);
-            var trackLoopMode = (chainSrc && chainSrc.loop !== false) ? (chainSrc._loopMode || ((chainSrc._loopCount !== undefined && chainSrc._loopCount !== 1) ? 'count' : null)) : null;
+            var trackLoopMode = activeTrackLoopMode;
             if (trackLoopMode === 'time') {
                 var configuredTime = Number(chainSrc._loopTime);
                 if (!isFinite(configuredTime) || configuredTime < 0) configuredTime = sequenceDuration;
@@ -2008,6 +2140,7 @@ SMTool._advanceLayerChain = function (ls, dt, frozen) {
             } else if (trackLoopMode === 'count') {
                 var configuredCount = (chainSrc._loopCount !== undefined) ? Number(chainSrc._loopCount) : 1;
                 shouldAdvance = configuredCount === -1 ? false : active._trackElapsed >= sequenceDuration * Math.max(1, configuredCount || 1);
+                if (shouldAdvance) SMTool._freezeLayerTrackSequenceAtFinalFrame(active);
             } else {
                 shouldAdvance = sequenceDuration <= 0 || active._trackElapsed >= sequenceDuration;
             }
@@ -2033,7 +2166,16 @@ SMTool._advanceLayerChain = function (ls, dt, frozen) {
                     if (curLoop > ls._loopTrack.currentLoop) ls._loopTrack.currentLoop = curLoop;
                     var loopCount = (chainSrc._loopCount !== undefined) ? chainSrc._loopCount : 1;
                     if (loopCount === -1) { shouldAdvance = false; }
-                    else if (curLoop >= loopCount) { shouldAdvance = true; }
+                    else if (curLoop >= loopCount) {
+                        // Spine 循环轨道在整轮边界会显示下一轮第 0 帧；屏障等待时必须改为
+                        // 本动画真正的末帧，否则短分支看起来像独自重播了一次。
+                        entry.loop = false;
+                        entry.trackTime = animDur;
+                        active.skeleton.setToSetupPose();
+                        active.state.apply(active.skeleton);
+                        active.skeleton.updateWorldTransform(active.physParam);
+                        shouldAdvance = true;
+                    }
                 } else {
                     if (entry.trackTime >= animDur - 0.001) shouldAdvance = true;
                 }
@@ -2226,19 +2368,13 @@ SMTool._renderOneNormalLayer = function (ls, dt, frozen, gl, WGL, pp) {
         }
     }
 
-    // ★ 同步活跃骨架引用到 ls（排除延时器和隐藏器——它们没有真实骨架）
-    if (!ls._chainDone && active && !active._isDelayer && !active._isHider) {
-        ls.skeleton = active.skeleton;
-        ls.state = active.state;
-        ls.shader = active.shader;
-        ls.batcher = active.batcher;
-        ls.skeletonRenderer = active.skeletonRenderer;
-        ls.sceneRenderer = active.sceneRenderer;
-        ls.managedContext = active.managedContext;
-        ls.useVer = active.useVer;
-        ls.physParam = active.physParam;
-        ls.mvp = active.mvp;
-        ls.premultipliedAlpha = active.premultipliedAlpha || false;
+    // ★ 活跃动画只通过独立绘制指针切换。不能把引用回写到 ls：
+    // ls 通常就是 chain[0]，回写会永久污染首节点，令下一轮从错误画面开始。
+    if (active && !active._isDelayer && !active._isHider && !active._isVirtualLayer &&
+        active.skeleton && active.state) {
+        ls._renderEntry = active;
+    } else if (!ls._renderEntry) {
+        ls._renderEntry = SMTool._firstRenderableLayerEntry(ls);
     }
 
     // ★★ 隐藏器效果：将隐藏参数从链条目转移到层状态
@@ -2260,33 +2396,35 @@ SMTool._renderOneNormalLayer = function (ls, dt, frozen, gl, WGL, pp) {
     var isHidden = ls._hidePermanent || (ls._hideRemaining > 0);
 
     // ★ 渲染当前骨架（隐藏时跳过渲染，但动画照常推进）
-    var canRender4x = !!(ls.skeleton && ls.state && ls.sceneRenderer);
-    var canRender38 = !!(ls.skeleton && ls.state && ls.shader && ls.batcher && ls.skeletonRenderer);
+    var drawEntry = ls._renderEntry || SMTool._firstRenderableLayerEntry(ls);
+    var canRender4x = !!(drawEntry && drawEntry.skeleton && drawEntry.state && drawEntry.sceneRenderer);
+    var canRender38 = !!(drawEntry && drawEntry.skeleton && drawEntry.state &&
+        drawEntry.shader && drawEntry.batcher && drawEntry.skeletonRenderer);
     if (!isHidden && !ls._suppressDraw && (canRender4x || canRender38)) {
-        if (!ls._chainSkeletons && !ls._chainDone && !frozen) { ls.state.update(dt); ls.state.apply(ls.skeleton); }
-        ls.skeleton.updateWorldTransform(ls.physParam);
+        drawEntry.skeleton.updateWorldTransform(drawEntry.physParam);
         gl.clear(gl.STENCIL_BUFFER_BIT);
         gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
         var layerSrcNode = null;
-        var ask = (ls._chainSkeletons && ls._chainSkeletons.length > 0) ? ls._chainSkeletons[ls._chainIdx || 0] : null;
+        var ask = active && !active._isDelayer && !active._isHider ? active : drawEntry;
         if (ask && ask._chainNodeId != null) layerSrcNode = SMData.nodes.get(ask._chainNodeId);
         if (!layerSrcNode && ls.nodeId != null) layerSrcNode = SMData.nodes.get(ls.nodeId);
         if (canRender4x) {
             try {
-                ls.sceneRenderer.begin();
-                ls.sceneRenderer.drawSkeleton(ls.skeleton, ls.premultipliedAlpha || false);
-                ls.sceneRenderer.end();
+                drawEntry.sceneRenderer.begin();
+                drawEntry.sceneRenderer.drawSkeleton(drawEntry.skeleton, drawEntry.premultipliedAlpha || false);
+                drawEntry.sceneRenderer.end();
             } catch (e4x) {}
         } else {
             try {
-                SMTool._renderLayerSkeletonInterleaved(ls, gl, WGL, layerSrcNode);
+                SMTool._renderLayerSkeletonInterleaved(drawEntry, gl, WGL, layerSrcNode);
             } catch (e) {
-                if (ls.shader && ls.batcher && ls.skeletonRenderer && ls.mvp) {
-                ls.shader.bind(); ls.shader.setUniformi(WGL.Shader.SAMPLER, 0);
-                ls.shader.setUniform4x4f(WGL.Shader.MVP_MATRIX, ls.mvp.values);
-                ls.batcher.begin(ls.shader); ls.skeletonRenderer.premultipliedAlpha = ls.premultipliedAlpha || false;
-                ls.skeletonRenderer.draw(ls.batcher, ls.skeleton);
-                ls.batcher.end(); ls.shader.unbind();
+                if (drawEntry.shader && drawEntry.batcher && drawEntry.skeletonRenderer && drawEntry.mvp) {
+                drawEntry.shader.bind(); drawEntry.shader.setUniformi(WGL.Shader.SAMPLER, 0);
+                drawEntry.shader.setUniform4x4f(WGL.Shader.MVP_MATRIX, drawEntry.mvp.values);
+                drawEntry.batcher.begin(drawEntry.shader);
+                drawEntry.skeletonRenderer.premultipliedAlpha = drawEntry.premultipliedAlpha || false;
+                drawEntry.skeletonRenderer.draw(drawEntry.batcher, drawEntry.skeleton);
+                drawEntry.batcher.end(); drawEntry.shader.unbind();
                 }
             }
         }
@@ -2436,6 +2574,8 @@ SMTool._renderLayerPreview = function (layerNode, pp, now) {
             if (!list[j]._chainDone) { allDone = false; break; }
         }
         if (allDone) {
+            if (pp._parallelBarrierCommitted) return;
+            pp._parallelBarrierCommitted = true;
             // 运行时 layer 条目会在其全部嵌套子树结束后才设置 _chainDone，
             // 因此 list 是唯一权威状态。旧 nodeStates 从未同步，会把已完成流程误判为未完成。
             pp._allLayersCompletedOnce = true;
@@ -2443,17 +2583,17 @@ SMTool._renderLayerPreview = function (layerNode, pp, now) {
 
             // ★★★ 动画流推进
             var fb = SMData._fullPlayback;
-            if (fb && fb.isPlaying && fb.activePathIdx >= 0) {
+            var owner = pp._playbackOwner;
+            if (owner && owner.type === 'flow' && !owner.previewOnly &&
+                fb && fb.isPlaying && fb.activePathIdx === owner.pathIdx) {
                 var fpath = SMData._fullPaths[fb.activePathIdx];
                 if (fpath && fb.currentStep < fpath.nodes.length) {
                     var fsn = fpath.nodes[fb.currentStep];
-                    if (fsn && fsn._isLayerHub) {
+                    if (fsn && fsn.id === pp.nodeId && fsn._isLayerHub) {
                         fb.currentStep++;
                         if (fb.currentStep >= fpath.nodes.length) {
                             // ★ 播放到末尾 → 自动大循环
-                            fb.currentStep = 0;
-                            SMTool._clearAllProgressBars();
-                            SMTool._playFullStep();
+                            SMTool._restartFullPlaybackFromStart();
                         } else {
                             SMTool._playFullStep();
                         }
@@ -2462,72 +2602,10 @@ SMTool._renderLayerPreview = function (layerNode, pp, now) {
                 }
             }
 
-            // 未在流播放中 → 大循环（延迟 1 秒后自动从头开始）
-            if (!pp._loopRestartTimer) {
-                pp._loopRestartTimer = setTimeout(function () {
-                    pp._loopRestartTimer = null;
-                    // ★★ 先保存所有骨架的当前位置（大循环不能丢失拖拽后的位置）
-                    var savedPositions = {};
-                    var _savePos = function (entry) {
-                        if (!entry) return;
-                        var chain = entry._chainSkeletons;
-                        if (chain && chain.length > 0) {
-                            for (var sci = 0; sci < chain.length; sci++) {
-                                var csk = chain[sci];
-                                if (csk.skeleton && csk._chainNodeId != null) {
-                                    savedPositions[csk._chainNodeId] = { x: csk.skeleton.x, y: csk.skeleton.y };
-                                }
-                            }
-                        } else if (entry.skeleton && (entry._chainNodeId != null || entry.nodeId != null)) {
-                            var kid = entry._chainNodeId || entry.nodeId;
-                            savedPositions[kid] = { x: entry.skeleton.x, y: entry.skeleton.y };
-                        }
-                        if (entry._nestedLayerSkeletons) {
-                            for (var sni = 0; sni < entry._nestedLayerSkeletons.length; sni++) {
-                                _savePos(entry._nestedLayerSkeletons[sni]);
-                            }
-                        }
-                    };
-                    for (var sk = 0; sk < list.length; sk++) { _savePos(list[sk]); }
-
-                    for (var k = 0; k < list.length; k++) {
-                        SMTool._resetLayerRuntimeEntry(list[k]);
-                    }
-                    // ★★ 清除嵌套子树缓存，强制下次按最新 _containerOffset 重建
-                    pp._subtreeCache = {};
-
-                    // ★★ 恢复保存的位置（递归恢复嵌套子树）
-                    var _restorePos = function (entry) {
-                        if (!entry) return;
-                        var chain = entry._chainSkeletons;
-                        if (chain && chain.length > 0) {
-                            for (var rci = 0; rci < chain.length; rci++) {
-                                var rcsk = chain[rci];
-                                if (rcsk.skeleton && rcsk._chainNodeId != null) {
-                                    var rp = savedPositions[rcsk._chainNodeId];
-                                    if (rp) { rcsk.skeleton.x = rp.x; rcsk.skeleton.y = rp.y; }
-                                }
-                            }
-                        } else if (entry.skeleton && (entry._chainNodeId != null || entry.nodeId != null)) {
-                            var rkid = entry._chainNodeId || entry.nodeId;
-                            var rp2 = savedPositions[rkid];
-                            if (rp2) { entry.skeleton.x = rp2.x; entry.skeleton.y = rp2.y; }
-                        }
-                        if (entry._nestedLayerSkeletons) {
-                            for (var sni = 0; sni < entry._nestedLayerSkeletons.length; sni++) {
-                                _restorePos(entry._nestedLayerSkeletons[sni]);
-                            }
-                        }
-                    };
-                    for (var rk = 0; rk < list.length; rk++) { _restorePos(list[rk]); }
-                    pp._startupDelayFrames = 6;
-                    pp._needsLayerReinit = true;
-                    gl.clearColor(0, 0, 0, 0);
-                    gl.clearStencil(0);
-                    gl.clear(gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
-                    gl.flush();
-                }, 1000);
-            }
+            // 未在流播放中 → 全体层在同一个渲染批次共同回到第 0 帧。
+            // 不再使用独立定时器，避免计时器与 requestAnimationFrame 形成不同步的新周期。
+            SMTool._restartLayerPreviewCycle(pp, now);
+            return;
         }
     }
 };
