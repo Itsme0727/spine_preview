@@ -36,6 +36,7 @@ function load(relativePath) {
 }
 
 load('js/data-model.js');
+load('js/grid-connections.js');
 load('js/layer-node-v2.js');
 load('js/spine-loading.js');
 load('js/spine-rendering.js');
@@ -511,10 +512,61 @@ function testPreviewRestartDispatchesByExplicitOwnerNotStaleSelectedFlow() {
     SMData._fullPlayback._isPaused = true;
     SMTool._restartPreview();
 
+    // 用户主动点选了新动画节点后，浮窗已脱离暂停的原流程。
+    SMData._animPreview._playbackOwner = { type: 'single', nodeId: 77, manualSelection: true };
+    SMTool._restartPreview();
+
     SMTool._restartFullPlaybackFromStart = oldRestartFlow;
     SMTool._restartLayerPreviewCycle = oldRestartParallel;
     SMTool._restartAnimPreviewStateAtZero = oldRestartSingle;
-    assert.deepEqual(calls, ['single', 'parallel', 'flow', 'flow']);
+    assert.deepEqual(calls, ['single', 'parallel', 'flow', 'flow', 'single']);
+}
+
+function testPreviewAttachmentsLayerThumbnailsAndCanvasPerformanceContracts() {
+    const uiSource = fs.readFileSync(path.join(root, 'js/ui-dom.js'), 'utf8');
+    const layerSource = fs.readFileSync(path.join(root, 'js/layer-node-v2.js'), 'utf8');
+    const renderSource = fs.readFileSync(path.join(root, 'js/spine-rendering.js'), 'utf8');
+    const cssSource = fs.readFileSync(path.join(root, 'css/styles.css'), 'utf8');
+
+    assert.match(uiSource, /manualSelection:\s*true/);
+    assert.match(uiSource, /SMTool\._setPreviewPauseUI\(false\)/);
+    assert.match(renderSource, /!pp\._needsLayerRebuild && !SMData\._hideBoneImgs/);
+    assert.match(renderSource, /SMData\._hideBoneImgs \|\| !srcNode \|\| !srcNode\._slotScreenshots/);
+    assert.match(renderSource, /layerEntry\._hidden \|\| layerEntry\._suppressDraw/);
+
+    assert.match(layerSource, /class="all-layer-thumb"/);
+    assert.match(layerSource, /_updateLayerListThumbnails/);
+    assert.match(layerSource, /_lastLayerThumbTime \|\| 0\) < 800/);
+    assert.match(layerSource, /_syncLayerListPreviewMode\(true, true\)/);
+    assert.match(cssSource, /\.all-item\s*\{[\s\S]*?min-height:\s*122px/);
+    assert.match(cssSource, /\.all-layer-thumb\s*\{[\s\S]*?background:\s*transparent/);
+    assert.match(cssSource, /\.hidden-layer \.all-layer-thumb\s*\{\s*visibility:\s*hidden/);
+
+    const updatePosStart = uiSource.indexOf('SMTool._updatePos = function');
+    const updatePosEnd = uiSource.indexOf('SMTool._allPosScheduled', updatePosStart);
+    const updatePosBody = uiSource.slice(updatePosStart, updatePosEnd);
+    assert.ok(!updatePosBody.includes('SMTool._updateFloatLabels();'),
+        'single node positioning must not synchronously traverse every floating label');
+    assert.match(uiSource, /SMTool\._scheduleFloatLabelsUpdate/);
+    assert.match(renderSource, /SMTool\._updateAllPos\(false\)/);
+    assert.match(renderSource, /canvasGestureActive/);
+    assert.match(renderSource, /_deferredAnimDt/);
+
+    const oldDocument = context.document;
+    const classes = new Set(['paused']);
+    const pauseBtn = {
+        textContent: '▶',
+        title: '继续播放',
+        classList: {
+            toggle(name, enabled) { if (enabled) classes.add(name); else classes.delete(name); },
+        },
+    };
+    context.document = { getElementById: (id) => id === 'appPauseBtn' ? pauseBtn : null };
+    SMTool._setPreviewPauseUI(false);
+    context.document = oldDocument;
+    assert.equal(classes.has('paused'), false);
+    assert.equal(pauseBtn.textContent, '⏸');
+    assert.equal(pauseBtn.title, '暂停播放');
 }
 
 function testParallelBarrierCommitsOnlyOncePerCycle() {
@@ -854,6 +906,7 @@ function testAIExportV3PreservesGraphAndTrackSemanticsWithoutMutation() {
         toNode: 30,
         toState: 'input',
         condition: 'isReady && stamina > 0',
+        _mixDuration: 0.4,
         _layerNum: 1,
         cp1x: 10,
         cp1y: 20,
@@ -869,6 +922,7 @@ function testAIExportV3PreservesGraphAndTrackSemanticsWithoutMutation() {
     assert.equal(result.graph.nodes.length, 2);
     assert.equal(result.graph.edges[0].condition.raw, 'isReady && stamina > 0');
     assert.equal(result.graph.edges[0].from.parallelLayerNumber, 1);
+    assert.equal(result.graph.edges[0].animationBlend.durationSeconds, 0.4);
     assert.equal(result.parallelCompositions[0].layers[0].containerOffsetPixels.x, 12);
     const exportedSpine = result.graph.nodes.find((node) => node.id === 'node:30').semantics.spine;
     assert.equal(exportedSpine.playback.stateMode, 'track-sequence');
@@ -879,10 +933,338 @@ function testAIExportV3PreservesGraphAndTrackSemanticsWithoutMutation() {
     assert.equal(result.gameProtocol.states.length, 1);
     assert.equal(result.gameProtocol.transitions[0].trigger, 'parallel-barrier-complete');
     assert.equal(result.gameProtocol.transitions[0].guard.raw, 'isReady && stamina > 0');
+    assert.equal(result.gameProtocol.transitions[0].animationBlend.durationSeconds, 0.4);
     assert.equal(result.gameProtocol.runtimeRules.noEligibleTransition, 'stop-current-flow-and-report');
     assert.equal(result.graph.nodes[0].runtimeTransform.authored, false);
     assert.equal(result.validation.status, 'valid-with-warnings');
     assert.equal(trackNode.tracks.length, 0, 'read-only AI export must not initialize legacy tracks');
+}
+
+function testConnectionMixUsesNativeSpineTransitionInParallelChain() {
+    const calls = [];
+    SMData.nodes = new Map([
+        [101, { id: 101, nodeType: 'spine', sourceFile: 'hero.json', currentAnim: 'idle' }],
+        [102, { id: 102, nodeType: 'spine', sourceFile: 'hero.json', currentAnim: 'walk' }],
+    ]);
+    SMData.connections = [{ id: 201, fromNode: 101, toNode: 102, _mixDuration: 0.2 }];
+    const stateData = { setMix(from, to, duration) { calls.push(['mix', from, to, duration]); } };
+    const state = {
+        data: stateData,
+        clearTracks() { calls.push(['clear']); },
+        setAnimation(track, name, loop) { calls.push(['set', track, name, loop]); return { trackTime: 0 }; },
+        update(dt) { calls.push(['update', dt]); },
+        apply() { calls.push(['apply']); },
+    };
+    const skeleton = {
+        setToSetupPose() { calls.push(['setup']); },
+        updateWorldTransform() { calls.push(['world']); },
+    };
+    const skeletonData = {
+        findAnimation(name) { return name === 'idle' ? { duration: 1.5 } : name === 'walk' ? { duration: 2 } : null; },
+    };
+    const fromEntry = { _chainNodeId: 101, _chainAnimName: 'idle', state: {}, skeleton: {} };
+    const toEntry = { _chainNodeId: 102, _chainAnimName: 'walk', state, skeleton, _skeletonData: skeletonData };
+
+    assert.equal(SMTool._prepareLayerConnectionMix(fromEntry, toEntry), true);
+    assert.deepEqual(calls.find((entry) => entry[0] === 'mix'), ['mix', 'idle', 'walk', 0.2]);
+    assert.equal(toEntry._connectionMixDuration, 0.2);
+}
+
+function testTrackRenamePropagatesConnectionPorts() {
+    const node = { id: 301, nodeType: 'spine', _trackMode: true, _trackName: '轨道动画', sourceFile: 'hero.json' };
+    SMData.nodes = new Map([[301, node]]);
+    SMData.connections = [
+        { id: 1, fromNode: 301, fromState: '轨道动画', toNode: 9, toState: 'idle' },
+        { id: 2, fromNode: 9, fromState: 'idle', toNode: 301, toState: '轨道动画' },
+    ];
+    const oldDocument = context.document;
+    const oldUpdateEl = SMTool._updateEl;
+    const oldSchedule = SMTool._scheduleFloatLabelsUpdate;
+    const oldFlow = SMTool._updateFlowPanel;
+    const oldFullFlow = SMTool._updateFullFlowPanel;
+    context.document = { getElementById: () => null };
+    SMTool._updateEl = () => {};
+    SMTool._scheduleFloatLabelsUpdate = () => {};
+    SMTool._updateFlowPanel = () => {};
+    SMTool._updateFullFlowPanel = () => {};
+
+    assert.equal(SMTool._renameTrackNode(node, '战斗组合'), true);
+
+    context.document = oldDocument;
+    SMTool._updateEl = oldUpdateEl;
+    SMTool._scheduleFloatLabelsUpdate = oldSchedule;
+    SMTool._updateFlowPanel = oldFlow;
+    SMTool._updateFullFlowPanel = oldFullFlow;
+    assert.equal(node._trackName, '战斗组合');
+    assert.equal(SMData.connections[0].fromState, '战斗组合');
+    assert.equal(SMData.connections[1].toState, '战斗组合');
+}
+
+function testTrackNodesUseConnectionMixOnEveryActiveTrack() {
+    const calls = [];
+    const animations = [animation('idle', 1), animation('fx', 1), animation('walk', 1), animation('aim', 1)];
+    const skeletonData = {
+        animations,
+        findAnimation(name) { return animations.find((item) => item.name === name) || null; },
+    };
+    const current = {};
+    const stateData = { setMix(from, to, seconds) { calls.push(['mix', from, to, seconds]); } };
+    const state = {
+        data: stateData,
+        clearTracks() { Object.keys(current).forEach((key) => delete current[key]); },
+        getCurrent(track) { return current[track] || null; },
+        setAnimation(track, name, loop) {
+            const entry = { animation: skeletonData.findAnimation(name), trackTime: 0, loop };
+            current[track] = entry;
+            return entry;
+        },
+        addAnimation(track, name, loop) { return this.setAnimation(track, name, loop); },
+        update() {},
+        apply() {},
+        setEmptyAnimation(track, seconds) { calls.push(['empty', track, seconds]); },
+    };
+    const skeleton = { setToSetupPose() {}, updateWorldTransform() {} };
+    const fromNode = {
+        id: 401, nodeType: 'spine', sourceFile: 'hero.json', _trackMode: true,
+        _trackSequence: [
+            { enabled: true, loopSeq: false, animations: [{ name: 'idle', mixOut: 0 }] },
+            { enabled: true, loopSeq: false, animations: [{ name: 'fx', mixOut: 0 }] },
+        ],
+        animations, skeletonData,
+    };
+    const toNode = {
+        id: 402, nodeType: 'spine', sourceFile: 'hero.json', _trackMode: true,
+        _trackSequence: [
+            { enabled: true, loopSeq: false, animations: [{ name: 'walk', mixOut: 0 }] },
+            { enabled: true, loopSeq: false, animations: [{ name: 'aim', mixOut: 0 }] },
+        ],
+        animations, skeletonData,
+    };
+    SMData.nodes = new Map([[401, fromNode], [402, toNode]]);
+    SMData.connections = [{ id: 403, fromNode: 401, toNode: 402, _mixDuration: 0.3 }];
+    const fromEntry = { _chainNodeId: 401, state: {}, skeleton: {}, _trackMode: true };
+    const toEntry = {
+        _chainNodeId: 402, state, skeleton, _trackMode: true,
+        _skeletonData: skeletonData, skeletonData, animations, useVer: '4.2', physParam: null,
+    };
+
+    assert.equal(SMTool._prepareLayerConnectionMix(fromEntry, toEntry), true);
+    assert.ok(calls.some((call) => call.join('|') === 'mix|idle|walk|0.3'));
+    assert.ok(calls.some((call) => call.join('|') === 'mix|fx|aim|0.3'));
+    assert.equal(current[0].mixDuration, 0.3);
+    assert.equal(current[1].mixDuration, 0.3);
+}
+
+function testTrackSourceKeepsRealMixingFromForNormalAndTrackTargets() {
+    const animations = [animation('idle', 1), animation('fx', 0.8), animation('walk', 1.2), animation('aim', 0.9)];
+    const skeletonData = {
+        animations,
+        findAnimation(name) { return animations.find((item) => item.name === name) || null; },
+    };
+    const current = {};
+    const emptyCalls = [];
+    const stateData = { setMix() {} };
+    const state = {
+        data: stateData,
+        clearTracks() { Object.keys(current).forEach((key) => delete current[key]); },
+        getCurrent(track) { return current[track] || null; },
+        setAnimation(track, name, loop) {
+            const entry = {
+                animation: skeletonData.findAnimation(name),
+                trackTime: 0,
+                timeScale: 1,
+                loop,
+                mixingFrom: current[track] || null,
+            };
+            current[track] = entry;
+            return entry;
+        },
+        addAnimation() { throw new Error('final-pose priming must not rebuild and exhaust the source queue'); },
+        setEmptyAnimation(track, seconds) { emptyCalls.push([track, seconds]); },
+        update() {},
+        apply() {},
+    };
+    const skeleton = { setToSetupPose() {}, updateWorldTransform() {} };
+    const sourceTrackNode = {
+        id: 451,
+        nodeType: 'spine',
+        sourceFile: 'hero.json',
+        _trackMode: true,
+        animations,
+        _trackSequence: [
+            { enabled: true, loopSeq: false, animations: [{ name: 'idle', mixOut: 0 }] },
+            { enabled: true, loopSeq: false, animations: [{ name: 'fx', mixOut: 0 }] },
+        ],
+    };
+    const normalTarget = {
+        id: 452,
+        nodeType: 'spine',
+        sourceFile: 'hero.json',
+        _trackMode: false,
+        animations,
+        currentAnim: 'walk',
+    };
+    const trackTarget = {
+        id: 453,
+        nodeType: 'spine',
+        sourceFile: 'hero.json',
+        _trackMode: true,
+        animations,
+        _trackSequence: [
+            { enabled: true, loopSeq: false, animations: [{ name: 'walk', mixOut: 0 }] },
+            { enabled: true, loopSeq: false, animations: [{ name: 'aim', mixOut: 0 }] },
+        ],
+    };
+    const owner = { _skeletonData: skeletonData, skeletonData, animations };
+
+    assert.equal(SMTool._primeStateWithNodeFinalPose(state, skeleton, skeletonData, sourceTrackNode, '4.2'), true);
+    assert.equal(current[0].animation.name, 'idle');
+    assert.equal(current[0].trackTime, 1);
+    assert.equal(current[0].timeScale, 0);
+    assert.equal(current[1].animation.name, 'fx');
+    assert.equal(SMTool._transitionStateToNode(owner, state, skeleton, skeletonData, normalTarget, '4.2', 0.35), true);
+    assert.equal(current[0].animation.name, 'walk');
+    assert.equal(current[0].mixingFrom.animation.name, 'idle');
+    assert.equal(current[0].mixDuration, 0.35);
+    assert.deepEqual(emptyCalls, [[1, 0.35]]);
+
+    assert.equal(SMTool._primeStateWithNodeFinalPose(state, skeleton, skeletonData, sourceTrackNode, '4.2'), true);
+    assert.equal(SMTool._transitionStateToNode(owner, state, skeleton, skeletonData, trackTarget, '4.2', 0.45), true);
+    assert.equal(current[0].animation.name, 'walk');
+    assert.equal(current[0].mixingFrom.animation.name, 'idle');
+    assert.equal(current[0].mixDuration, 0.45);
+    assert.equal(current[1].animation.name, 'aim');
+    assert.equal(current[1].mixingFrom.animation.name, 'fx');
+    assert.equal(current[1].mixDuration, 0.45);
+}
+
+function testPreviewPrimesCompletedTrackSourceBeforeTransition() {
+    const calls = [];
+    const oldPrime = SMTool._primeStateWithNodeFinalPose;
+    const oldTransition = SMTool._transitionStateToNode;
+    const oldRestoreGuard = SMTool._restoreTrackMixSlotGuard;
+    SMTool._restoreTrackMixSlotGuard = () => calls.push('restore-guard');
+    SMTool._primeStateWithNodeFinalPose = () => { calls.push('prime-source-final-entries'); return true; };
+    SMTool._transitionStateToNode = () => { calls.push('transition-target'); return true; };
+    const pp = {
+        state: { update() {}, apply() {} },
+        skeleton: { updateWorldTransform() {} },
+        _skeletonData: {},
+        _spineVer: '4.2',
+        _physParam: null,
+    };
+    const fromTrack = { id: 461, _trackMode: true, _trackSequence: [{ enabled: true, animations: [{ name: 'idle' }] }] };
+    const toNormal = { id: 462, _trackMode: false, currentAnim: 'walk' };
+
+    assert.equal(SMTool._mixAnimPreviewToNode(pp, fromTrack, toNormal, 0.3), true);
+
+    SMTool._primeStateWithNodeFinalPose = oldPrime;
+    SMTool._transitionStateToNode = oldTransition;
+    SMTool._restoreTrackMixSlotGuard = oldRestoreGuard;
+    assert.deepEqual(calls, ['restore-guard', 'prime-source-final-entries', 'transition-target']);
+}
+
+function testLayerEyeOnlyUpdatesItsOwnThumbnail() {
+    const oldDocument = context.document;
+    const oldUpdater = SMTool._updateLayerListThumbnails;
+    const updates = [];
+    const classChanges = [];
+    const button = { classList: { toggle(name, enabled) { classChanges.push(['button', name, enabled]); } }, title: '' };
+    const item = {
+        classList: { toggle(name, enabled) { classChanges.push(['item', name, enabled]); } },
+        querySelector() { return button; },
+    };
+    context.document = { querySelector(selector) { return selector.includes('data-layer-idx="1"') ? item : null; } };
+    SMTool._updateLayerListThumbnails = (now, force, idx) => updates.push([force, idx]);
+    SMData._animPreview = { _layerSkeletons: [{ _hidden: false }, { _hidden: false }, { _hidden: false }] };
+
+    SMTool._toggleLayerVisibility(1);
+
+    context.document = oldDocument;
+    SMTool._updateLayerListThumbnails = oldUpdater;
+    assert.equal(SMData._animPreview._layerSkeletons[1]._hidden, true);
+    assert.equal(SMData._animPreview._layerSkeletons[0]._hidden, false);
+    assert.equal(SMData._animPreview._layerSkeletons[2]._hidden, false);
+    assert.deepEqual(updates, [[true, 1]]);
+    assert.ok(classChanges.some((entry) => entry.join('|') === 'item|hidden-layer|true'));
+}
+
+function testClosedFullFlowCarriesClosingEdgeMixBackToSource() {
+    const path = {
+        nodes: [
+            { id: 501, anim: 'idle' },
+            { id: 502, anim: 'walk' },
+            { id: 503, anim: 'run' },
+            { id: 501, anim: 'idle', cycleClose: true },
+        ],
+        conns: [601, 602, 603],
+    };
+    SMData.connections = [
+        { id: 601, fromNode: 501, toNode: 502, _mixDuration: 0.1 },
+        { id: 602, fromNode: 502, toNode: 503, _mixDuration: 0.2 },
+        { id: 603, fromNode: 503, toNode: 501, _mixDuration: 0.4 },
+    ];
+    assert.equal(JSON.stringify(SMTool._getClosedFlowCycleTransition(path)), JSON.stringify({
+        fromNodeId: 503,
+        toNodeId: 501,
+        mixDurationSeconds: 0.4,
+    }));
+
+    const restartCalls = [];
+    const oldRestart = SMTool._restartFullPlaybackFromStart;
+    SMTool._restartFullPlaybackFromStart = (options) => { restartCalls.push(options); return true; };
+    assert.equal(SMTool._restartFullPlaybackFromCycle(path), true);
+    SMTool._restartFullPlaybackFromStart = oldRestart;
+    assert.equal(restartCalls[0].cycleTransition.mixDurationSeconds, 0.4);
+
+    const oldDocument = context.document;
+    const oldApply = SMTool._applyStepToMainNode;
+    const oldShow = SMTool._showAnimPreview;
+    const oldUpdatePanel = SMTool._updateFullFlowPanel;
+    const oldFocus = SMTool._setFullComponentFocus;
+    const oldUpdateSel = SMTool._updateSel;
+    const oldUpdateColors = SMTool._updateStateRowColors;
+    const oldClearBars = SMTool._clearAllProgressBars;
+    const owners = [];
+    const sourceNode = {
+        id: 501,
+        nodeType: 'spine',
+        skeletonData: { animations: [{ name: 'idle', duration: 1 }] },
+        _playbackSpeed: 1,
+    };
+    SMData.nodes = new Map([[501, sourceNode]]);
+    SMData._fullPaths = [path];
+    SMData._fullPlayback = {
+        activePathIdx: 0,
+        currentStep: 0,
+        isPlaying: true,
+        _cycleTransition: { fromNodeId: 503, toNodeId: 501, mixDurationSeconds: 0.4 },
+    };
+    SMData._animPreview = { visible: true, nodeId: 503, _flowFrozen: false };
+    context.document = { getElementById: () => null, querySelector: () => null };
+    SMTool._applyStepToMainNode = () => sourceNode;
+    SMTool._showAnimPreview = (node, restartAtZero, owner) => owners.push({ node, restartAtZero, owner });
+    SMTool._updateFullFlowPanel = () => {};
+    SMTool._setFullComponentFocus = () => {};
+    SMTool._updateSel = () => {};
+    SMTool._updateStateRowColors = () => {};
+    SMTool._clearAllProgressBars = () => {};
+
+    SMTool._playFullStep();
+
+    context.document = oldDocument;
+    SMTool._applyStepToMainNode = oldApply;
+    SMTool._showAnimPreview = oldShow;
+    SMTool._updateFullFlowPanel = oldUpdatePanel;
+    SMTool._setFullComponentFocus = oldFocus;
+    SMTool._updateSel = oldUpdateSel;
+    SMTool._updateStateRowColors = oldUpdateColors;
+    SMTool._clearAllProgressBars = oldClearBars;
+    assert.equal(owners.length, 1);
+    assert.equal(owners[0].restartAtZero, true);
+    assert.equal(owners[0].owner.mixDurationSeconds, 0.4);
+    assert.equal(owners[0].owner.cycleFromNodeId, 503);
+    assert.equal(SMData._fullPlayback._cycleTransition, null);
 }
 
 const tests = [
@@ -899,6 +1281,7 @@ const tests = [
     testPreviewRestartPrioritizesWholeActiveFlow,
     testFiniteTrackPassNeverPrequeuesAnUnauthorizedNextCycle,
     testPreviewRestartDispatchesByExplicitOwnerNotStaleSelectedFlow,
+    testPreviewAttachmentsLayerThumbnailsAndCanvasPerformanceContracts,
     testParallelBarrierCommitsOnlyOncePerCycle,
     testFullPlaybackUnifiedClockAdvancesAndRestartsAtomically,
     testRapidPauseClicksToggleFlowWithoutRestartingIt,
@@ -908,6 +1291,13 @@ const tests = [
     testBundledSpineFixtureIsComplete,
     testBundledProjectZipParsesWithApplicationImporter,
     testAIExportV3PreservesGraphAndTrackSemanticsWithoutMutation,
+    testConnectionMixUsesNativeSpineTransitionInParallelChain,
+    testTrackRenamePropagatesConnectionPorts,
+    testTrackNodesUseConnectionMixOnEveryActiveTrack,
+    testTrackSourceKeepsRealMixingFromForNormalAndTrackTargets,
+    testPreviewPrimesCompletedTrackSourceBeforeTransition,
+    testLayerEyeOnlyUpdatesItsOwnThumbnail,
+    testClosedFullFlowCarriesClosingEdgeMixBackToSource,
 ];
 
 for (const test of tests) {

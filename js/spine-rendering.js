@@ -308,6 +308,11 @@ SMTool._loop = function (now) {
     var dt = Math.min((now - SMTool._lt) / 1000, 0.1);
     SMTool._lt = now;
     SMTool._fc++;
+    SMTool._renderFrameId = (SMTool._renderFrameId || 0) + 1;
+    // 拖拽/平移/缩放时，非关键动画的骨骼姿态降为约 15fps，
+    // 但视口仍逐帧绘制，所以节点跟手性不受影响。
+    var canvasGestureActive = !!(SMData.isPanning || SMData.draggedNode || SMData.isMultiDragging ||
+        SMData.scalingNode || now < (SMData._viewInteractingUntil || 0));
 
     var gl = SMTool._sharedGL;
     if (!gl) {
@@ -494,20 +499,28 @@ SMTool._loop = function (now) {
             shouldAnimate = false;
         }
 
-        // ★★ 始终更新时间轴（轻量操作，不做骨骼变换），确保事件帧检测不受渲染模式限制
+        // 视口交互期间对普通节点合并 4 帧时间量；选中节点、完整流活跃节点、
+        // 并行活跃层和轨道混合节点仍每帧计算，不改变播放语义。
         var spd = (typeof node._playbackSpeed === 'number' && node._playbackSpeed !== 1.0) ? node._playbackSpeed : 1.0;
-        node.state.update(dt * spd);
+        var criticalPoseNode = isSelectedNode || isPlayingNode || isLayerActive || !!node._trackMode;
+        var poseTick = !canvasGestureActive || criticalPoseNode ||
+            (((SMTool._renderFrameId + (node.id || 0)) & 3) === 0);
+        node._deferredAnimDt = (node._deferredAnimDt || 0) + dt * spd;
+        if (poseTick) {
+            node.state.update(Math.min(node._deferredAnimDt, 0.1));
+            node._deferredAnimDt = 0;
+        }
 
         // ★ 轨道动画模式：维持 Spine AnimationState 原生队列。
         //    A→B 的 mixDuration、mixingFrom/mixingTo 和多轨道覆盖全部由 Runtime 计算。
-        if (node._trackMode && node._trackSequence) {
+        if (poseTick && node._trackMode && node._trackSequence) {
             SMTool._maintainNativeTrackSequences(node, node.state, node._trackSequence, node._spineVer);
         }
 
         // ★ 事件帧气泡：始终检测飘动（不受 renderMode / 选中状态影响）
         //    显隐仅由左上角「💬 特效」按钮控制（CSS #app.hide-bubbles .event-bubble）
-        SMTool._ensureEventFrames(node);
-        if (node._eventFrames && node._eventFrames.length > 0) {
+        if (poseTick) SMTool._ensureEventFrames(node);
+        if (poseTick && node._eventFrames && node._eventFrames.length > 0) {
             var trackEntry = node.state.getCurrent(0);
             if (trackEntry) {
                 var anim = trackEntry.animation || trackEntry._animation;
@@ -528,7 +541,8 @@ SMTool._loop = function (now) {
             }
         }
 
-        if (shouldAnimate || node._dirty) {
+        var poseWasApplied = false;
+        if ((shouldAnimate && poseTick) || node._dirty) {
             // ★ 在 apply 前记录“上一帧不可见”的 Slot，并清理未关键帧骨骼残留。
             //    注意：只恢复骨骼，不重置 Slot/Attachment，避免破坏显示与透明度动画。
             if (node._trackMode && node._trackSequence) {
@@ -540,8 +554,9 @@ SMTool._loop = function (now) {
             //    _dirty=true 时即使静态模式/未选中也强制应用，确保轨道参数修改后即时更新画面
             node.state.apply(node.skeleton);
             if (node._dirty) node._dirty = false;
+            poseWasApplied = true;
         }
-        node.skeleton.updateWorldTransform(node._physParam);
+        if (poseWasApplied) node.skeleton.updateWorldTransform(node._physParam);
 
         // ★ 新出现附件防飞入：仅在父骨骼于混合期发生明显位移时，渲染期延后淡入。
         if (node._trackMode && node._trackSequence) {
@@ -685,9 +700,10 @@ SMTool._onWheel = function (e) {
     var my = e.clientY - window.innerHeight / 2;
     SMData.view.x += mx * (1 / SMData.view.zoom - 1 / oz);
     SMData.view.y += my * (1 / SMData.view.zoom - 1 / oz);
-    // ★ forceSync=true：缩放时必须同步更新 DOM 位置，
-    // 否则下一帧 _renderConnections 用新 zoom 读旧 DOM 位置会算出错误坐标
-    SMTool._updateAllPos(true);
+    // 高频滚轮事件只记录最新视图，全量 DOM 位置在下一个 rAF 合并更新。
+    // 主循环在绘制连线前会同步消费该更新，因此不会产生端点偏移。
+    SMData._viewInteractingUntil = performance.now() + 140;
+    SMTool._updateAllPos(false);
     SMTool._syncZoomUI();
 };
 
@@ -699,8 +715,8 @@ SMTool._onZoomSlider = function (e) {
     var cy = window.innerHeight / 2;
     SMData.view.x += cx * (1 / SMData.view.zoom - 1 / oz);
     SMData.view.y += cy * (1 / SMData.view.zoom - 1 / oz);
-    // ★ forceSync=true：缩放滑块同样需要同步更新 DOM
-    SMTool._updateAllPos(true);
+    SMData._viewInteractingUntil = performance.now() + 140;
+    SMTool._updateAllPos(false);
     SMTool._syncZoomUI();
 };
 
@@ -1082,7 +1098,7 @@ SMTool._initAnimPreview = function (node) {
             // 🔒 [LOCK-D] END
 
             // 更新面板标题
-            SMTool._updateAppTitle('🎬 ' + targetAnim, node.sourceFile || '');
+            SMTool._updateAppTitle('🎬 ' + (node._trackMode ? (node._trackName || '轨道动画') : targetAnim), node.sourceFile || '');
 
         } catch (e) {
             console.error('[AnimPreview] Setup failed:', e);
@@ -1132,7 +1148,10 @@ SMTool._renderAnimPreview = function (now) {
         // ★ 交错渲染已在 _renderLayerPreview 内部按每层骨架的 drawOrder 处理
         SMTool._renderLayerPreview(null, pp, now);
         // ★ 渲染骨骼挂图（重建期间跳过）
-        if (!pp._needsLayerRebuild) {
+        if (!pp._needsLayerRebuild && !SMData._hideBoneImgs) {
+            // 4.x SceneRenderer 无法在骨架内分段交错，统一在各层骨架之后补画插槽图。
+            // 3.8 已在 _renderLayerSkeletonInterleaved 中绘制，该函数会自动跳过。
+            SMTool._renderLayerPreviewSlotImages(pp);
             SMTool._renderLayerPreviewBoneImages(pp);
         }
         if (pp._needsLayerReinit) {
@@ -1265,7 +1284,7 @@ SMTool._renderAnimPreview = function (now) {
                 pp._sceneRenderer.end();
             } catch (e) { /* ignore */ }
             // ★ 4.x 路径：自定义插槽图片渲染在骨架之后（SceneRenderer 不支持分段交错）
-            SMTool._renderPreviewSlotImages(pp);
+            if (!SMData._hideBoneImgs) SMTool._renderPreviewSlotImages(pp);
         }
     } else {
         // 3.8 渲染：使用 webgl 子对象获取 Shader 常量
@@ -1280,7 +1299,7 @@ SMTool._renderAnimPreview = function (now) {
     }
 
     // ★ 渲染预览浮窗骨骼挂图
-    SMTool._renderPreviewBoneImages(pp);
+    if (!SMData._hideBoneImgs) SMTool._renderPreviewBoneImages(pp);
 
     // 与主画布一致：绘制完成后立刻还原 Slot Alpha。
     SMTool._restoreTrackMixSlotGuard(pp);
@@ -1506,7 +1525,7 @@ SMTool._updateAnimPreviewAnim = function (animName) {
     // ★ 同步 PMA 和皮肤
     SMTool._syncPreviewPmaAndSkin(pp, node);
 
-    SMTool._updateAppTitle('🎬 ' + pp.animName, node.sourceFile || '');
+    SMTool._updateAppTitle('🎬 ' + (node._trackMode ? (node._trackName || '轨道动画') : pp.animName), node.sourceFile || '');
 };
 
 // ---- 将源节点的轨道混合配置复制到预览 AnimationState ----
@@ -1659,6 +1678,39 @@ SMTool._restartAnimPreviewStateAtZero = function (pp, sourceNode) {
     pp._lastTime = performance.now();
 };
 
+// 完整动画流同骨架节点切步时使用 Spine 原生混合；普通/轨道节点共用一套过渡器。
+SMTool._mixAnimPreviewToNode = function (pp, fromNode, toNode, duration) {
+    duration = typeof SMTool._normalizeConnectionMixDuration === 'function' ?
+        SMTool._normalizeConnectionMixDuration(duration) : Math.max(0, Number(duration) || 0);
+    if (!(duration > 0) || !pp || !fromNode || !toNode || !pp.state || !pp.skeleton ||
+        typeof SMTool._transitionStateToNode !== 'function') return false;
+    try {
+        // 轨道序列完成时 Runtime 可能已经移除其 current TrackEntry。
+        // 在浮窗真正切步前恢复每条来源轨道的末帧实体，确保目标普通动画或
+        // 目标轨道序列都拥有真实 mixingFrom，而不是只有动画名的硬切回退。
+        if (fromNode._trackMode && fromNode._trackSequence && fromNode._trackSequence.length > 0) {
+            if (typeof SMTool._restoreTrackMixSlotGuard === 'function') SMTool._restoreTrackMixSlotGuard(pp);
+            if (typeof SMTool._primeStateWithNodeFinalPose !== 'function' ||
+                !SMTool._primeStateWithNodeFinalPose(pp.state, pp.skeleton, pp._skeletonData, fromNode, pp._spineVer)) {
+                return false;
+            }
+        }
+        if (!SMTool._transitionStateToNode(pp, pp.state, pp.skeleton, pp._skeletonData, toNode, pp._spineVer, duration)) return false;
+        pp.state.update(0);
+        pp.state.apply(pp.skeleton);
+        pp.skeleton.updateWorldTransform(pp._physParam);
+        pp.nodeId = toNode.id;
+        pp.animName = toNode.currentAnim || '';
+        pp._trackMode = !!toNode._trackMode;
+        pp._trackSequence = toNode._trackMode ? (toNode._trackSequence || []) : null;
+        pp._connectionMixDuration = duration;
+        pp._lastTime = performance.now();
+        return true;
+    } catch (e) {
+        return false;
+    }
+};
+
 // ---- 同步预览浮窗的 PMA 和皮肤到源节点状态 ----
 SMTool._syncPreviewPmaAndSkin = function (pp, sourceNode) {
     if (!pp || !pp.skeleton || !pp._skeletonData || !sourceNode) return;
@@ -1738,6 +1790,7 @@ SMTool._onPanMove = function (e) {
     if (!SMData.isPanning) return;
     SMData.view.x = SMData.viewStart.x + (e.clientX - SMData.panStart.x) / SMData.view.zoom;
     SMData.view.y = SMData.viewStart.y + (e.clientY - SMData.panStart.y) / SMData.view.zoom;
+    SMData._viewInteractingUntil = performance.now() + 100;
     SMTool._updateAllPos();
 };
 
@@ -2254,7 +2307,7 @@ SMTool._renderPreviewSpine38Interleaved = function (pp, gl, WGL, cw, ch) {
 
     // 获取源节点的插槽图片
     var srcNode = (pp.nodeId != null) ? SMData.nodes.get(pp.nodeId) : null;
-    if (!srcNode || !srcNode._slotScreenshots) {
+    if (SMData._hideBoneImgs || !srcNode || !srcNode._slotScreenshots) {
         // 无自定义图片 → 正常渲染
         pp._shader.bind();
         pp._shader.setUniformi(WGL.Shader.SAMPLER, 0);
@@ -2465,7 +2518,7 @@ SMTool._renderLayerSkeletonInterleaved = function (ls, gl, WGL, srcNode) {
     var drawOrder = skeleton.drawOrder;
 
     // 无自定义图片或空 drawOrder → 正常渲染
-    if (!srcNode || !srcNode._slotScreenshots || !drawOrder || drawOrder.length === 0) {
+    if (SMData._hideBoneImgs || !srcNode || !srcNode._slotScreenshots || !drawOrder || drawOrder.length === 0) {
         ls.shader.bind();
         ls.shader.setUniformi(WGL.Shader.SAMPLER, 0);
         ls.shader.setUniform4x4f(WGL.Shader.MVP_MATRIX, ls.mvp.values);
@@ -2608,9 +2661,10 @@ SMTool._renderSingleSlotImagesDirect = function (gl, ls, slotName, bone, slot, s
     if (shotIds.length === 0) return;
 
     // 懒初始化：本函数可能被多次调用，使用简单的缓存
-    if (!SMTool._layerSlotQR && gl) {
+    if ((!SMTool._layerSlotQR || SMTool._layerSlotGL !== gl) && gl) {
         SMTool._layerSlotQR = SMTool._createBoneQuadRenderer(gl);
         SMTool._layerSlotTexCache = {};
+        SMTool._layerSlotGL = gl;
     }
     var qr = SMTool._layerSlotQR;
     var texCache = SMTool._layerSlotTexCache;
@@ -2711,7 +2765,12 @@ SMTool._renderLayerPreviewSlotImagesForSkeleton = function (ls, gl, WGL, srcNode
     if (slotNames.length === 0) return;
 
     var qr = SMTool._layerSlotQR;
-    if (!qr && gl) { SMTool._layerSlotQR = SMTool._createBoneQuadRenderer(gl); qr = SMTool._layerSlotQR; }
+    if ((!qr || SMTool._layerSlotGL !== gl) && gl) {
+        SMTool._layerSlotQR = SMTool._createBoneQuadRenderer(gl);
+        SMTool._layerSlotTexCache = {};
+        SMTool._layerSlotGL = gl;
+        qr = SMTool._layerSlotQR;
+    }
     if (!qr) return;
 
     // Build slot → bone map
@@ -3025,7 +3084,7 @@ SMTool._renderNodeSlotImages = function (node, gl, nodeW, nodeH, sx, glY, sw, sh
 // 渲染层级预览浮窗骨骼挂图（所有层的所有链骨架）
 // ================================================================
 SMTool._renderLayerPreviewBoneImages = function (pp) {
-    if (!pp || !pp.visible || !pp.gl) return;
+    if (!pp || !pp.visible || !pp.gl || SMData._hideBoneImgs) return;
     var list = pp._layerSkeletons;
     if (!list || list.length === 0) return;
 
@@ -3089,6 +3148,7 @@ SMTool._renderLayerPreviewBoneImages = function (pp) {
 
     // ★★ 递归渲染函数：处理一层（含嵌套子层）的所有骨架挂点图片
     var _renderSkeletonBoneImages = function (layerEntry) {
+        if (!layerEntry || layerEntry._hidden || layerEntry._suppressDraw) return;
         // 与主画面使用同一个真实绘制条目。若当前链节点是延时器/隐藏器，
         // 保留上一个实际动画；新一轮开头则显示首个实际动画的第 0 帧。
         var renderEntry = layerEntry._renderEntry ||
@@ -3176,7 +3236,7 @@ SMTool._renderLayerPreviewBoneImages = function (pp) {
 // 渲染预览浮窗骨骼挂图（预览独立 WebGL 上下文）
 // ================================================================
 SMTool._renderPreviewBoneImages = function (pp) {
-    if (!pp || !pp.visible || !pp.skeleton || !pp.gl) return;
+    if (!pp || !pp.visible || !pp.skeleton || !pp.gl || SMData._hideBoneImgs) return;
     var nodeId = pp.nodeId;
     if (nodeId == null) return;
     var srcNode = SMData.nodes.get(nodeId);
@@ -3525,7 +3585,7 @@ SMTool._renderPreviewSlotImages = function (pp, passFilter) {
 // passFilter: 'bottom' | 'top' | 其他=全部
 // ================================================================
 SMTool._renderLayerPreviewSlotImages = function (pp, passFilter) {
-    if (!pp || !pp.visible || !pp.gl) return;
+    if (!pp || !pp.visible || !pp.gl || SMData._hideBoneImgs) return;
     var list = pp._layerSkeletons;
     if (!list || list.length === 0) return;
 
@@ -3591,11 +3651,14 @@ SMTool._renderLayerPreviewSlotImages = function (pp, passFilter) {
     // 遍历所有层
     for (var li = 0; li < list.length; li++) {
         var ls = list[li];
-        var activeIdx = (ls._chainSkeletons && ls._chainSkeletons.length > 0) ? (ls._chainIdx || 0) : -1;
-        var skeletons = (activeIdx >= 0 && ls._chainSkeletons) ? [ls._chainSkeletons[activeIdx]] : (!ls._chainSkeletons ? [ls] : []);
+        if (!ls || ls._hidden || ls._suppressDraw) continue;
+        var renderEntry = ls._renderEntry ||
+            (SMTool._firstRenderableLayerEntry ? SMTool._firstRenderableLayerEntry(ls) : null);
+        var skeletons = renderEntry ? [renderEntry] : (!ls._chainSkeletons ? [ls] : []);
         for (var ski = 0; ski < skeletons.length; ski++) {
             var skEntry = skeletons[ski];
             if (!skEntry || !skEntry.skeleton) continue;
+            if (skEntry.useVer === '3.8') continue; // 3.8 已在 drawOrder 中交错绘制
             skEntry.skeleton.updateWorldTransform(skEntry.physParam);
             var srcNode = SMData.nodes.get(skEntry._chainNodeId || skEntry.nodeId);
             if (!srcNode || !srcNode._slotScreenshots) continue;

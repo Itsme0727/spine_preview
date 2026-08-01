@@ -103,6 +103,85 @@ body {
     pointer-events: all;
 }
 
+#connectionControlLayer {
+    position: absolute;
+    inset: 0;
+    z-index: 7;
+    pointer-events: none;
+    overflow: hidden;
+}
+.mix-transition-box {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    gap: 0.32em;
+    padding: 0 0.48em;
+    box-sizing: border-box;
+    border: 1.5px solid #35c6a2;
+    border-radius: 10px;
+    background: #282830;
+    color: #fff;
+    pointer-events: auto;
+    white-space: nowrap;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.26);
+}
+.mix-transition-box.is-dimmed { opacity: 0.25; }
+.mix-transition-title {
+    margin-right: auto;
+    color: #fff;
+    font-weight: 600;
+}
+.mix-transition-box button {
+    width: 1.75em;
+    height: 1.75em;
+    padding: 0;
+    border: 1px solid rgba(255,255,255,0.22);
+    border-radius: 5px;
+    background: rgba(255,255,255,0.08);
+    color: #fff;
+    cursor: pointer;
+    line-height: 1;
+}
+.mix-transition-box button:hover { background: rgba(255,255,255,0.18); }
+.mix-transition-box input {
+    width: 3.6em;
+    min-width: 0;
+    padding: 0.2em 0.15em;
+    border: 1px solid rgba(255,255,255,0.25);
+    border-radius: 5px;
+    background: rgba(0,0,0,0.28);
+    color: #fff;
+    font: inherit;
+    font-weight: 600;
+    text-align: center;
+    outline: none;
+    appearance: textfield;
+}
+.mix-transition-box input::-webkit-inner-spin-button,
+.mix-transition-box input::-webkit-outer-spin-button { appearance: none; margin: 0; }
+.mix-transition-unit { color: #b6c9c4; }
+.mix-transition-box.is-compact {
+    gap: 1px;
+    padding: 0 2px;
+}
+.mix-transition-box.is-compact .mix-transition-title { display: none; }
+.mix-transition-box.is-compact button {
+    width: 22%;
+    height: 72%;
+    min-width: 0;
+    border-radius: 3px;
+    font-size: 0.75em;
+}
+.mix-transition-box.is-compact input {
+    width: 40%;
+    padding: 0;
+    border-radius: 3px;
+}
+.mix-transition-box.is-compact .mix-transition-unit {
+    width: 8%;
+    overflow: hidden;
+}
+
 /* ===== 鸟瞰图（左下角小地图）===== */
 #minimap {
     position: fixed;
@@ -334,6 +413,26 @@ body {
 #flowPanel .flp-header #flowModeToggle button.active {
     background: var(--accent);
     color: #fff;
+}
+#flowPanel .flp-header-controls {
+    position: absolute;
+    right: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+}
+#flowPanel .flp-header-controls:empty { display: none; }
+#flowPanel .flp-header-controls .flp-full-controls { gap: 7px; }
+#flowPanel .flp-header-controls .flp-full-btn {
+    width: 42px;
+    height: 42px;
+    font-size: 18px;
+}
+#flowPanel .flp-header-controls .flp-full-btn.small {
+    width: 32px;
+    height: 32px;
+    font-size: 13px;
 }
 
 /* ===== 拖拽区域 ===== */
@@ -3820,8 +3919,8 @@ body {
    ================================================================ */
 #flowPanel .flp-full-layout {
     display: flex;
-    gap: 12px;
     height: 100%;
+    width: 100%;
 }
 
 /* 左侧路径列表 */
@@ -3829,7 +3928,8 @@ body {
     flex: 1;
     overflow-y: auto;
     min-width: 0;
-    padding-right: 4px;
+    padding-right: 0;
+    width: 100%;
 }
 
 /* 单条完整路径 */
@@ -3841,6 +3941,11 @@ body {
     margin-bottom: 8px;
     cursor: pointer;
     transition: border-color 0.2s, box-shadow 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    box-sizing: border-box;
+    width: 100%;
 }
 #flowPanel .flp-full-path:hover {
     border-color: var(--accent);
@@ -3862,7 +3967,86 @@ body {
     align-items: center;
     flex-wrap: wrap;
     gap: 2px;
+    flex: 1;
+    min-width: 0;
 }
+
+#flowPanel .flp-full-path-title {
+    flex: 0 0 66px;
+    max-width: 110px;
+    padding: 5px 7px;
+    border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 5px;
+    background: rgba(255,255,255,0.06);
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 650;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: text;
+    outline: none;
+}
+#flowPanel .flp-full-path-title.editing {
+    max-width: 180px;
+    border-color: var(--accent);
+    background: rgba(74, 144, 217, 0.15);
+    overflow: visible;
+}
+
+#flowPanel .flp-full-transition {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    margin: 0 3px;
+}
+#flowPanel .flp-full-mix-editor {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    height: 22px;
+    padding: 0 3px;
+    border: 1px solid rgba(74, 158, 255, 0.45);
+    border-radius: 5px;
+    background: #282830;
+    box-sizing: border-box;
+}
+#flowPanel .flp-full-mix-editor button {
+    width: 16px;
+    height: 17px;
+    padding: 0;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--accent2);
+    font-size: 8px;
+    line-height: 1;
+    cursor: pointer;
+}
+#flowPanel .flp-full-mix-editor button:hover { background: rgba(74,158,255,0.18); }
+#flowPanel .flp-full-mix-value {
+    display: inline-flex;
+    align-items: center;
+    gap: 1px;
+    color: var(--text2);
+    font-size: 10px;
+}
+#flowPanel .flp-full-mix-value input {
+    width: 27px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: #fff;
+    font: inherit;
+    font-weight: 650;
+    text-align: right;
+    outline: none;
+    appearance: textfield;
+}
+#flowPanel .flp-full-mix-value input::-webkit-inner-spin-button,
+#flowPanel .flp-full-mix-value input::-webkit-outer-spin-button { appearance: none; margin: 0; }
 
 /* ===== 右上角动画预览浮窗面板 ===== */
 #animPreviewPanel {
@@ -4139,16 +4323,6 @@ body {
     box-shadow: none !important;
 }
 
-#flowPanel .flp-full-arrow {
-    color: var(--accent);
-    font-weight: 900;
-    font-size: 22px;
-    margin: 0 4px;
-    flex-shrink: 0;
-    line-height: 1;
-    padding-top: 2px;
-}
-
 /* ================================================================
    Layer Hub 分支矩阵（思维导图风格）
    ================================================================ */
@@ -4262,12 +4436,6 @@ body {
     color: rgba(255, 255, 255, 0.35) !important;
     border: 1.5px dashed rgba(74, 158, 255, 0.35);
     box-shadow: none !important;
-}
-    width: 260px;
-    flex-shrink: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
 }
 
 #flowPanel .flp-full-canvas {
@@ -4784,10 +4952,10 @@ body {
 }
 .app-layer-list {
     position: absolute;
-    left: -230px;
+    left: -280px;
     top: 0;
     bottom: 0;
-    width: 230px;
+    width: 280px;
     background: var(--panel-bg);
     border: 1px solid var(--border);
     border-radius: 10px 0 0 10px;
@@ -4829,18 +4997,34 @@ body {
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 8px;
+    min-height: 122px;
     margin-bottom: 6px;
     transition: border-color 0.2s;
     cursor: pointer;
     user-select: none;
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 9px;
 }
 .all-item.hidden-layer { opacity: 0.5; }
-.all-item-left {
+.all-item.hidden-layer .all-layer-thumb { visibility: hidden; }
+.all-layer-thumb {
+    width: 72px;
+    height: 104px;
+    flex: 0 0 72px;
+    display: block;
+    border: 1px solid rgba(185, 169, 238, 0.45);
+    border-radius: 8px;
+    background: transparent;
+    box-sizing: border-box;
+}
+.all-item-main {
     flex: 1;
     min-width: 0;
+    align-self: stretch;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
 }
 .all-item-row1 {
     display: flex;
@@ -5034,11 +5218,11 @@ body {
 
 /* ===== 层级列表 — 当前播放节点名（右侧居中） ===== */
 .all-item-cur-node {
-    flex-shrink: 0;
-    font-size: 20px;
+    flex: 0 0 auto;
+    font-size: 18px;
     color: #4ec96e;
     text-align: right;
-    max-width: 140px;
+    max-width: 86px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

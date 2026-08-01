@@ -69,6 +69,7 @@ SMTool._renderConnections = function () {
     var selConn = SMData.selectedConnection;
     var dragging = SMData.draggingCP;
     SMData._labelRects = [];  // 重置标签区域列表
+    var mixControls = [];
 
     for (var i = 0; i < SMData.connections.length; i++) {
         var conn = SMData.connections[i];
@@ -229,11 +230,13 @@ SMTool._renderConnections = function () {
         var rectX = mx - tw / 2;
         var rectY = my - th / 2;
 
-        // 存储标签矩形区域供 hover 检测（屏幕坐标，用于 mouse 匹配）
-        // ★ 含关闭按钮区域（加大尺寸，方便点击）
-        var closeSize = Math.round(72 * z * extraScale);
-        var closeX = rectX + tw - closeSize - 2;
-        var closeY = rectY + 2;
+        // 条件框视觉保持原样；只把删除图标的实际点击热区缩为原来的 20%。
+        var closeVisualSize = Math.round(72 * z * extraScale);
+        var closeCenterX = rectX + tw - closeVisualSize / 2 - 2;
+        var closeCenterY = rectY + closeVisualSize / 2 + 2;
+        var closeSize = Math.max(6, Math.round(closeVisualSize * 0.2));
+        var closeX = closeCenterX - closeSize / 2;
+        var closeY = closeCenterY - closeSize / 2;
         if (!SMData._labelRects) SMData._labelRects = [];
         SMData._labelRects.push({
             connId: conn.id,
@@ -257,7 +260,7 @@ SMTool._renderConnections = function () {
         ctx.font = Math.round(48 * z * extraScale) + 'px "Segoe UI",system-ui,sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText('×', closeX + closeSize / 2, closeY + closeSize / 2);
+        ctx.fillText('×', closeCenterX, closeCenterY);
 
         ctx.fillStyle = '#ffffff';
         ctx.textAlign = 'center';
@@ -265,9 +268,23 @@ SMTool._renderConnections = function () {
         for (var li2 = 0; li2 < lines.length; li2++) {
             ctx.fillText(lines[li2], mx, rectY + textOffY + li2 * lineHeight + lineHeight / 2);
         }
+        mixControls.push({
+            connId: conn.id,
+            x: rectX,
+            y: rectY + th + Math.max(3, Math.round(10 * z * extraScale)),
+            w: tw,
+            h: th,
+            fontSize: Math.max(4, Math.round(22 * z * extraScale)),
+            color: connColor,
+            radius: br,
+            compact: tw < 150 || th < 36,
+            dimmed: !inFocus,
+            value: SMTool._normalizeConnectionMixDuration(conn._mixDuration)
+        });
         }  // closes if (!isEntryExitConn)
     }
     ctx.globalAlpha = 1;
+    SMTool._syncConnectionMixControls(mixControls);
 
     // 正在连线时的预览
     if (SMData.connecting) {
@@ -300,6 +317,112 @@ SMTool._renderConnections = function () {
         ctx.setLineDash([6, 4]);
         ctx.strokeRect(mx1, my1, mx2 - mx1, my2 - my1);
         ctx.setLineDash([]);
+    }
+};
+
+SMTool._normalizeConnectionMixDuration = function (value) {
+    var n = Number(value);
+    if (!isFinite(n) || n < 0) n = 0;
+    return Math.round(n * 10) / 10;
+};
+
+SMTool._getConnectionMixDuration = function (fromNodeId, toNodeId) {
+    for (var i = 0; i < SMData.connections.length; i++) {
+        var c = SMData.connections[i];
+        if (c.fromNode === fromNodeId && c.toNode === toNodeId) {
+            return SMTool._normalizeConnectionMixDuration(c._mixDuration);
+        }
+    }
+    return 0;
+};
+
+SMTool._setConnectionMixDuration = function (connId, value) {
+    var normalized = SMTool._normalizeConnectionMixDuration(value);
+    for (var i = 0; i < SMData.connections.length; i++) {
+        if (SMData.connections[i].id === connId) {
+            SMData.connections[i]._mixDuration = normalized;
+            break;
+        }
+    }
+    var inputs = document.querySelectorAll('[data-conn-mix-id="' + connId + '"]');
+    for (var ii = 0; ii < inputs.length; ii++) {
+        if (document.activeElement !== inputs[ii]) inputs[ii].value = normalized.toFixed(1);
+    }
+    SMData._forceRedraw = true;
+    return normalized;
+};
+
+SMTool._adjustConnectionMixDuration = function (connId, delta) {
+    var current = 0;
+    for (var i = 0; i < SMData.connections.length; i++) {
+        if (SMData.connections[i].id === connId) {
+            current = SMData.connections[i]._mixDuration;
+            break;
+        }
+    }
+    return SMTool._setConnectionMixDuration(connId, Number(current || 0) + Number(delta || 0));
+};
+
+// 条件框仍由 Canvas 绘制；可输入的混合值使用轻量 DOM 覆盖层，并复用元素避免拖动画布时反复创建。
+SMTool._syncConnectionMixControls = function (descriptors) {
+    var layer = document.getElementById('connectionControlLayer');
+    if (!layer) return;
+    if (!SMTool._connectionMixElements) SMTool._connectionMixElements = {};
+    var elementMap = SMTool._connectionMixElements;
+    var keep = {};
+    for (var i = 0; i < descriptors.length; i++) {
+        var d = descriptors[i];
+        keep[d.connId] = true;
+        var el = elementMap[d.connId];
+        if (!el) {
+            el = document.createElement('div');
+            el.className = 'mix-transition-box';
+            el.setAttribute('data-conn-id', d.connId);
+            el.innerHTML = '<span class="mix-transition-title">混合过渡</span>' +
+                '<button type="button" data-action="decrease" title="减少 0.1 秒">◀</button>' +
+                '<input type="number" min="0" step="0.1" inputmode="decimal" aria-label="混合过渡秒数">' +
+                '<button type="button" data-action="increase" title="增加 0.1 秒">▶</button>' +
+                '<span class="mix-transition-unit">s</span>';
+            (function (box, id) {
+                box.addEventListener('mousedown', function (e) { e.stopPropagation(); });
+                box.addEventListener('click', function (e) {
+                    e.stopPropagation();
+                    var action = e.target && e.target.getAttribute('data-action');
+                    if (action === 'decrease') SMTool._adjustConnectionMixDuration(id, -0.1);
+                    if (action === 'increase') SMTool._adjustConnectionMixDuration(id, 0.1);
+                });
+                var field = box.querySelector('input');
+                field.setAttribute('data-conn-mix-id', id);
+                field.addEventListener('change', function () { this.value = SMTool._setConnectionMixDuration(id, this.value).toFixed(1); });
+                field.addEventListener('keydown', function (e) {
+                    if (e.key === 'ArrowLeft') { e.preventDefault(); this.value = SMTool._adjustConnectionMixDuration(id, -0.1).toFixed(1); }
+                    if (e.key === 'ArrowRight') { e.preventDefault(); this.value = SMTool._adjustConnectionMixDuration(id, 0.1).toFixed(1); }
+                });
+            })(el, d.connId);
+            layer.appendChild(el);
+            elementMap[d.connId] = el;
+        }
+        el.style.left = d.x + 'px';
+        el.style.top = d.y + 'px';
+        el.style.width = Math.max(1, d.w) + 'px';
+        el.style.height = Math.max(1, d.h) + 'px';
+        el.style.fontSize = d.fontSize + 'px';
+        el.style.borderColor = d.color || '';
+        el.style.borderRadius = Math.max(2, d.radius || 0) + 'px';
+        el.classList.toggle('is-dimmed', !!d.dimmed);
+        el.classList.toggle('is-compact', !!d.compact);
+        var input = el.querySelector('input');
+        if (input && document.activeElement !== input) {
+            input.value = d.value.toFixed(1);
+        }
+    }
+    var ids = Object.keys(elementMap);
+    for (var j = 0; j < ids.length; j++) {
+        var id = ids[j];
+        if (!keep[id]) {
+            if (elementMap[id] && elementMap[id].parentNode) elementMap[id].remove();
+            delete elementMap[id];
+        }
     }
 };
 

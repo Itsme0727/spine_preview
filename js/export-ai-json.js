@@ -257,7 +257,10 @@ SMTool._serializeStepForAI = function (node) {
 SMTool._serializeConnForAI = function (connId) {
     for (var i = 0; i < SMData.connections.length; i++) {
         var c = SMData.connections[i];
-        if (c.id === connId) return { condition: c.condition || '' };
+        if (c.id === connId) return {
+            condition: c.condition || '',
+            mixDurationSeconds: SMTool._normalizeConnectionMixDuration ? SMTool._normalizeConnectionMixDuration(c._mixDuration) : (Number(c._mixDuration) || 0)
+        };
     }
     return { condition: '' };
 };
@@ -273,6 +276,7 @@ SMTool._buildFlowsForSource = function (srcNode, startFlowIdx) {
         var srcSF = srcNode.sourceFile ? '[' + srcNode.sourceFile + '] ' : '';
         var soloFlow = {
             flowIndex: startFlowIdx,
+            flowTitle: '动画1',
             flowExpression: srcSF + srcLabel + '（无下游）',
             isCycle: false,
             steps: [SMTool._serializeStepForAI(srcNode)]
@@ -302,6 +306,8 @@ SMTool._buildFlowsForSource = function (srcNode, startFlowIdx) {
 
         var flowObj = {
             flowIndex: flowIdx,
+            flowTitle: (SMData._fullPathNames && typeof SMTool._fullPathStableKey === 'function' &&
+                SMData._fullPathNames[SMTool._fullPathStableKey(pathData)]) || ('动画' + (pk + 1)),
             flowExpression: exprParts.join(' '),
             isCycle: false,
             steps: []
@@ -867,6 +873,11 @@ SMTool._aiV3SerializeEdge = function (connection) {
             ast: null,
             evaluationContract: rawCondition.trim() ? 'Host engine must evaluate this expression using project-defined variables.' : 'Always eligible.'
         },
+        animationBlend: {
+            durationSeconds: SMTool._normalizeConnectionMixDuration ? SMTool._normalizeConnectionMixDuration(connection._mixDuration) : Math.max(0, Number(connection._mixDuration) || 0),
+            zeroMeansCut: true,
+            interpolationIntent: 'Spine AnimationState mix from source final pose to destination animation.'
+        },
         visual: {
             color: connection.color || '',
             bezierControlPointsCanvasPixels: [
@@ -963,6 +974,7 @@ SMTool._aiV3BuildGameProtocol = function (nodes, edges, resources, diagnostics) 
             toNodeId: transitionEdge.to.nodeId,
             trigger: trigger,
             guard: SMTool._aiV3Clone(transitionEdge.condition, {}),
+            animationBlend: SMTool._aiV3Clone(transitionEdge.animationBlend, {}),
             priority: priority,
             isFallback: transitionEdge.condition.kind === 'always',
             failurePolicyWhenGuardIsFalse: 'evaluate-next-transition-by-priority'
@@ -1079,6 +1091,19 @@ SMTool._aiV3BuildFlowSummaries = function (nodes, edges, entryIds, diagnostics) 
             labels.push(flowNode ? (flowNode.displayName || flowNode.name || flowNode.id) : flows[fi].nodeIds[pi]);
         }
         flows[fi].expression = labels.join(' → ');
+        var titlePath = { nodes: [], conns: [] };
+        for (var tni = 0; tni < flows[fi].nodeIds.length; tni++) {
+            titlePath.nodes.push({
+                id: String(flows[fi].nodeIds[tni]).replace(/^node:/, ''),
+                cycleClose: !!flows[fi].isCycle && tni === flows[fi].nodeIds.length - 1
+            });
+        }
+        for (var tei = 0; tei < flows[fi].edgeIds.length; tei++) {
+            titlePath.conns.push(String(flows[fi].edgeIds[tei]).replace(/^edge:/, ''));
+        }
+        var authoredTitle = SMData._fullPathNames && typeof SMTool._fullPathStableKey === 'function' ?
+            SMData._fullPathNames[SMTool._fullPathStableKey(titlePath)] : '';
+        flows[fi].authorTitle = authoredTitle || ('动画' + flows[fi].flowIndex);
     }
     return flows;
 };

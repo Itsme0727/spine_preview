@@ -476,7 +476,7 @@ SMTool.init = function () {
             }
             return;
         }
-        if (e.target.closest && e.target.closest('#toolbar, #ctxMenu, #conditionEditor, #zoomControl, #statusBar, #dataFloatPanel, #flowPanel, #flowModeToggle, #animPreviewPanel, #searchPanel')) return;
+        if (e.target.closest && e.target.closest('#toolbar, #ctxMenu, #conditionEditor, #connectionControlLayer, #zoomControl, #statusBar, #dataFloatPanel, #flowPanel, #flowModeToggle, #animPreviewPanel, #searchPanel')) return;
         if (e.target.closest && e.target.closest('input, textarea, select, button')) return;
         if (e.shiftKey) e.preventDefault();
         SMTool._onMD(e);
@@ -486,7 +486,7 @@ SMTool.init = function () {
 
     // 滚轮缩放（面板内滚动内容，不缩放画布）
     window.addEventListener('wheel', function (e) {
-        if (!e.target.closest('.state-list') && !e.target.closest('.anim-bar') && !e.target.closest('.anim-select') && !e.target.closest('.ip-body') && !e.target.closest('#conditionEditor') && !e.target.closest('#dataFloatPanel') && !e.target.closest('#animPreviewPanel') && !e.target.closest('#screenshotOverlay') && !e.target.closest('#searchPanel')) {
+        if (!e.target.closest('.state-list') && !e.target.closest('.anim-bar') && !e.target.closest('.anim-select') && !e.target.closest('.ip-body') && !e.target.closest('#conditionEditor') && !e.target.closest('#connectionControlLayer') && !e.target.closest('#dataFloatPanel') && !e.target.closest('#animPreviewPanel') && !e.target.closest('#screenshotOverlay') && !e.target.closest('#searchPanel')) {
             e.preventDefault();
             SMTool._onWheel(e);
         }
@@ -1557,6 +1557,7 @@ SMTool.init = function () {
             nextGroupId: SMData.nextGroupId,
             renderMode: SMData.renderMode,
             flowMode: SMData.flowMode,
+            _fullPathNames: SMData._fullPathNames ? JSON.parse(JSON.stringify(SMData._fullPathNames)) : {},
             _boneLabelStore: SMData._boneLabelStore ? JSON.parse(JSON.stringify(SMData._boneLabelStore)) : {}
         };
 
@@ -1570,6 +1571,7 @@ SMTool.init = function () {
                 toNode: c.toNode,
                 toState: c.toState,
                 condition: c.condition || '',
+                _mixDuration: SMTool._normalizeConnectionMixDuration ? SMTool._normalizeConnectionMixDuration(c._mixDuration) : (Number(c._mixDuration) || 0),
                 cp1x: c.cp1x !== undefined ? c.cp1x : 50,
                 cp1y: c.cp1y !== undefined ? c.cp1y : 0,
                 cp2x: c.cp2x !== undefined ? c.cp2x : -50,
@@ -2047,6 +2049,7 @@ SMTool.init = function () {
         SMData.nextGroupId = snap.nextGroupId || 1;
         if (snap.renderMode) SMData.renderMode = snap.renderMode;
         if (snap.flowMode) SMData.flowMode = snap.flowMode;
+        SMData._fullPathNames = snap._fullPathNames || {};
         if (snap._boneLabelStore) SMData._boneLabelStore = snap._boneLabelStore;
 
         // ---- 4. 恢复连线（直接替换数组，canvas 绘制） ----
@@ -2058,6 +2061,7 @@ SMTool.init = function () {
                 toNode: c.toNode,
                 toState: c.toState,
                 condition: c.condition || '',
+                _mixDuration: SMTool._normalizeConnectionMixDuration ? SMTool._normalizeConnectionMixDuration(c._mixDuration) : (Number(c._mixDuration) || 0),
                 cp1x: c.cp1x,
                 cp1y: c.cp1y,
                 cp2x: c.cp2x,
@@ -2139,6 +2143,7 @@ SMTool.init = function () {
 
     // 快速比对两个快照是否相同（只比关键字段）
     SMTool._snapEqual = function (a, b) {
+        if (JSON.stringify(a._fullPathNames || {}) !== JSON.stringify(b._fullPathNames || {})) return false;
         if (a.nodes.length !== b.nodes.length) return false;
         if (a.connections.length !== b.connections.length) return false;
         if (a.groups.length !== b.groups.length) return false;

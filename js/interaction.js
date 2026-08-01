@@ -200,6 +200,7 @@ SMTool._onMD = function (e) {
                         toNode: found.id,
                         toState: toState,
                         condition: '',
+                        _mixDuration: 0,
                         cp1x: ddef.cp1x, cp1y: ddef.cp1y,
                         cp2x: ddef.cp2x, cp2y: ddef.cp2y,
                         color: _connColor(cclrIdx)
@@ -757,6 +758,7 @@ SMTool._onMU = function (e) {
                     toNode: target.nodeId,
                     toState: target.stateName,
                     condition: '',
+                    _mixDuration: 0,
                     cp1x: def.cp1x, cp1y: def.cp1y,
                     cp2x: def.cp2x, cp2y: def.cp2y,
                     color: _connColor(colorIdx)
@@ -890,6 +892,7 @@ SMTool._onKD = function (e) {
                         toNode: c.toNode,
                         toState: c.toState,
                         condition: c.condition || '',
+                        _mixDuration: SMTool._normalizeConnectionMixDuration ? SMTool._normalizeConnectionMixDuration(c._mixDuration) : (Number(c._mixDuration) || 0),
                         cp1x: c.cp1x !== undefined ? c.cp1x : 50,
                         cp1y: c.cp1y !== undefined ? c.cp1y : 0,
                         cp2x: c.cp2x !== undefined ? c.cp2x : -50,
@@ -1029,6 +1032,7 @@ SMTool._onKD = function (e) {
                     toNode: newTo,
                     toState: cc.toState,
                     condition: cc.condition,
+                    _mixDuration: SMTool._normalizeConnectionMixDuration ? SMTool._normalizeConnectionMixDuration(cc._mixDuration) : (Number(cc._mixDuration) || 0),
                     cp1x: cc.cp1x,
                     cp1y: cc.cp1y,
                     cp2x: cc.cp2x,
@@ -1333,6 +1337,7 @@ SMTool._onDot = function (nid, name, type) {
                 toNode: nid,
                 toState: name,
                 condition: '',
+                _mixDuration: 0,
                 cp1x: def.cp1x, cp1y: def.cp1y,
                 cp2x: def.cp2x, cp2y: def.cp2y,
                 color: _connColor(colorIdx)

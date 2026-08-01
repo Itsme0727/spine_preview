@@ -944,6 +944,7 @@ SMTool._serializeData = function () {
             toNode: c.toNode,
             toState: c.toState,
             condition: c.condition,
+            _mixDuration: SMTool._normalizeConnectionMixDuration ? SMTool._normalizeConnectionMixDuration(c._mixDuration) : (Number(c._mixDuration) || 0),
             cp1x: c.cp1x,
             cp1y: c.cp1y,
             cp2x: c.cp2x,
@@ -1074,6 +1075,7 @@ SMTool._serializeData = function () {
     data._previewZooms = SMData._previewZooms || {};
     data._snapEnabled = SMData._snapEnabled !== false;
     data.flowMode = SMData.flowMode || 'full';
+    data._fullPathNames = SMData._fullPathNames || {};
     data.renderMode = SMData.renderMode || 'perf';
 
     // ★★ 保存纹理去重存储表（如果为空则不写入，节省空间）
@@ -1905,7 +1907,10 @@ SMTool._processImportJson = function (jsonText, fileHandle) {
         if (d.view) SMData.view = d.view;
 
         // 恢复连线
-        SMData.connections = d.connections || [];
+        SMData.connections = (d.connections || []).map(function (c) {
+            c._mixDuration = SMTool._normalizeConnectionMixDuration ? SMTool._normalizeConnectionMixDuration(c._mixDuration) : Math.max(0, Number(c._mixDuration) || 0);
+            return c;
+        });
 
         // 恢复节点
         var nodeList = d.nodes || [];
@@ -2129,6 +2134,7 @@ SMTool._processImportJson = function (jsonText, fileHandle) {
         if (d._previewZooms) SMData._previewZooms = d._previewZooms;
         if (d._snapEnabled !== undefined) SMData._snapEnabled = d._snapEnabled;
         if (d.flowMode) SMData.flowMode = d.flowMode;
+        SMData._fullPathNames = d._fullPathNames || {};
         if (d.renderMode) SMData.renderMode = d.renderMode;
 
         // ★ 同步 UI 按钮状态

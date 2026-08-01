@@ -366,6 +366,7 @@ SMTool._tryConnectLayerDot = function (fromNid, fromState, toNid) {
         toNode: toNid,
         toState: '',
         condition: '',
+        _mixDuration: 0,
         cp1x: 0, cp1y: 0, cp2x: 0, cp2y: 0,
         _layerNum: layerNum
     });
@@ -954,6 +955,7 @@ SMTool._showLayerPreview = function (layerNode, playbackOwner) {
     var panel = document.getElementById('animPreviewPanel');
     var canvas = document.getElementById('appCanvas');
     if (!panel || !canvas) return;
+    if (typeof SMTool._syncLayerListPreviewMode === 'function') SMTool._syncLayerListPreviewMode(true, false);
 
     // ★ 直接从连线表收集（三重兜底）
     var linkedNodes = [];
@@ -1031,7 +1033,9 @@ SMTool._showLayerPreview = function (layerNode, playbackOwner) {
     } else if (activeFlowStep && activeFlowStep.id === layerNode.id && (activeFlow.isPlaying || activeFlow._isPaused)) {
         pp._playbackOwner = { type: 'flow', pathIdx: activeFlow.activePathIdx, nodeId: layerNode.id };
     } else {
-        pp._playbackOwner = { type: 'parallel', nodeId: layerNode.id };
+        pp._playbackOwner = { type: 'parallel', nodeId: layerNode.id, manualSelection: true };
+        pp._flowFrozen = false;
+        if (SMTool._setPreviewPauseUI) SMTool._setPreviewPauseUI(false);
     }
     // ★ 重置"所有分支已完成"标记（新预览周期）
     pp._allLayersCompletedOnce = false;
@@ -1383,6 +1387,7 @@ SMTool._showLayerPreview = function (layerNode, playbackOwner) {
     }
 
     pp._layerSkeletons = layerSkeletons;
+    pp._lastLayerThumbTime = 0;
     // ★ 恢复之前激活的位置修改模式（barrier 重新初始化后保持激活状态）
     if (savedPosMode && savedPosMode.active && savedPosMode.selectedIndices && savedPosMode.selectedIndices.size > 0) {
         pp._layerPosMode = savedPosMode;
@@ -1460,6 +1465,8 @@ SMTool._showLayerPreview = function (layerNode, playbackOwner) {
         pp._flowFrozen = initialFrozen;
         pp._lastTime = performance.now();
     }
+    // 每次选择新的并行节点/流程步骤都按新的运行时层数据立即重建列表。
+    if (typeof SMTool._syncLayerListPreviewMode === 'function') SMTool._syncLayerListPreviewMode(true, true);
 };
 
 /** 加载单个节点的骨架到指定的 GL 上下文，返回骨架渲染数据 */
@@ -1965,6 +1972,47 @@ SMTool._resetLayerAnimationEntry = function (entry) {
     entry.skeleton.updateWorldTransform(entry.physParam);
 };
 
+// 在并行层的 A→B 切换处复用 Spine AnimationState 原生 mixingFrom。
+// 普通↔普通、普通↔轨道、轨道↔轨道统一走同一过渡器。
+SMTool._prepareLayerConnectionMix = function (fromEntry, toEntry) {
+    if (!fromEntry || !toEntry || !fromEntry.state || !toEntry.state || !toEntry.skeleton) return false;
+    var fromNode = fromEntry._chainNodeId != null ? SMData.nodes.get(fromEntry._chainNodeId) : null;
+    var toNode = toEntry._chainNodeId != null ? SMData.nodes.get(toEntry._chainNodeId) : null;
+    if (!fromNode || !toNode) return false;
+    var duration = typeof SMTool._getConnectionMixDuration === 'function' ?
+        SMTool._getConnectionMixDuration(fromNode.id, toNode.id) : 0;
+    if (!(duration > 0)) return false;
+    var sameSource = fromNode.sourceFile && fromNode.sourceFile === toNode.sourceFile;
+    if (!sameSource && fromNode._srcAtlasText && fromNode._srcAtlasText === toNode._srcAtlasText) sameSource = true;
+    if (!sameSource) return false;
+
+    var skeletonData = toEntry._skeletonData || toEntry.skeletonData;
+    if (!skeletonData || typeof SMTool._primeStateWithNodeFinalPose !== 'function' ||
+        typeof SMTool._transitionStateToNode !== 'function') return false;
+
+    var mixFromNode = fromNode;
+    var mixToNode = toNode;
+    if (!fromNode._trackMode && fromEntry._chainAnimName && fromEntry._chainAnimName !== fromNode.currentAnim) {
+        mixFromNode = Object.create(fromNode);
+        mixFromNode.currentAnim = fromEntry._chainAnimName;
+    }
+    if (!toNode._trackMode && toEntry._chainAnimName && toEntry._chainAnimName !== toNode.currentAnim) {
+        mixToNode = Object.create(toNode);
+        mixToNode.currentAnim = toEntry._chainAnimName;
+    }
+
+    try {
+        if (!SMTool._primeStateWithNodeFinalPose(toEntry.state, toEntry.skeleton, skeletonData, mixFromNode, toEntry.useVer)) return false;
+        if (!SMTool._transitionStateToNode(toEntry, toEntry.state, toEntry.skeleton, skeletonData, mixToNode, toEntry.useVer, duration)) return false;
+        toEntry.skeleton.updateWorldTransform(toEntry.physParam);
+        toEntry._trackElapsed = 0;
+        toEntry._connectionMixDuration = duration;
+        return true;
+    } catch (e) {
+        return false;
+    }
+};
+
 // 有限次数的轨道序列到达最后一轮时，将画面钉在整条序列的真实末帧。
 // 否则原生循环队列会在边界先进入下一轮首帧，再被外层屏障冻结。
 SMTool._freezeLayerTrackSequenceAtFinalFrame = function (entry) {
@@ -2352,7 +2400,7 @@ SMTool._renderOneNormalLayer = function (ls, dt, frozen, gl, WGL, pp) {
             ls._loopTrack = { currentLoop: 0, totalElapsed: 0 };
             var next = ls._chainSkeletons[ls._chainIdx];
             if (next && !next._isDelayer && !next._isHider && next.state) {
-                SMTool._resetLayerAnimationEntry(next);
+                if (!SMTool._prepareLayerConnectionMix(active, next)) SMTool._resetLayerAnimationEntry(next);
             }
             // 后续同步和本帧绘制必须立即使用新条目，避免切换帧仍显示旧动画。
             active = next;
@@ -2969,7 +3017,8 @@ SMTool._getLayerCurNodeName = function (ls) {
     if (!node) return '';
     // ★ 动画节点：显示 currentAnim（动画状态名）；延时器：显示延时值；隐藏器：显示隐藏值
     if (node.nodeType === 'spine') {
-        return node.currentAnim || (node.animations && node.animations.length > 0 ? node.animations[0].name : node.name || '');
+        return node._trackMode ? (node._trackName || '轨道动画') :
+            (node.currentAnim || (node.animations && node.animations.length > 0 ? node.animations[0].name : node.name || ''));
     } else if (node.nodeType === 'delayer' || node.nodeType === 'progDelayer') {
         return '⏱ 延时 ' + (node._delayValue || 1.0).toFixed(1) + 's';
     } else if (node.nodeType === 'hider') {
@@ -2996,7 +3045,93 @@ SMTool._updateLayerListCurrentNodes = function () {
             el.textContent = name;
         }
     }
+    SMTool._updateLayerListThumbnails(performance.now(), false);
 };
+
+// 切换浮窗预览来源时同步层级列表，避免继续显示上一个并行组的缓存数据。
+SMTool._syncLayerListPreviewMode = function (isLayerPreview, rebuild) {
+    var trigger = document.getElementById('appLayerListTrigger');
+    var list = document.getElementById('appLayerList');
+    var content = document.getElementById('allListContent');
+    if (trigger) trigger.style.display = isLayerPreview ? '' : 'none';
+    if (!isLayerPreview) {
+        if (list) list.style.display = 'none';
+        if (content) content.innerHTML = '';
+        return;
+    }
+    if (list && list.style.display !== 'none') {
+        if (rebuild && typeof SMTool._buildLayerList === 'function') SMTool._buildLayerList();
+        else if (content) content.innerHTML = '<div style="padding:12px;color:var(--text2);font-size:12px">层级数据加载中…</div>';
+    }
+};
+
+// 层级列表实时缩略图：从主画布中当前活跃 Spine 节点的独立视口低频采样。
+// 不再创建 Spine Runtime/纹理/WebGL 上下文，避免层数增加时缩略图反而拖慢主播放。
+SMTool._updateLayerListThumbnails = function (now, force, onlyIdx) {
+    var pp = SMData._animPreview;
+    var listEl = document.getElementById('appLayerList');
+    if (!pp || !pp._layerSkeletons || !listEl || listEl.style.display === 'none') return;
+    if (!force && now - (pp._lastLayerThumbTime || 0) < 800) return; // 约 1.25fps，缩略图只表达状态
+    pp._lastLayerThumbTime = now;
+
+    var sourceCanvas = SMTool._sharedCanvas;
+    if (!sourceCanvas || !sourceCanvas.width || !sourceCanvas.height) return;
+    var z = SMData.view.zoom || 1;
+
+    var startIdx = typeof onlyIdx === 'number' ? onlyIdx : 0;
+    var endIdx = typeof onlyIdx === 'number' ? Math.min(pp._layerSkeletons.length, onlyIdx + 1) : pp._layerSkeletons.length;
+    for (var i = startIdx; i < endIdx; i++) {
+        var ls = pp._layerSkeletons[i];
+        var thumb = document.getElementById('allLayerThumb-' + i);
+        if (!thumb) continue;
+        var ctx = thumb.getContext('2d');
+        if (!ctx) continue;
+        if (!ls || ls._hidden) {
+            ctx.clearRect(0, 0, thumb.width, thumb.height);
+            continue;
+        }
+
+        var entry = ls._renderEntry;
+        if (!entry && ls._chainSkeletons && ls._chainSkeletons.length > 0) {
+            entry = ls._chainSkeletons[ls._chainIdx || 0];
+        }
+        if (!entry) entry = ls;
+        var nodeId = entry._chainNodeId != null ? entry._chainNodeId : entry.nodeId;
+        var node = nodeId != null ? SMData.nodes.get(nodeId) : null;
+        // 节点被平移到主画布视口外时保留最后一次有效缓存；不能清空缩略图。
+        if (!node || !node._canvasWidth || !node._canvasHeight || node._visible === false) continue;
+
+        var nodeScale = node._customScale !== undefined ? node._customScale : 1;
+        var pos = SMTool.worldToCanvas(node.x, node.y);
+        var srcX = Math.round(pos.x);
+        var srcY = Math.round(pos.y + (node._headerH || 70) * z * nodeScale);
+        var srcW = Math.max(1, Math.round(node._canvasWidth * z * nodeScale));
+        var srcH = Math.max(1, Math.round(node._canvasHeight * z * nodeScale));
+
+        // 裁切到共享画布边界，避免节点临近视口边缘时 drawImage 失败。
+        var clipX = Math.max(0, srcX);
+        var clipY = Math.max(0, srcY);
+        var clipR = Math.min(sourceCanvas.width, srcX + srcW);
+        var clipB = Math.min(sourceCanvas.height, srcY + srcH);
+        var clipW = clipR - clipX;
+        var clipH = clipB - clipY;
+        if (clipW <= 1 || clipH <= 1) continue;
+
+        var inset = 6;
+        var availW = thumb.width - inset * 2;
+        var availH = thumb.height - inset * 2;
+        var fit = Math.min(availW / clipW, availH / clipH);
+        var dstW = clipW * fit;
+        var dstH = clipH * fit;
+        var dstX = (thumb.width - dstW) / 2;
+        var dstY = (thumb.height - dstH) / 2;
+        try {
+            ctx.clearRect(0, 0, thumb.width, thumb.height);
+            ctx.drawImage(sourceCanvas, clipX, clipY, clipW, clipH, dstX, dstY, dstW, dstH);
+        } catch (e) {}
+    }
+};
+
 SMTool._buildLayerList = function () {
     var content = document.getElementById('allListContent');
     if (!content) return;
@@ -3056,7 +3191,8 @@ SMTool._buildLayerList = function () {
         html += '<div class="all-item' + (isHidden ? ' hidden-layer' : '') + (isSelected ? ' selected' : '') + (isPosActive ? ' pos-mode-hover' : '') + '" ' +
             'data-layer-idx="' + i + '" ' +
             'onclick="SMTool._onLayerItemClick(event,' + i + ')" title="' + (isPosActive ? '点击选择/取消层（Shift+点击范围连选）' : '') + '">' +
-            '<div class="all-item-left">' +
+            '<canvas class="all-layer-thumb" id="allLayerThumb-' + i + '" width="144" height="208" aria-label="L' + layerNum + ' 动画缩略图"></canvas>' +
+            '<div class="all-item-main">' +
                 '<div class="all-item-row1">' +
                     '<span class="all-item-layer">L' + layerNum + '</span>' +
                     '<span class="all-item-file" title="' + SMTool._esc(fileName) + '">' + SMTool._esc(fileName) + '</span>' +
@@ -3073,6 +3209,7 @@ SMTool._buildLayerList = function () {
         (isPosActive && selSet.size > 0 ? '📍 已选 ' + selSet.size + ' 层 — 在预览面板拖拽移动' : '') +
     '</div>';
     content.innerHTML = html;
+    SMTool._updateLayerListThumbnails(performance.now(), true);
 };
 
 // ★ 切换层级显隐
@@ -3081,7 +3218,17 @@ SMTool._toggleLayerVisibility = function (idx) {
     if (!pp || !pp._layerSkeletons || idx >= pp._layerSkeletons.length) return;
     var ls = pp._layerSkeletons[idx];
     ls._hidden = !ls._hidden;
-    SMTool._buildLayerList();
+    // 不重建整个列表，否则其他层的缩略图缓存会被一并销毁。
+    var item = document.querySelector('.all-item[data-layer-idx="' + idx + '"]');
+    if (item) {
+        item.classList.toggle('hidden-layer', !!ls._hidden);
+        var button = item.querySelector('.all-btn');
+        if (button) {
+            button.classList.toggle('active', !ls._hidden);
+            button.title = ls._hidden ? '显示层级' : '隐藏层级';
+        }
+    }
+    SMTool._updateLayerListThumbnails(performance.now(), true, idx);
 };
 
 // ★ 层级列表项点击（位置模式下 shift范围连选，普通模式下无操作）

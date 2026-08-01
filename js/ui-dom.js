@@ -269,7 +269,7 @@ SMTool._createEl = function (node) {
         '<div class="header" onmousedown="event.stopPropagation();SMTool._onHD(event,' + node.id + ')">' +
             '<div class="header-titles">' +
                 (node.sourceFile ? '<span class="source-file">' + SMTool._esc(node.sourceFile) + '</span>' : '') +
-                '<span class="name">' + SMTool._esc(node._trackMode ? node._trackName : (node.currentAnim || node.name)) + '</span>' +
+                '<span class="name" ondblclick="SMTool._beginTrackNameEdit(event,' + node.id + ',this)">' + SMTool._esc(node._trackMode ? node._trackName : (node.currentAnim || node.name)) + '</span>' +
             '</div>' +
             '<div class="btns">' +
                 '<button onclick="event.stopPropagation();SMTool._toggleTrackMode(' + node.id + ')" ' +
@@ -2999,6 +2999,7 @@ SMTool._updateEl = function (node) {
     var nameEl = el.querySelector('.header-titles .name');
     if (nameEl) {
         nameEl.textContent = node._trackMode ? node._trackName : (node.currentAnim || node.name);
+        nameEl.ondblclick = function (event) { SMTool._beginTrackNameEdit(event, node.id, this); };
     }
 
     // ★ 轨道模式：anim-bar 保留连线端点，仅隐藏下拉框
@@ -3217,21 +3218,36 @@ SMTool._updatePos = function (node) {
     el.style.transform = 'scale(' + totalScale + ')';
     el.style.transformOrigin = 'top left';
 
-    SMTool._updateFloatLabels();
+    // 单节点拖拽时也需要跟随浮动标题，但不能每次 _updatePos
+    // 都立即遍历全部节点；合并到下一帧最多执行一次。
+    if (!SMTool._bulkPosUpdate) SMTool._scheduleFloatLabelsUpdate();
 };
 
 // ★ 优化：rAF 批量合并，避免同一帧内多次全量刷新
 SMTool._allPosScheduled = false;
 SMTool._allPosQueued = false;
+SMTool._floatLabelsScheduled = false;
+SMTool._bulkPosUpdate = false;
+
+SMTool._scheduleFloatLabelsUpdate = function () {
+    if (SMTool._floatLabelsScheduled) return;
+    SMTool._floatLabelsScheduled = true;
+    requestAnimationFrame(function () {
+        SMTool._floatLabelsScheduled = false;
+        SMTool._updateFloatLabels();
+    });
+};
 
 // ★ 核心：同步更新所有节点 DOM 位置（缩放/平移时使用，避免连线偏移）
 SMTool._updateAllPosCore = function () {
+    SMTool._bulkPosUpdate = true;
     var nodesIter = SMData.nodes.values();
     var result = nodesIter.next();
     while (!result.done) {
         SMTool._updatePos(result.value);
         result = nodesIter.next();
     }
+    SMTool._bulkPosUpdate = false;
 
     // 连线端口：画布缩小时放大，放大时缩小，但保持最小可见
     var z = SMData.view.zoom;
@@ -3273,6 +3289,57 @@ SMTool._updateAllPos = function (forceSync) {
 // ---- 浮动大字标签（缩放 < 40% 时显示，固定字号不随缩放放大）----
 SMTool._floatLabels = {};
 
+SMTool._renameTrackNode = function (node, rawName) {
+    if (!node || !node._trackMode) return false;
+    var nextName = String(rawName || '').trim() || '轨道动画';
+    var oldName = node._trackName || '轨道动画';
+    node._trackName = nextName;
+    // 连线端口文本是该名称的引用，改名时同步迁移，不能留下失效的旧端口名。
+    for (var i = 0; i < SMData.connections.length; i++) {
+        var c = SMData.connections[i];
+        if (c.fromNode === node.id && c.fromState === oldName) c.fromState = nextName;
+        if (c.toNode === node.id && c.toState === oldName) c.toState = nextName;
+    }
+    SMTool._updateEl(node);
+    SMTool._scheduleFloatLabelsUpdate();
+    if (SMData._animPreview && SMData._animPreview.visible && SMData._animPreview.nodeId === node.id) {
+        SMTool._updateAppTitle('🎬 ' + nextName, node.sourceFile || '');
+    }
+    if (typeof SMTool._buildLayerList === 'function') {
+        var list = document.getElementById('appLayerList');
+        if (list && list.style.display !== 'none') SMTool._buildLayerList();
+    }
+    if (typeof SMTool._updateFlowPanel === 'function') SMTool._updateFlowPanel();
+    if (typeof SMTool._updateFullFlowPanel === 'function') {
+        SMTool._updateFullFlowPanel(document.getElementById('flpContent'), document.getElementById('flowPanel'));
+    }
+    SMData._forceRedraw = true;
+    return true;
+};
+
+SMTool._beginTrackNameEdit = function (event, nodeId, element) {
+    var node = SMData.nodes.get(nodeId);
+    if (!node || !node._trackMode || !element) return;
+    event.preventDefault();
+    event.stopPropagation();
+    element.contentEditable = 'true';
+    element.focus();
+    try { document.execCommand('selectAll'); } catch (e) {}
+    var commit = function () {
+        element.removeEventListener('blur', commit);
+        element.removeEventListener('keydown', onKey);
+        element.contentEditable = 'false';
+        SMTool._renameTrackNode(node, element.innerText);
+    };
+    var onKey = function (e) {
+        e.stopPropagation();
+        if (e.key === 'Enter') { e.preventDefault(); element.blur(); }
+        if (e.key === 'Escape') { element.textContent = node._trackName || '轨道动画'; element.blur(); }
+    };
+    element.addEventListener('blur', commit);
+    element.addEventListener('keydown', onKey);
+};
+
 SMTool._updateFloatLabels = function () {
     var container = document.getElementById('floatLabels');
     if (!container) return;
@@ -3306,7 +3373,11 @@ SMTool._updateFloatLabels = function () {
                     this.contentEditable = 'false';
                     var nid = parseInt(this.parentNode.getAttribute('data-nid'));
                     var newNode = SMData.nodes.get(nid);
-                    if (newNode) { newNode.name = this.innerText.trim() || newNode.name; }
+                    if (newNode && newNode._trackMode) {
+                        SMTool._renameTrackNode(newNode, this.innerText);
+                    } else if (newNode) {
+                        newNode.name = this.innerText.trim() || newNode.name;
+                    }
                 });
                 nameSpan.addEventListener('keydown', function(e) {
                     if (e.key === 'Escape') this.blur();
@@ -3542,6 +3613,16 @@ SMTool._invalidatePanelCache = function (nid) {
 // ★ 右上角动画预览浮窗面板 — 显示/隐藏/拖拽/缩放
 // ================================================================
 
+// 统一维护浮窗暂停按钮的视觉状态。切换手动选中的动画节点时，
+// 新预览始终从“正在播放”状态开始，不继承上一个浮窗的图标。
+SMTool._setPreviewPauseUI = function (paused) {
+    var btn = document.getElementById('appPauseBtn');
+    if (!btn) return;
+    btn.classList.toggle('paused', !!paused);
+    btn.textContent = paused ? '▶' : '⏸';
+    btn.title = paused ? '继续播放' : '暂停播放';
+};
+
 // ---- 显示预览面板 ----
 SMTool._showAnimPreview = function (node, restartAtZero, playbackOwner) {
     // ★ 层级节点：多层叠加预览
@@ -3551,6 +3632,7 @@ SMTool._showAnimPreview = function (node, restartAtZero, playbackOwner) {
     }
     // 跳过非 Spine 节点
     if (!node || node.nodeType !== 'spine') return;
+    if (typeof SMTool._syncLayerListPreviewMode === 'function') SMTool._syncLayerListPreviewMode(false, false);
     // ★ 播放启动期间抑制中间态重建
     if (SMData._animPreview && SMData._animPreview._suppressShow) return;
     // 跳过无源数据的节点
@@ -3580,10 +3662,13 @@ SMTool._showAnimPreview = function (node, restartAtZero, playbackOwner) {
     if (!panel) return;
 
     var pp = SMData._animPreview;
+    var previousPreviewNode = pp && pp.nodeId != null ? SMData.nodes.get(pp.nodeId) : null;
     if (playbackOwner && playbackOwner.type) {
         pp._playbackOwner = playbackOwner;
     } else {
-        pp._playbackOwner = { type: 'single', nodeId: node.id };
+        pp._playbackOwner = { type: 'single', nodeId: node.id, manualSelection: true };
+        pp._flowFrozen = false;
+        SMTool._setPreviewPauseUI(false);
     }
 
     // ================================================================
@@ -3610,6 +3695,7 @@ SMTool._showAnimPreview = function (node, restartAtZero, playbackOwner) {
             SMTool._updateAnimPreviewAnim(targetAnim);
         }
         SMTool._syncPreviewPmaAndSkin(pp, node);
+        SMTool._updateAppTitle('🎬 ' + (node._trackMode ? (node._trackName || '轨道动画') : targetAnim), node.sourceFile || '');
         return;
     }
 
@@ -3625,10 +3711,15 @@ SMTool._showAnimPreview = function (node, restartAtZero, playbackOwner) {
     }
 
     if (sameSource) {
+        var requestedMix = playbackOwner && playbackOwner.mixDurationSeconds;
+        var mixedToNode = restartAtZero && requestedMix > 0 && previousPreviewNode &&
+            SMTool._mixAnimPreviewToNode(pp, previousPreviewNode, node, requestedMix);
         pp.nodeId = node.id;
         // 流程切步时无条件归零；不能用“动画名相同”作为不重置的依据。
-        if (restartAtZero) {
+        if (restartAtZero && !mixedToNode) {
             SMTool._restartAnimPreviewStateAtZero(pp, node);
+            SMTool._updateAppTitle('🎬 ' + (node._trackMode ? (node._trackName || '轨道动画') : targetAnim), node.sourceFile || '');
+        } else if (mixedToNode) {
             SMTool._updateAppTitle('🎬 ' + (node._trackMode ? (node._trackName || '轨道动画') : targetAnim), node.sourceFile || '');
         } else if (node._trackMode && node._trackSequence && node._trackSequence.length > 0) {
             // ★ 轨道模式：重建序列链
@@ -3690,17 +3781,16 @@ SMTool._hideAnimPreview = function () {
     SMData._animPreview.visible = false;
 
     // ★ 重置暂停按钮状态
-    var btn = document.getElementById('appPauseBtn');
-    if (btn) {
-        btn.classList.remove('paused');
-        btn.textContent = '⏸';
-        btn.title = '暂停播放';
-    }
+    SMTool._setPreviewPauseUI(false);
 };
 
 // 以真实运行状态解析浮窗归属。完整流程只要正在运行或暂停，就必须拥有
 // 浮窗控制权；不能因异步重建浮窗时 owner 被短暂改写而退化成“重播当前节点”。
 SMTool._resolvePreviewPlaybackOwner = function (pp) {
+    var explicitOwner = pp && pp._playbackOwner;
+    // 用户手动点选了新节点，该浮窗已明确脱离原流程上下文。
+    // 与旧的“owner 被异步误写”情况区分：只有带 manualSelection 才优先。
+    if (explicitOwner && explicitOwner.manualSelection) return explicitOwner;
     var fullPlayback = SMData._fullPlayback;
     var activePathIdx = fullPlayback ? fullPlayback.activePathIdx : -1;
     var activePath = activePathIdx >= 0 ? SMData._fullPaths[activePathIdx] : null;
@@ -3710,7 +3800,6 @@ SMTool._resolvePreviewPlaybackOwner = function (pp) {
         return { type: 'flow', pathIdx: activePathIdx, nodeId: activePath.nodes[currentStep].id };
     }
 
-    var explicitOwner = pp && pp._playbackOwner;
     if (explicitOwner && explicitOwner.type === 'flow') {
         var explicitPath = SMData._fullPaths[explicitOwner.pathIdx];
         if (explicitPath && explicitPath.nodes && explicitPath.nodes.length > 0) return explicitOwner;
@@ -3740,8 +3829,7 @@ SMTool._restartPreview = function () {
     if (pp._flowFrozen) {
         pp._flowFrozen = false;
         SMTool._unfreezeAllNodes();
-        var pauseBtn = document.getElementById('appPauseBtn');
-        if (pauseBtn) { pauseBtn.classList.remove('paused'); pauseBtn.textContent = '⏸'; pauseBtn.title = '暂停播放'; }
+        SMTool._setPreviewPauseUI(false);
     }
 
     // ★ 并行预览：所有层经过同一个同步屏障归零，并立即绘制共同第 0 帧。
@@ -3762,7 +3850,6 @@ SMTool._togglePreviewPause = function () {
     var pp = SMData._animPreview;
     if (!pp || !pp.visible) return;
 
-    var btn = document.getElementById('appPauseBtn');
     var owner = SMTool._resolvePreviewPlaybackOwner(pp);
     var fullPlayback = SMData._fullPlayback;
     var isFlowOwner = owner.type === 'flow' && fullPlayback &&
@@ -3777,11 +3864,7 @@ SMTool._togglePreviewPause = function () {
             pp._flowFrozen = false;
             SMTool._unfreezeAllNodes();
         }
-        if (btn) {
-            btn.classList.remove('paused');
-            btn.textContent = '⏸';
-            btn.title = '暂停播放';
-        }
+        SMTool._setPreviewPauseUI(false);
     } else {
         // ★ 暂停播放：完整流的逻辑时钟和画面一起冻结。
         if (isFlowOwner && fullPlayback.isPlaying) {
@@ -3790,11 +3873,7 @@ SMTool._togglePreviewPause = function () {
             pp._flowFrozen = true;
             SMTool._freezeAllNodes();
         }
-        if (btn) {
-            btn.classList.add('paused');
-            btn.textContent = '▶';
-            btn.title = '继续播放';
-        }
+        SMTool._setPreviewPauseUI(true);
     }
 };
 
@@ -4676,6 +4755,9 @@ SMTool._updateFlowPanel = function () {
         return;
     }
 
+    var inactiveHeaderControls = document.getElementById('flpHeaderControls');
+    if (inactiveHeaderControls) inactiveHeaderControls.innerHTML = '';
+
     // ---- 三层模式（原有逻辑） ----
     // 单选一个节点 或 选中同一组内多个节点时显示
     var selNodeId = SMData.selectedNode;
@@ -4880,6 +4962,16 @@ SMTool._updateFlowPanel = function () {
 // ================================================================
 SMTool._updateFullFlowPanel = function (content, panel) {
     var _savedScrollTop = content.scrollTop;
+    var headerControls = document.getElementById('flpHeaderControls');
+    function _setHeaderControls(show) {
+        if (!headerControls) return;
+        headerControls.innerHTML = show ?
+            '<div class="flp-full-controls">' +
+                '<button class="flp-full-btn small" id="flpFullPrev" title="上一个状态">⏮</button>' +
+                '<button class="flp-full-btn" id="flpFullPlay" title="播放">▶</button>' +
+                '<button class="flp-full-btn small" id="flpFullNext" title="下一个状态">⏭</button>' +
+            '</div>' : '';
+    }
     var selNodeId = SMData.selectedNode;
     var showFlow = selNodeId && (
         SMData.selectedNodes.size === 1 ||
@@ -4891,6 +4983,7 @@ SMTool._updateFullFlowPanel = function (content, panel) {
         panel.classList.add('inactive');
         content.innerHTML = '<div class="flp-hint">点击选中一个动画节点，查看其完整动画组合</div>';
         content.scrollTop = _savedScrollTop;
+        _setHeaderControls(false);
         return;
     }
 
@@ -4899,6 +4992,7 @@ SMTool._updateFullFlowPanel = function (content, panel) {
         panel.classList.add('inactive');
         content.innerHTML = '<div class="flp-hint">节点不存在</div>';
         content.scrollTop = _savedScrollTop;
+        _setHeaderControls(false);
         return;
     }
 
@@ -4910,10 +5004,12 @@ SMTool._updateFullFlowPanel = function (content, panel) {
         panel.classList.remove('inactive');
         content.innerHTML = '<div class="flp-no-chain">🔗 节点 "' + SMTool._esc(selNode.name || '') + '" 暂无完整动画组<br/><span style="font-size:11px;color:var(--text2)">从该节点出发没有下游连线</span></div>';
         content.scrollTop = _savedScrollTop;
+        _setHeaderControls(false);
         return;
     }
 
     panel.classList.remove('inactive');
+    _setHeaderControls(true);
 
     // 辅助显示名（轨道模式显示轨道名）
     var _disp = function (s, node) {
@@ -4926,6 +5022,30 @@ SMTool._updateFullFlowPanel = function (content, panel) {
     // 当前播放状态
     var pb = SMData._fullPlayback;
     var activePathIdx = pb.activePathIdx;
+
+    if (!SMData._fullPathNames) SMData._fullPathNames = {};
+    function _pathKey(path) {
+        return typeof SMTool._fullPathStableKey === 'function' ? SMTool._fullPathStableKey(path) : '';
+    }
+    function _connectionBetween(fromId, toId) {
+        for (var ci = 0; ci < SMData.connections.length; ci++) {
+            var connection = SMData.connections[ci];
+            if (connection.fromNode === fromId && connection.toNode === toId) return connection;
+        }
+        return null;
+    }
+    function _renderTransitionEditor(connection) {
+        if (!connection) return '';
+        var mixValue = typeof SMTool._normalizeConnectionMixDuration === 'function' ?
+            SMTool._normalizeConnectionMixDuration(connection._mixDuration) : Math.max(0, Number(connection._mixDuration) || 0);
+        return '<span class="flp-full-transition" data-conn-id="' + connection.id + '">' +
+            '<span class="flp-full-mix-editor">' +
+                '<button type="button" data-mix-action="decrease" title="减少 0.1 秒">◀</button>' +
+                '<span class="flp-full-mix-value"><input data-conn-mix-id="' + connection.id + '" type="number" min="0" step="0.1" value="' + mixValue.toFixed(1) + '" aria-label="混合过渡秒数"><span>s</span></span>' +
+                '<button type="button" data-mix-action="increase" title="增加 0.1 秒">▶</button>' +
+            '</span>' +
+        '</span>';
+    }
 
     // ★ 辅助：渲染 layer hub 分支矩阵（内联在主干行内）
     function _renderLayerBranchesInline(hubNode, isActivePath, stepIdx) {
@@ -5023,7 +5143,7 @@ SMTool._updateFullFlowPanel = function (content, panel) {
                         h += '<span class="flp-full-state' + bState + '" data-br-layer="' + br.layer + '" data-br-idx="' + bni + '">' + SMTool._esc(_disp(bn.anim, SMData.nodes.get(bn.id))) + '</span>';
                     }
                     if (bni < br.nodes.length - 1) {
-                        h += '<span class="flp-full-arrow" style="font-size:13px;margin:0 2px;opacity:0.6;">→</span>';
+                        h += _renderTransitionEditor(_connectionBetween(bn.id, br.nodes[bni + 1].id));
                     }
                 }
             }
@@ -5070,7 +5190,7 @@ SMTool._updateFullFlowPanel = function (content, panel) {
                         h += '<span class="flp-full-state branch-state upcoming">' + SMTool._esc(_disp(bn.anim, SMData.nodes.get(bn.id))) + '</span>';
                     }
                     if (bni < br.nodes.length - 1) {
-                        h += '<span class="flp-full-arrow" style="font-size:13px;margin:0 2px;opacity:0.6;">→</span>';
+                        h += _renderTransitionEditor(_connectionBetween(bn.id, br.nodes[bni + 1].id));
                     }
                 }
             }
@@ -5174,7 +5294,11 @@ SMTool._updateFullFlowPanel = function (content, panel) {
     for (var pi = 0; pi < paths.length; pi++) {
         var path = paths[pi];
         var isActivePath = (pi === activePathIdx);
+        var pathKey = _pathKey(path);
+        var defaultPathName = '动画' + (pi + 1);
+        var pathName = SMData._fullPathNames[pathKey] || defaultPathName;
         html += '<div class="flp-full-path' + (isActivePath ? ' active' : '') + '" data-path-idx="' + pi + '">';
+        html += '<span class="flp-full-path-title" data-path-key="' + encodeURIComponent(pathKey) + '" data-default-title="' + SMTool._esc(defaultPathName) + '" title="双击修改标题">' + SMTool._esc(pathName) + '</span>';
 
         // —— 主干行：状态块 + 箭头 ——
         html += '<div class="flp-full-path-row">';
@@ -5204,22 +5328,13 @@ SMTool._updateFullFlowPanel = function (content, panel) {
                 html += '<span class="' + stateClass + '">' + SMTool._esc(_disp(sn.anim, SMData.nodes.get(sn.id))) + '</span>';
             }
             if (si < path.nodes.length - 1) {
-                html += '<span class="flp-full-arrow">→</span>';
+                html += _renderTransitionEditor(_connectionBetween(sn.id, path.nodes[si + 1].id));
             }
         }
         html += '</div>'; // end .flp-full-path-row
 
         html += '</div>'; // end .flp-full-path
     }
-    html += '</div>';
-
-    // 右侧控制区（仅保留播放控制按钮）
-    html += '<div class="flp-full-player">';
-    html += '<div class="flp-full-controls">';
-    html += '<button class="flp-full-btn small" id="flpFullPrev" title="上一个状态">⏮</button>';
-    html += '<button class="flp-full-btn" id="flpFullPlay" title="播放">▶</button>';
-    html += '<button class="flp-full-btn small" id="flpFullNext" title="下一个状态">⏭</button>';
-    html += '</div>';
     html += '</div>';
 
     html += '</div>';
@@ -5247,6 +5362,63 @@ SMTool._updateFullFlowPanel = function (content, panel) {
                 SMTool._selectFullPath(idx);
             });
         })(ri);
+    }
+
+    var pathTitles = content.querySelectorAll('.flp-full-path-title');
+    for (var pti = 0; pti < pathTitles.length; pti++) {
+        pathTitles[pti].addEventListener('click', function (e) { e.stopPropagation(); });
+        pathTitles[pti].addEventListener('dblclick', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (typeof SMTool.pushUndo === 'function') SMTool.pushUndo();
+            var titleEl = this;
+            var original = titleEl.textContent;
+            titleEl.contentEditable = 'true';
+            titleEl.classList.add('editing');
+            titleEl.focus();
+            try { document.execCommand('selectAll'); } catch (ignore) {}
+            var finish = function (cancelled) {
+                titleEl.removeEventListener('blur', onBlur);
+                titleEl.removeEventListener('keydown', onKeyDown);
+                titleEl.contentEditable = 'false';
+                titleEl.classList.remove('editing');
+                var fallback = titleEl.getAttribute('data-default-title') || '动画';
+                var nextTitle = cancelled ? original : (titleEl.innerText || '').trim();
+                if (!nextTitle) nextTitle = fallback;
+                titleEl.textContent = nextTitle;
+                if (!cancelled) SMData._fullPathNames[decodeURIComponent(titleEl.getAttribute('data-path-key'))] = nextTitle;
+            };
+            var onBlur = function () { finish(false); };
+            var onKeyDown = function (keyEvent) {
+                keyEvent.stopPropagation();
+                if (keyEvent.key === 'Enter') { keyEvent.preventDefault(); titleEl.blur(); }
+                if (keyEvent.key === 'Escape') { keyEvent.preventDefault(); finish(true); }
+            };
+            titleEl.addEventListener('blur', onBlur);
+            titleEl.addEventListener('keydown', onKeyDown);
+        });
+    }
+
+    var mixEditors = content.querySelectorAll('.flp-full-transition');
+    for (var mei = 0; mei < mixEditors.length; mei++) {
+        (function (editor) {
+            var connId = parseInt(editor.getAttribute('data-conn-id'));
+            var field = editor.querySelector('input');
+            editor.addEventListener('click', function (e) {
+                e.stopPropagation();
+                var action = e.target && e.target.getAttribute('data-mix-action');
+                if (action === 'decrease') field.value = SMTool._adjustConnectionMixDuration(connId, -0.1).toFixed(1);
+                if (action === 'increase') field.value = SMTool._adjustConnectionMixDuration(connId, 0.1).toFixed(1);
+            });
+            editor.addEventListener('mousedown', function (e) { e.stopPropagation(); });
+            field.addEventListener('change', function () { this.value = SMTool._setConnectionMixDuration(connId, this.value).toFixed(1); });
+            field.addEventListener('keydown', function (e) {
+                e.stopPropagation();
+                if (e.key === 'ArrowLeft') { e.preventDefault(); this.value = SMTool._adjustConnectionMixDuration(connId, -0.1).toFixed(1); }
+                if (e.key === 'ArrowRight') { e.preventDefault(); this.value = SMTool._adjustConnectionMixDuration(connId, 0.1).toFixed(1); }
+                if (e.key === 'Enter') { e.preventDefault(); this.blur(); }
+            });
+        })(mixEditors[mei]);
     }
 
     var playBtn = document.getElementById('flpFullPlay');
@@ -5553,9 +5725,31 @@ SMTool._startFullPlayback = function () {
     SMTool._playFullStep();
 };
 
-// 从已选完整流程的第一个步骤重新开始。浮窗重播、流程自然大循环、
-// 并行节点位于流程末尾时的回环都必须走同一个原子入口。
-SMTool._restartFullPlaybackFromStart = function () {
+// 识别“最后节点重新连回源节点”的闭环，并提取 C→A 的真实混合参数。
+SMTool._getClosedFlowCycleTransition = function (path) {
+    if (!path || !path.nodes || path.nodes.length < 2) return null;
+    var closeMarker = path.nodes[path.nodes.length - 1];
+    var firstStep = path.nodes[0];
+    var lastPlayable = path.nodes[path.nodes.length - 2];
+    if (!closeMarker || !closeMarker.cycleClose || !firstStep || !lastPlayable || closeMarker.id !== firstStep.id) return null;
+    return {
+        fromNodeId: lastPlayable.id,
+        toNodeId: firstStep.id,
+        mixDurationSeconds: typeof SMTool._getConnectionMixDuration === 'function' ?
+            SMTool._getConnectionMixDuration(lastPlayable.id, firstStep.id) : 0
+    };
+};
+
+// 自然到达闭环边界时保留浮窗中 C 的末帧，并把 C→A 的混合信息交给第 0 步。
+SMTool._restartFullPlaybackFromCycle = function (path) {
+    var transition = SMTool._getClosedFlowCycleTransition(path);
+    if (!transition) return false;
+    return SMTool._restartFullPlaybackFromStart({ cycleTransition: transition });
+};
+
+// 从已选完整流程的第一个步骤重新开始。手动“重头播放”执行彻底初始化；
+// 自然闭环则通过 options.cycleTransition 保留上一节点末帧以执行 C→A mixingFrom。
+SMTool._restartFullPlaybackFromStart = function (options) {
     var pb = SMData._fullPlayback;
     if (!pb || pb.activePathIdx < 0) return false;
     var path = SMData._fullPaths[pb.activePathIdx];
@@ -5565,6 +5759,8 @@ SMTool._restartFullPlaybackFromStart = function () {
         clearTimeout(pb._timer);
         pb._timer = null;
     }
+    var cycleTransition = options && options.cycleTransition ? options.cycleTransition : null;
+    pb._cycleTransition = cycleTransition;
     pb._runToken = (pb._runToken || 0) + 1;
     pb.currentStep = 0;
     pb._stepped = false;
@@ -5576,8 +5772,8 @@ SMTool._restartFullPlaybackFromStart = function () {
     pb._clockMode = 'idle';
     SMTool._clearAllProgressBars();
 
-    // 先把整个流程恢复到初始画面，再启动第一步骤；不能先重建当前浮窗。
-    SMTool._resetAllToAnimFrame1();
+    // 手动重播必须彻底初始化；自然闭环不能先清空浮窗中的 C 末帧，否则无法混合回 A。
+    if (!cycleTransition) SMTool._resetAllToAnimFrame1();
     if (SMData._animPreview) {
         SMData._animPreview._flowFrozen = false;
         SMData._animPreview._allLayersCompletedOnce = false;
@@ -6186,12 +6382,22 @@ SMTool._playFullStep = function () {
     var flowOwner = {
         type: 'flow',
         pathIdx: pb.activePathIdx,
-        nodeId: stepNode.id
+        nodeId: stepNode.id,
+        mixDurationSeconds: 0
     };
+    if (pb.currentStep > 0 && typeof SMTool._getConnectionMixDuration === 'function') {
+        var previousStep = path.nodes[pb.currentStep - 1];
+        if (previousStep) flowOwner.mixDurationSeconds = SMTool._getConnectionMixDuration(previousStep.id, stepNode.id);
+    }
+    if (pb.currentStep === 0 && pb._cycleTransition && pb._cycleTransition.toNodeId === stepNode.id) {
+        flowOwner.mixDurationSeconds = pb._cycleTransition.mixDurationSeconds || 0;
+        flowOwner.cycleFromNodeId = pb._cycleTransition.fromNodeId;
+        pb._cycleTransition = null;
+    }
 
     // 闭环节点是可视化标记，不是一个独立播放周期；到达它等价于整条流程完成。
     if (stepNode.cycleClose) {
-        SMTool._restartFullPlaybackFromStart();
+        if (!SMTool._restartFullPlaybackFromCycle(path)) SMTool._restartFullPlaybackFromStart();
         return;
     }
 
@@ -6355,7 +6561,7 @@ SMTool._tickFullPlayback = function (dt) {
     pb.currentStep++;
     var nextStep = path.nodes[pb.currentStep];
     if (pb.currentStep >= path.nodes.length || !nextStep || nextStep.cycleClose) {
-        SMTool._restartFullPlaybackFromStart();
+        if (!SMTool._restartFullPlaybackFromCycle(path)) SMTool._restartFullPlaybackFromStart();
     } else {
         SMTool._playFullStep();
     }
