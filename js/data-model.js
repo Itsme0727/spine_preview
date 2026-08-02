@@ -198,6 +198,9 @@ var SMData = {
     _lastConnCount: -1,
     _lastSelConn: -1,
     _lastSelCount: -1,
+    _focusRevision: 0,
+    _lastFocusRevision: -1,
+    _lastFocusSignature: '',
     _forceRedraw: true   // 初始强制重绘一次
 };
 
@@ -951,6 +954,22 @@ SMTool._transitionStateToNode = function (owner, state, skeleton, skeletonData, 
                 var seq = targetSequences[ti];
                 if (!seq || seq.enabled === false || SMTool._sanitizeTrackSequenceAnimations(owner, seq).length === 0) continue;
                 usedTracks[ti] = true;
+
+                // 普通动画作为来源时通常只有轨道 0。目标轨道动画新增的轨道
+                // 如果没有 mixingFrom，会在第一帧直接满权重出现并盖住轨道 0
+                // 的过渡，看起来像整段混合失效。先建立原生空轨道，让这些新增
+                // 轨道也在同一 duration 内从空姿态平滑淡入。
+                var sourceEntry = null;
+                try { sourceEntry = state.getCurrent(ti); } catch (ignoreSourceEntry) {}
+                if (!sourceEntry && typeof state.setEmptyAnimation === 'function') {
+                    try {
+                        sourceEntry = state.setEmptyAnimation(ti, 0);
+                        if (sourceEntry) {
+                            sourceEntry.trackTime = 0;
+                            sourceEntry.timeScale = 1;
+                        }
+                    } catch (ignoreEmptySource) {}
+                }
                 SMTool._buildNativeTrackSequence(owner, state, targetSequences, spineVer, ti, false, mixDuration);
             }
         } else {
@@ -1338,6 +1357,38 @@ SMTool._applyTrackSequence = function (node, options) {
     }
     node._dirty = true;
     SMData._forceRedraw = true;
+};
+
+// 将画布节点的真实播放状态统一重建到第 0 帧。轨道模式必须走
+// _trackSequence，绝不能回退到旧 tracks；同时重置帧同步标记，供浮窗
+// 在下一帧与该节点共同消费同一个时间增量。
+SMTool._restartNodePlaybackAtZero = function (node) {
+    if (!node || !node.state) return false;
+    if (node._trackMode && node._trackSequence && node._trackSequence.length > 0) {
+        SMTool._applyTrackSequence(node);
+    } else {
+        SMTool._applyTracksToState(node);
+    }
+    try {
+        for (var ti = 0; ti < 16; ti++) {
+            var entry = node.state.getCurrent(ti);
+            if (!entry) continue;
+            entry.trackTime = 0;
+            entry.timeScale = 1;
+        }
+        if (node.skeleton) {
+            node.skeleton.setToSetupPose();
+            node.state.update(0);
+            node.state.apply(node.skeleton);
+            node.skeleton.updateWorldTransform(node._physParam);
+        }
+    } catch (e) {}
+    node._lastStateAdvanceFrameId = -1;
+    node._lastStateAdvanceDt = 0;
+    node._deferredAnimDt = 0;
+    node._dirty = true;
+    SMData._forceRedraw = true;
+    return true;
 };
 
 // 旧函数名保留为兼容入口；现在直接重建对应的原生轨道。

@@ -6,10 +6,40 @@
 
 var SMTool = window.SMTool || {};
 
+// 右键取消拉线：只退出连线交互并刷新焦点，不触发画布平移或右键功能菜单。
+SMTool._cancelConnectModeForContextMenu = function () {
+    if (!SMData.connecting && !SMData.connectMode) return false;
+    SMData.connecting = null;
+    SMData.connectMode = false;
+    SMData._suppressContextMenuUntil = Date.now() + 800;
+    var connectButton = document.getElementById('btnConnect');
+    if (connectButton) connectButton.classList.remove('active');
+    var contextMenu = document.getElementById('ctxMenu');
+    if (contextMenu) contextMenu.style.display = 'none';
+    if (SMTool.gridCanvas) SMTool.gridCanvas.style.cursor = 'default';
+    SMData._forceRedraw = true;
+    if (typeof SMTool._setHighlightedTargetNode === 'function') SMTool._setHighlightedTargetNode(null);
+    if (typeof SMTool._updateSel === 'function') SMTool._updateSel();
+    if (typeof SMTool._updateStateRowColors === 'function') SMTool._updateStateRowColors();
+    return true;
+};
+
 // ---- 鼠标按下 ----
 SMTool._onMD = function (e) {
+    // 滚轮停止后的极短提交窗口内若立即点击，先原子提交视图，保证命中坐标
+    // 与用户眼中已经缩放后的节点完全一致。
+    if (SMData._viewProxy && SMData._viewProxy.active && !SMData.isPanning &&
+        typeof SMTool._commitViewProxy === 'function') {
+        SMTool._commitViewProxy();
+    }
     // ★ 层拖拽排序激活时，禁止画布级操作
     if (SMData._layerReorderActive) return;
+    // 拉线期间右键只负责取消连线。必须在平移和右键菜单逻辑之前消费本次事件。
+    if (e.button === 2 && SMTool._cancelConnectModeForContextMenu()) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+    }
     // ================================================================
     // 🔒🔒🔒 [LOCK-5] 画布点击退出动画流
     // ⚠️ 解锁策略：仅用户明确说「解锁 LOCK-5」才能改！
@@ -176,6 +206,7 @@ SMTool._onMD = function (e) {
         if (found) {
             // 连线模式：点击节点自身等同于点击其左侧端点完成连线
             if (SMData.connecting && found.id !== SMData.connecting.nodeId) {
+                var directFocusSource = SMData.connecting.nodeId;
                 var alreadyExists2 = false;
                 for (var ci3 = 0; ci3 < SMData.connections.length; ci3++) {
                     var ec2 = SMData.connections[ci3];
@@ -207,6 +238,7 @@ SMTool._onMD = function (e) {
                     });
                 }
                 SMData.connecting = null;
+                if (typeof SMTool._focusDirectSuccessors === 'function') SMTool._focusDirectSuccessors(directFocusSource);
                 // 清除所有连线状态残留
                 var allDims = document.querySelectorAll('.spine-node .dim-overlay');
                 for (var di2 = 0; di2 < allDims.length; di2++) { allDims[di2].remove(); }
@@ -516,7 +548,7 @@ SMTool._applySnapToDrag = function (draggedNodesM, isMulti) {
     // 计算拖拽对象的包围盒
     var dMinX = Infinity, dMaxX = -Infinity, dMinY = Infinity, dMaxY = -Infinity;
     for (var i = 0; i < draggedNodesM.length; i++) {
-        var r = SMTool._getNodeWorldRect(draggedNodesM[i]);
+        var r = SMTool._getNodeWorldRect(draggedNodesM[i], { avoidLayout: true });
         if (r.left < dMinX) dMinX = r.left;
         if (r.right > dMaxX) dMaxX = r.right;
         if (r.top < dMinY) dMinY = r.top;
@@ -538,7 +570,7 @@ SMTool._applySnapToDrag = function (draggedNodesM, isMulti) {
             if (draggedNodesM[j].id === n.id) { isDragged = true; break; }
         }
         if (!isDragged) {
-            var nr = SMTool._getNodeWorldRect(n);
+            var nr = SMTool._getNodeWorldRect(n, { avoidLayout: true });
             var nCX = (nr.left + nr.right) / 2;
             var nCY = (nr.top + nr.bottom) / 2;
 
@@ -564,9 +596,9 @@ SMTool._applySnapToDrag = function (draggedNodesM, isMulti) {
                 [dCY, nr.top], [dCY, nr.bottom], [dCY, nCY]
             ];
             for (var yi = 0; yi < pairsY.length; yi++) {
-                var dist = Math.abs(pairsY[yi][0] - pairsY[yi][1]);
-                if (dist < bestDistY) {
-                    bestDistY = dist;
+                var distY = Math.abs(pairsY[yi][0] - pairsY[yi][1]);
+                if (distY < bestDistY) {
+                    bestDistY = distY;
                     bestY = pairsY[yi][1];
                     bestDy = pairsY[yi][1] - pairsY[yi][0];
                 }
@@ -732,6 +764,7 @@ SMTool._onMU = function (e) {
 
     // 连线完成
     if (SMData.connecting) {
+        var directFocusSource2 = SMData.connecting.nodeId;
         var target = SMTool._findTarget(e.clientX, e.clientY);
         if (target && target.type === 'input' && target.nodeId !== SMData.connecting.nodeId) {
             var alreadyExists = false;
@@ -767,6 +800,7 @@ SMTool._onMU = function (e) {
             }
         }
         SMData.connecting = null;
+        if (typeof SMTool._focusDirectSuccessors === 'function') SMTool._focusDirectSuccessors(directFocusSource2);
         SMTool._updateSel();
         SMTool._updateStateRowColors();
         // ★ 即时刷新层级
@@ -800,7 +834,10 @@ SMTool._onMU = function (e) {
         }
     }
 
-    SMData.isPanning = false;
+    // [LOCK-PREVIEW-FPS-4] [BASELINE-20260802-2327] 平移期间只移动整块 #app 代理；
+    // 松手时统一提交真实 view，禁止在交互热路径逐节点重绘并抢占浮窗动画帧预算。
+    if (SMData.isPanning && typeof SMTool._onPanEnd === 'function') SMTool._onPanEnd();
+    else SMData.isPanning = false;
     SMData.draggedNode = null;
     SMData.isMultiDragging = false;
     SMData.multiDragOffsets.clear();
@@ -1298,21 +1335,25 @@ SMTool._onDot = function (nid, name, type) {
         if (!pos) return;
         var sp = SMTool.worldToCanvas(pos.x, pos.y);
         SMData.connecting = { nodeId: nid, stateName: name, sx: pos.x, sy: pos.y, mx: sp.x, my: sp.y };
+        if (typeof SMTool._focusDirectSuccessors === 'function') SMTool._focusDirectSuccessors(nid);
         SMTool._updateSel();
     } else if (type === 'input' && SMData.connecting && SMData.connecting.nodeId !== nid) {
         // ★ 层级节点独占连线
         var fromNode = SMData.nodes.get(SMData.connecting.nodeId);
         if (fromNode && fromNode.nodeType === 'layer') {
+            var layerFocusSource = SMData.connecting.nodeId;
             if (SMTool._tryConnectLayerDot(SMData.connecting.nodeId, SMData.connecting.stateName, nid)) {
                 SMData.connectMode = false;
                 document.getElementById('btnConnect').classList.remove('active');
                 SMData.connecting = null;
+                if (typeof SMTool._focusDirectSuccessors === 'function') SMTool._focusDirectSuccessors(layerFocusSource);
                 SMTool._updateSel();
                 SMTool._updateStateRowColors();
                 return;
             }
         }
         // 快速连线（点击 input 圆点直接连）
+        var directFocusSource3 = SMData.connecting.nodeId;
         var alreadyExists = false;
         for (var i = 0; i < SMData.connections.length; i++) {
             var ec = SMData.connections[i];
@@ -1356,6 +1397,7 @@ SMTool._onDot = function (nid, name, type) {
             SMData.connections.push(newConn);
         }
         SMData.connecting = null;
+        if (typeof SMTool._focusDirectSuccessors === 'function') SMTool._focusDirectSuccessors(directFocusSource3);
         // 清除连线状态残留
         var allDims2 = document.querySelectorAll('.spine-node .dim-overlay');
         for (var di3 = 0; di3 < allDims2.length; di3++) { allDims2[di3].remove(); }
@@ -1372,32 +1414,27 @@ SMTool._onDot = function (nid, name, type) {
 };
 
 // ---- 查找连线目标 ----
+SMTool._inputStateForNode = function (node) {
+    if (!node) return '';
+    if (node.nodeType === 'exit') return 'exit';
+    if (node.nodeType === 'entry') return 'entry';
+    if (node.nodeType === 'layer') return 'layer';
+    return node.currentAnim || '';
+};
+
 SMTool._findTarget = function (mx, my) {
     var nodesIter = SMData.nodes.values();
     var result = nodesIter.next();
     while (!result.done) {
         var n = result.value;
-        var el = SMTool._getEl(n.id);
-        if (el) {
-            var bar = el.querySelector('.anim-bar');
-            if (bar) {
-                var dot = bar.querySelector('.conn-dot.input');
-                if (dot) {
-                    var r = dot.getBoundingClientRect();
-                    var dx = mx - r.left - r.width / 2;
-                    var dy = my - r.top - r.height / 2;
-                    if (Math.sqrt(dx * dx + dy * dy) < 24) {
-                        var curState = '';
-                        if (n.nodeType === 'exit') {
-                            curState = 'exit';
-                        } else if (n.nodeType === 'entry') {
-                            curState = 'entry';
-                        } else {
-                            curState = n.currentAnim || '';
-                        }
-                        return { nodeId: n.id, stateName: curState, type: 'input' };
-                    }
-                }
+        var curState = SMTool._inputStateForNode(n);
+        var worldPos = SMTool._getStateConnectorPos(n, curState, 'input');
+        if (worldPos) {
+            var screenPos = SMTool.worldToCanvas(worldPos.x, worldPos.y);
+            var dx = mx - screenPos.x;
+            var dy = my - screenPos.y;
+            if (dx * dx + dy * dy < 576) {
+                return { nodeId: n.id, stateName: curState, type: 'input' };
             }
         }
         result = nodesIter.next();
@@ -1406,28 +1443,24 @@ SMTool._findTarget = function (mx, my) {
 };
 
 // ---- 高亮目标 ----
-SMTool._highlightTarget = function (mx, my) {
-    var nodesIter = SMData.nodes.values();
-    var result = nodesIter.next();
-    while (!result.done) {
-        var n = result.value;
-        var el = SMTool._getEl(n.id);
-        if (el) {
-            var bar = el.querySelector('.anim-bar');
-            if (bar) {
-                var dot = bar.querySelector('.conn-dot.input');
-                if (dot) {
-                    var r = dot.getBoundingClientRect();
-                    var dx = mx - r.left - r.width / 2;
-                    var dy = my - r.top - r.height / 2;
-                    var near = Math.sqrt(dx * dx + dy * dy) < 24;
-                    dot.style.transform = near ? 'scale(1.8)' : '';
-                    dot.style.background = near ? '#4a90d9' : '';
-                }
-            }
-        }
-        result = nodesIter.next();
+SMTool._setHighlightedTargetNode = function (nodeId) {
+    if (SMTool._highlightedTargetNodeId === nodeId) return;
+    function updateDot(id, active) {
+        if (id === null || id === undefined) return;
+        var el = SMTool._getEl(id);
+        var dot = el ? el.querySelector('.anim-bar .conn-dot.input') : null;
+        if (!dot) return;
+        dot.style.transform = active ? 'scale(1.8)' : '';
+        dot.style.background = active ? '#4a90d9' : '';
     }
+    updateDot(SMTool._highlightedTargetNodeId, false);
+    SMTool._highlightedTargetNodeId = nodeId;
+    updateDot(nodeId, true);
+};
+
+SMTool._highlightTarget = function (mx, my) {
+    var target = SMTool._findTarget(mx, my);
+    SMTool._setHighlightedTargetNode(target ? target.nodeId : null);
 };
 
 // ---- 检测条件标签点击（也检测贝塞尔曲线上的点击） ----
@@ -1844,6 +1877,86 @@ SMTool._scheduleFloatPanelCollapse = function (e) {
 // ================================================================
 // 底部动画组合浮窗面板交互 — 边缘检测 / 铆钉 / 离开收起 / 最大化
 // ================================================================
+SMTool._syncThreeFlowConditionText = function (connId, value) {
+    var nextValue = String(value || '').trim();
+    var fields = document.querySelectorAll('[data-flow-condition-conn="' + connId + '"]');
+    for (var i = 0; i < fields.length; i++) {
+        var field = fields[i];
+        field.contentEditable = 'false';
+        field.classList.remove('editing');
+        field.classList.toggle('flp-condition', !!nextValue);
+        field.classList.toggle('flp-condition-empty', !nextValue);
+        field.textContent = nextValue ? '条件：' + nextValue : '条件：（空）';
+        field.title = '双击修改条件';
+    }
+};
+
+SMTool._commitThreeFlowCondition = function (connId, rawValue) {
+    var conn = null;
+    for (var i = 0; i < SMData.connections.length; i++) {
+        if (SMData.connections[i].id === connId) { conn = SMData.connections[i]; break; }
+    }
+    if (!conn) return null;
+    var nextValue = String(rawValue || '').trim();
+    if ((conn.condition || '') !== nextValue) {
+        if (typeof SMTool.pushUndo === 'function') SMTool.pushUndo();
+        conn.condition = nextValue;
+        // 从三层流程主动编辑条件时，画布上的关联条件框必须重新显示并同步内容。
+        conn._hideLabel = false;
+        SMData._forceRedraw = true;
+    }
+    SMTool._syncThreeFlowConditionText(connId, nextValue);
+    // 当前三层列表已做局部同步，避免条件修改后触发整张流程列表重建。
+    if (typeof SMTool._flowPanelPassiveKey === 'function') {
+        SMData._lastPassiveFlowPanelKey = SMTool._flowPanelPassiveKey();
+    }
+    return nextValue;
+};
+
+SMTool._beginThreeFlowConditionEdit = function (event, element) {
+    if (!element || element.classList.contains('editing')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    var connId = parseInt(element.getAttribute('data-flow-condition-conn'));
+    var conn = null;
+    for (var i = 0; i < SMData.connections.length; i++) {
+        if (SMData.connections[i].id === connId) { conn = SMData.connections[i]; break; }
+    }
+    if (!conn) return;
+
+    var original = conn.condition || '';
+    var finished = false;
+    element.textContent = original;
+    element.contentEditable = 'true';
+    element.classList.add('editing');
+    element.focus();
+    try { document.execCommand('selectAll'); } catch (ignore) {}
+
+    var finish = function (cancelled) {
+        if (finished) return;
+        finished = true;
+        element.removeEventListener('blur', onBlur);
+        element.removeEventListener('keydown', onKeyDown);
+        element.contentEditable = 'false';
+        if (cancelled) SMTool._syncThreeFlowConditionText(connId, original);
+        else SMTool._commitThreeFlowCondition(connId, element.innerText || element.textContent || '');
+    };
+    var onBlur = function () { finish(false); };
+    var onKeyDown = function (keyEvent) {
+        keyEvent.stopPropagation();
+        if (keyEvent.key === 'Enter') {
+            keyEvent.preventDefault();
+            element.blur();
+        } else if (keyEvent.key === 'Escape') {
+            keyEvent.preventDefault();
+            finish(true);
+            element.blur();
+        }
+    };
+    element.addEventListener('blur', onBlur);
+    element.addEventListener('keydown', onKeyDown);
+};
+
 SMTool._initFlowPanel = function () {
     var panel = document.getElementById('flowPanel');
     var pinBtn = panel.querySelector('.flp-pin');
@@ -1994,7 +2107,17 @@ SMTool._initFlowPanel = function () {
     // 流程链行点击 — 高亮对应节点和连线
     var flpContent = document.getElementById('flpContent');
     if (flpContent) {
+        flpContent.addEventListener('dblclick', function (e) {
+            var condition = e.target.closest('[data-flow-condition-conn]');
+            if (!condition) return;
+            SMTool._beginThreeFlowConditionEdit(e, condition);
+        });
         flpContent.addEventListener('click', function (e) {
+            // 条件文本由双击编辑处理，单击不切换整条流程的选中状态。
+            if (e.target.closest('[data-flow-condition-conn]')) {
+                e.stopPropagation();
+                return;
+            }
             var row = e.target.closest('.flp-chain-row');
             if (!row) return;
             e.stopPropagation();
@@ -2046,15 +2169,9 @@ SMTool._expandFlowPanel = function () {
     SMData._flowPanel.expanded = true;
     var panel = document.getElementById('flowPanel');
     if (panel) panel.classList.add('expanded');
-    // ★ 无选中节点时：仅展开面板展示提示文字，不触碰任何流/动画状态
-    SMTool._updateFlowPanel();
-    if (!SMData.selectedNode) return;
-    // 有选中节点：正常进入流预览模式
-    var pb = SMData._fullPlayback;
-    var paths = SMData._fullPaths;
-    if (pb.activePathIdx < 0 && paths && paths.length > 0 && !pb.isPlaying && !SMData._flowExitLock) {
-        SMTool._selectFullPath(0);
-    }
+    // 先展开外壳让画面响应，路径整理在空闲帧完成；完成后再按原规则自动高亮第一条路径。
+    SMData._flowPanelAutoSelectPending = !!SMData.selectedNode;
+    SMTool._scheduleFlowPanelUpdate({ force: true });
 };
 
 // ================================================================
@@ -2074,15 +2191,9 @@ SMTool._expandFlowPanel = function () {
     SMData._flowPanel.expanded = true;
     var panel = document.getElementById('flowPanel');
     if (panel) panel.classList.add('expanded');
-    SMTool._updateFlowPanel();
-    // ★ [LOCK-5] 无选中节点 → 仅展开面板展示提示，不碰动画
-    if (!SMData.selectedNode) return;
-    // ★ [LOCK-5] 有选中节点 → 自动高亮第一个路径（仅高亮，不暂停动画）
-    var pb = SMData._fullPlayback;
-    var paths = SMData._fullPaths;
-    if (pb.activePathIdx < 0 && paths && paths.length > 0 && !pb.isPlaying && !SMData._flowExitLock) {
-        SMTool._selectFullPath(0);
-    }
+    // ★ [LOCK-5] 保持“仅高亮、不暂停”的语义，但把昂贵的数据整理移到画布完成本帧之后。
+    SMData._flowPanelAutoSelectPending = !!SMData.selectedNode;
+    SMTool._scheduleFlowPanelUpdate({ force: true });
 };
 
 // 收起底部流程面板

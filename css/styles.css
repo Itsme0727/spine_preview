@@ -20,28 +20,44 @@
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+html,
+body {
+    background: #000;
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+}
+
 body {
     font-family: 'Segoe UI', system-ui, sans-serif;
-    background: var(--bg);
     overflow: hidden;
-    height: 100vh;
-    width: 100vw;
     color: var(--text);
 }
 
 /* ===== 画布层级 ===== */
 #app {
-    position: relative;
-    width: 100%;
-    height: 100%;
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    background: #000;
+    overflow: visible;
+    transform-origin: 0 0;
+    will-change: transform;
+    contain: layout paint;
+    isolation: isolate;
 }
+/* 🔒 [LOCK-PREVIEW-FPS-10]
+   缩放代理只允许 #app 自身成为显式 transform 合成边界。不要再给全屏
+   grid/shared Spine 子画布添加 will-change:transform，否则缩放时会强制
+   重采样多个大纹理并与浮窗 WebGL 争抢 GPU 合成带宽。 */
 #gridCanvas {
     position: absolute;
     top: 0; left: 0;
     z-index: 1;
     pointer-events: none;
     background: #000;
-    will-change: transform;  /* ★ GPU 加速网格重绘 */
 }
 #sharedSpineCanvas {
     position: absolute;
@@ -49,7 +65,6 @@ body {
     z-index: 3;
     pointer-events: none;
     background: transparent;
-    will-change: transform;  /* ★ GPU 加速 WebGL 合成 */
 }
 #boneOverlay {
     position: absolute;
@@ -3869,6 +3884,7 @@ body {
     border-radius: 5px;
     white-space: normal;
     word-break: break-all;
+    cursor: text;
 }
 
 /* 流程箭头 */
@@ -3904,6 +3920,25 @@ body {
     border-radius: 5px;
     white-space: normal;
     word-break: break-all;
+    cursor: text;
+}
+
+#flowPanel [data-flow-condition-conn].editing {
+    min-width: 72px;
+    min-height: 20px;
+    color: #fff;
+    font-style: normal;
+    cursor: text;
+    user-select: text;
+    outline: 1px solid var(--accent);
+    background: rgba(74, 158, 255, 0.16);
+    box-shadow: 0 0 8px rgba(74, 158, 255, 0.28);
+}
+
+#flowPanel [data-flow-condition-conn].editing:empty::before {
+    content: '输入条件';
+    color: var(--text2);
+    pointer-events: none;
 }
 
 /* 无流程链时的提示 */
@@ -3926,6 +3961,8 @@ body {
 /* 左侧路径列表 */
 #flowPanel .flp-full-list {
     flex: 1;
+    display: flex;
+    flex-direction: column;
     overflow-y: auto;
     min-width: 0;
     padding-right: 0;
@@ -4133,6 +4170,10 @@ body {
     position: relative;
     background: var(--bg);
     overflow: hidden;
+    contain: layout paint;
+    isolation: isolate;
+    transform: translateZ(0);
+    backface-visibility: hidden;
     display: flex;
     align-items: center;
     justify-content: center;

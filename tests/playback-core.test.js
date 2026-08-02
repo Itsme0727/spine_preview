@@ -41,6 +41,7 @@ load('js/layer-node-v2.js');
 load('js/spine-loading.js');
 load('js/spine-rendering.js');
 load('js/ui-dom.js');
+load('js/interaction.js');
 load('js/export-ai-json.js');
 
 const SMTool = context.SMTool;
@@ -406,6 +407,9 @@ function testPreviewControlAndFlowRestartSourceOrder() {
         'flow step must be applied at frame zero before rebuilding the preview'
     );
     assert.match(playSource, /SMTool\._restartFullPlaybackFromStart\(\)/);
+    assert.ok(!playSource.includes('SMTool._updateFullFlowPanel('),
+        'playback step changes must never rebuild the complete flow list');
+    assert.match(playSource, /SMTool\._scheduleFullPlaybackVisualRefresh\(\)/);
     const renderSource = fs.readFileSync(path.join(root, 'js/spine-rendering.js'), 'utf8');
     assert.match(renderSource, /flowOwnsPreviewClock/);
     assert.match(renderSource, /sk\.setToSetupPose\(\);\s*for \(var resetTi/);
@@ -526,6 +530,8 @@ function testPreviewAttachmentsLayerThumbnailsAndCanvasPerformanceContracts() {
     const uiSource = fs.readFileSync(path.join(root, 'js/ui-dom.js'), 'utf8');
     const layerSource = fs.readFileSync(path.join(root, 'js/layer-node-v2.js'), 'utf8');
     const renderSource = fs.readFileSync(path.join(root, 'js/spine-rendering.js'), 'utf8');
+    const interactionSource = fs.readFileSync(path.join(root, 'js/interaction.js'), 'utf8');
+    const appSource = fs.readFileSync(path.join(root, 'js/app.js'), 'utf8');
     const cssSource = fs.readFileSync(path.join(root, 'css/styles.css'), 'utf8');
 
     assert.match(uiSource, /manualSelection:\s*true/);
@@ -547,10 +553,56 @@ function testPreviewAttachmentsLayerThumbnailsAndCanvasPerformanceContracts() {
     const updatePosBody = uiSource.slice(updatePosStart, updatePosEnd);
     assert.ok(!updatePosBody.includes('SMTool._updateFloatLabels();'),
         'single node positioning must not synchronously traverse every floating label');
+    assert.match(updatePosBody, /SMTool\.worldToDOM\(node\.x, node\.y\)/);
+    assert.match(updatePosBody, /translate3d\(/);
     assert.match(uiSource, /SMTool\._scheduleFloatLabelsUpdate/);
-    assert.match(renderSource, /SMTool\._updateAllPos\(false\)/);
+    assert.match(uiSource, /\[LOCK-PREVIEW-FPS-2\]/);
+    assert.match(renderSource, /SMTool\._beginViewProxy\(\)/);
     assert.match(renderSource, /canvasGestureActive/);
     assert.match(renderSource, /_deferredAnimDt/);
+    const loopSource = renderSource.slice(renderSource.indexOf('SMTool._loop = function'), renderSource.indexOf('// ---- 缩放 ----'));
+    assert.ok(loopSource.indexOf('SMTool._renderAnimPreview(now);') < loopSource.indexOf('var gl = SMTool._sharedGL;'),
+        'floating preview must render before shared canvas and connection work');
+    assert.match(renderSource, /\[LOCK-PREVIEW-FPS-3\]/);
+    assert.match(renderSource, /SMData\._viewProxy && SMData\._viewProxy\.active\) return/);
+    assert.match(renderSource, /app\.style\.transform = 'matrix\('/);
+    assert.match(renderSource, /preserveDrawingBuffer:\s*false/);
+    assert.ok(!renderSource.includes('progressiveMainCanvas'));
+    assert.ok(!renderSource.includes('sharedSpineSnapshot'));
+    assert.ok(!renderSource.includes('_sharedSnapshotCanvas'));
+    assert.ok(!renderSource.includes('_advanceNodeLogicalStateOnce'));
+    const synchronizedClockStart = renderSource.indexOf('SMTool._getSynchronizedPreviewDt = function');
+    const synchronizedClockEnd = renderSource.indexOf('// ---- 渲染预览帧 ----', synchronizedClockStart);
+    const synchronizedClockSource = renderSource.slice(synchronizedClockStart, synchronizedClockEnd);
+    assert.match(synchronizedClockSource, /sourceNode\.state\.update\(safeDt\)/);
+    assert.match(synchronizedClockSource, /sourceNode\.state\.apply\(sourceNode\.skeleton\)/);
+    assert.match(cssSource, /html,\s*\nbody\s*\{[\s\S]*?background:\s*#000/);
+    assert.match(cssSource, /#app\s*\{[\s\S]*?background:\s*#000/);
+    assert.match(interactionSource, /\[LOCK-PREVIEW-FPS-4\]/);
+    assert.match(interactionSource, /SMData\.isPanning && typeof SMTool\._onPanEnd === 'function'/,
+        'mouse-up must finish the live viewport gesture instead of only clearing isPanning');
+    assert.match(appSource, /SMData\._spacePanning = false;[\s\S]{0,400}SMTool\._onPanEnd\(\)/,
+        'space-key pan release must use the same viewport-finish path');
+    assert.match(renderSource, /SMTool\._commitViewProxy = function[\s\S]{0,1800}SMData\._forceRedraw = true/,
+        'the 23:27 proxy must atomically commit the final real view');
+    assert.match(renderSource, /\[LOCK-PREVIEW-FPS-7\]/);
+    assert.match(renderSource, /SMTool\._queueViewProxyApply\(proxy, true\)/);
+    assert.match(renderSource, /\[LOCK-PREVIEW-FPS-8\]/);
+    assert.match(renderSource, /\[LOCK-PREVIEW-FPS-9\]/);
+    assert.match(cssSource, /\[LOCK-PREVIEW-FPS-10\]/);
+    assert.match(renderSource, /\[LOCK-PREVIEW-FPS-11\]/);
+    assert.match(appSource, /\[LOCK-PREVIEW-FPS-12\]/);
+    const wheelListenerStart = appSource.indexOf("window.addEventListener('wheel'");
+    const wheelListenerEnd = appSource.indexOf('// 全局阻止浏览器右键菜单', wheelListenerStart);
+    const wheelListenerSource = appSource.slice(wheelListenerStart, wheelListenerEnd);
+    assert.match(wheelListenerSource, /\{ passive: true \}/);
+    assert.ok(!wheelListenerSource.includes('preventDefault'),
+        'canvas wheel input must not synchronously block browser animation scheduling');
+    assert.match(cssSource, /#animPreviewPanel \.app-canvas-wrap\s*\{[\s\S]*?contain:\s*layout paint;[\s\S]*?isolation:\s*isolate;/);
+    const gridCanvasCss = cssSource.slice(cssSource.indexOf('#gridCanvas'), cssSource.indexOf('#sharedSpineCanvas'));
+    const sharedCanvasCss = cssSource.slice(cssSource.indexOf('#sharedSpineCanvas'), cssSource.indexOf('#boneOverlay'));
+    assert.ok(!gridCanvasCss.includes('will-change'), 'grid canvas must not create a duplicate full-screen transform layer');
+    assert.ok(!sharedCanvasCss.includes('will-change'), 'shared Spine canvas must not create a duplicate full-screen transform layer');
 
     const oldDocument = context.document;
     const classes = new Set(['paused']);
@@ -1164,6 +1216,244 @@ function testPreviewPrimesCompletedTrackSourceBeforeTransition() {
     assert.deepEqual(calls, ['restore-guard', 'prime-source-final-entries', 'transition-target']);
 }
 
+function testNormalToTrackFadesInTargetTracksWithoutSourceEntries() {
+    const animations = [animation('idle', 1), animation('walk', 1.1), animation('aim', 0.7)];
+    const skeletonData = {
+        animations,
+        findAnimation(name) { return animations.find((item) => item.name === name) || null; },
+    };
+    const current = {};
+    const emptyCalls = [];
+    const state = {
+        data: { setMix() {} },
+        clearTracks() { Object.keys(current).forEach((key) => delete current[key]); },
+        getCurrent(track) { return current[track] || null; },
+        setEmptyAnimation(track, seconds) {
+            const entry = { animation: null, isEmpty: true, trackTime: 0, timeScale: 1 };
+            current[track] = entry;
+            emptyCalls.push([track, seconds]);
+            return entry;
+        },
+        setAnimation(track, name, loop) {
+            const entry = {
+                animation: skeletonData.findAnimation(name),
+                loop,
+                mixingFrom: current[track] || null,
+                trackTime: 0,
+            };
+            current[track] = entry;
+            return entry;
+        },
+        addAnimation() { throw new Error('single-entry target tracks must not queue another item'); },
+        update() {},
+        apply() {},
+    };
+    const skeleton = { setToSetupPose() {}, updateWorldTransform() {} };
+    const normalSource = {
+        id: 471,
+        _trackMode: false,
+        currentAnim: 'idle',
+        animations,
+    };
+    const trackTarget = {
+        id: 472,
+        _trackMode: true,
+        animations,
+        _trackSequence: [
+            { enabled: true, loopSeq: false, animations: [{ name: 'walk', mixOut: 0 }] },
+            { enabled: true, loopSeq: false, animations: [{ name: 'aim', mixOut: 0 }] },
+        ],
+    };
+    const owner = { _skeletonData: skeletonData, skeletonData, animations };
+
+    assert.equal(SMTool._primeStateWithNodeFinalPose(state, skeleton, skeletonData, normalSource, '4.2'), true);
+    assert.equal(SMTool._transitionStateToNode(owner, state, skeleton, skeletonData, trackTarget, '4.2', 0.5), true);
+    assert.equal(current[0].animation.name, 'walk');
+    assert.equal(current[0].mixingFrom.animation.name, 'idle');
+    assert.equal(current[0].mixDuration, 0.5);
+    assert.equal(current[1].animation.name, 'aim');
+    assert.equal(current[1].mixingFrom.isEmpty, true);
+    assert.equal(current[1].mixDuration, 0.5);
+    assert.deepEqual(emptyCalls, [[1, 0]]);
+}
+
+function testPreviewAlsoPrimesNormalSourceBeforeTrackTransition() {
+    const calls = [];
+    const oldPrime = SMTool._primeStateWithNodeFinalPose;
+    const oldTransition = SMTool._transitionStateToNode;
+    SMTool._primeStateWithNodeFinalPose = () => { calls.push('prime-normal-final-entry'); return true; };
+    SMTool._transitionStateToNode = () => { calls.push('transition-track-target'); return true; };
+    const pp = {
+        state: { update() {}, apply() {} },
+        skeleton: { updateWorldTransform() {} },
+        _skeletonData: {},
+        _spineVer: '4.2',
+        _physParam: null,
+    };
+    const fromNormal = { id: 481, _trackMode: false, currentAnim: 'idle' };
+    const toTrack = { id: 482, _trackMode: true, _trackSequence: [{ enabled: true, animations: [{ name: 'walk' }] }] };
+
+    assert.equal(SMTool._mixAnimPreviewToNode(pp, fromNormal, toTrack, 0.4), true);
+
+    SMTool._primeStateWithNodeFinalPose = oldPrime;
+    SMTool._transitionStateToNode = oldTransition;
+    assert.deepEqual(calls, ['prime-normal-final-entry', 'transition-track-target']);
+}
+
+function testTrackGlobalLoopToggleRebuildsRealSequences() {
+    const node = {
+        id: 491,
+        nodeType: 'spine',
+        loop: true,
+        state: {},
+        _trackMode: true,
+        _trackSequence: [
+            { enabled: true, loopSeq: true, animations: [{ name: 'idle' }] },
+            { enabled: true, loopSeq: true, animations: [{ name: 'fx' }] },
+        ],
+        tracks: [{ animName: 'legacy', loop: true }],
+    };
+    SMData.nodes = new Map([[491, node]]);
+    const oldDocument = context.document;
+    const oldRestart = SMTool._restartNodePlaybackAtZero;
+    const oldLegacy = SMTool._applyTracksToState;
+    const oldRefresh = SMTool._refreshTrackPanel;
+    const oldPreviewInit = SMTool._initAnimPreview;
+    const calls = [];
+    context.document = { querySelector: () => null, getElementById: () => null };
+    SMTool._restartNodePlaybackAtZero = () => { calls.push('track-sequence'); return true; };
+    SMTool._applyTracksToState = () => calls.push('legacy-tracks');
+    SMTool._refreshTrackPanel = () => calls.push('refresh-panel');
+    SMTool._initAnimPreview = () => calls.push('preview');
+    SMData._animPreview = { visible: true, nodeId: 491, _layerSkeletons: null };
+
+    SMTool._toggleLoop(491);
+
+    context.document = oldDocument;
+    SMTool._restartNodePlaybackAtZero = oldRestart;
+    SMTool._applyTracksToState = oldLegacy;
+    SMTool._refreshTrackPanel = oldRefresh;
+    SMTool._initAnimPreview = oldPreviewInit;
+    assert.equal(node.loop, false);
+    assert.equal(node._trackSequence[0].loopSeq, false);
+    assert.equal(node._trackSequence[1].loopSeq, false);
+    assert.deepEqual(calls, ['track-sequence', 'refresh-panel', 'preview']);
+}
+
+function testPreviewConsumesExactSourceFrameDelta() {
+    const oldFrameId = SMTool._renderFrameId;
+    const oldViewProxy = SMData._viewProxy;
+    const updates = [];
+    let poseApplyCount = 0;
+    let worldUpdateCount = 0;
+    const source = {
+        state: {
+            update(dt) { updates.push(dt); },
+            apply() { poseApplyCount++; },
+        },
+        skeleton: { updateWorldTransform() { worldUpdateCount++; } },
+        _lastStateAdvanceFrameId: 77,
+        _lastStateAdvanceDt: 0.033,
+        _trackMode: false,
+    };
+    SMData._viewProxy = null;
+    SMTool._renderFrameId = 77;
+    assert.equal(SMTool._getSynchronizedPreviewDt({}, source, 0.02), 0.033);
+    assert.deepEqual(updates, []);
+
+    SMTool._renderFrameId = 78;
+    assert.equal(SMTool._getSynchronizedPreviewDt({}, source, 0.02), 0.02);
+    assert.deepEqual(updates, [0.02]);
+    assert.equal(source._lastStateAdvanceFrameId, 78);
+    assert.equal(source._lastStateAdvanceDt, 0.02);
+    assert.equal(source._dirty, true);
+    assert.equal(poseApplyCount, 1, '23:27 synchronization must apply the source pose once');
+    assert.equal(worldUpdateCount, 1, '23:27 synchronization must refresh source bone transforms once');
+    SMTool._renderFrameId = oldFrameId;
+    SMData._viewProxy = oldViewProxy;
+}
+
+function testZoomPreviewSyncDefersOnlyCanvasPoseWork() {
+    const oldFrameId = SMTool._renderFrameId;
+    const oldViewProxy = SMData._viewProxy;
+    const updates = [];
+    let poseApplyCount = 0;
+    let worldUpdateCount = 0;
+    const source = {
+        state: {
+            update(dt) { updates.push(dt); },
+            apply() { poseApplyCount++; },
+        },
+        skeleton: { updateWorldTransform() { worldUpdateCount++; } },
+        _trackMode: false,
+    };
+
+    SMData._viewProxy = { active: true };
+    SMTool._renderFrameId = 201;
+    assert.equal(SMTool._getSynchronizedPreviewDt({}, source, 0.016), 0.016);
+    assert.deepEqual(updates, [0.016], 'source AnimationState data must remain synchronized while zooming');
+    assert.equal(poseApplyCount, 0, 'hidden canvas pose must not be applied during zoom composition');
+    assert.equal(worldUpdateCount, 0, 'hidden canvas bones must not be transformed during zoom composition');
+    assert.equal(source._previewPoseDeferred, true);
+    assert.equal(source._dirty, true);
+
+    SMData._viewProxy.active = false;
+    SMTool._renderFrameId = 202;
+    assert.equal(SMTool._getSynchronizedPreviewDt({}, source, 0.016), 0.016);
+    assert.deepEqual(updates, [0.016, 0.016]);
+    assert.equal(poseApplyCount, 1);
+    assert.equal(worldUpdateCount, 1);
+    assert.equal(source._previewPoseDeferred, false);
+
+    SMTool._renderFrameId = oldFrameId;
+    SMData._viewProxy = oldViewProxy;
+}
+
+function testPreviewClockCarriesLongCompositeFrameRemainder() {
+    const pp = { _lastTime: 1000, _previewTimeCarry: 0 };
+    const first = SMTool._consumePreviewFrameDelta(pp, 1250);
+    const second = SMTool._consumePreviewFrameDelta(pp, 1266);
+    const third = SMTool._consumePreviewFrameDelta(pp, 1282);
+    assert.equal(first, 0.1);
+    assert.equal(second, 0.1);
+    assert.ok(Math.abs(third - 0.082) < 0.000001);
+    assert.ok(Math.abs(first + second + third - 0.282) < 0.000001,
+        'a 250ms composite frame must catch up instead of permanently slowing playback');
+    assert.equal(pp._previewTimeCarry, 0);
+}
+
+function testSinglePreviewRestartAlsoRewindsCanvasNode() {
+    const oldRestartNode = SMTool._restartNodePlaybackAtZero;
+    const oldApplyPreview = SMTool._applyPreviewTrackSequence;
+    const oldRenderPreview = SMTool._renderAnimPreview;
+    const calls = [];
+    SMTool._restartNodePlaybackAtZero = () => { calls.push('canvas-zero'); return true; };
+    SMTool._applyPreviewTrackSequence = () => calls.push('preview-zero');
+    SMTool._renderAnimPreview = () => calls.push('render-zero');
+    const pp = {
+        state: { getCurrent: () => null, update() {}, apply() {} },
+        skeleton: { setToSetupPose() {}, updateWorldTransform() {} },
+        _skeletonData: {},
+        _playbackOwner: { type: 'single', nodeId: 501 },
+        _spineVer: '4.2',
+        _flowFrozen: false,
+    };
+    const source = {
+        id: 501,
+        state: {},
+        _trackMode: true,
+        _trackSequence: [{ enabled: true, animations: [{ name: 'idle' }] }],
+        currentAnim: 'idle',
+    };
+
+    SMTool._restartAnimPreviewStateAtZero(pp, source);
+
+    SMTool._restartNodePlaybackAtZero = oldRestartNode;
+    SMTool._applyPreviewTrackSequence = oldApplyPreview;
+    SMTool._renderAnimPreview = oldRenderPreview;
+    assert.deepEqual(calls, ['canvas-zero', 'preview-zero', 'render-zero']);
+}
+
 function testLayerEyeOnlyUpdatesItsOwnThumbnail() {
     const oldDocument = context.document;
     const oldUpdater = SMTool._updateLayerListThumbnails;
@@ -1267,6 +1557,384 @@ function testClosedFullFlowCarriesClosingEdgeMixBackToSource() {
     assert.equal(SMData._fullPlayback._cycleTransition, null);
 }
 
+function testDirectSuccessorFocusAndRevisionAreImmediate() {
+    SMData.nodes = new Map([
+        [701, { id: 701 }],
+        [702, { id: 702 }],
+        [703, { id: 703 }],
+        [704, { id: 704 }],
+    ]);
+    SMData.connections = [
+        { id: 801, fromNode: 701, toNode: 702 },
+        { id: 802, fromNode: 703, toNode: 701 },
+        { id: 803, fromNode: 702, toNode: 704 },
+    ];
+    SMData.selectedNodes = new Set([703]);
+    SMData.selectedNode = 703;
+    SMData.selectedConnection = 802;
+    SMData._lastFocusSignature = '';
+    SMData._focusRevision = 4;
+    SMData._forceRedraw = false;
+
+    const focus = SMTool._focusDirectSuccessors(701);
+    assert.deepEqual(Array.from(focus.nodeIds).sort(), [701, 702]);
+    assert.deepEqual(Array.from(focus.connIds), [801]);
+    assert.deepEqual(Array.from(SMData.selectedNodes), [701]);
+    assert.equal(SMData.selectedNode, 701);
+    assert.equal(SMData.selectedConnection, null);
+
+    assert.equal(SMTool._commitFocusRevision(focus.nodeIds), true);
+    assert.equal(SMData._focusRevision, 5);
+    assert.equal(SMData._forceRedraw, true);
+    SMData._forceRedraw = false;
+    assert.equal(SMTool._commitFocusRevision(focus.nodeIds), false);
+    assert.equal(SMData._focusRevision, 5);
+    assert.equal(SMData._forceRedraw, false);
+
+    SMData._flowFocus = { nodeIds: new Set([701, 703]), connIds: new Set([802]) };
+    assert.equal(SMTool._commitFocusRevision(SMData._flowFocus.nodeIds), true);
+    assert.equal(SMData._focusRevision, 6);
+    assert.equal(SMData._forceRedraw, true);
+}
+
+function testRightClickCancelsConnectingWithoutOpeningContextMenu() {
+    const oldDocument = context.document;
+    const oldGrid = SMTool.gridCanvas;
+    const oldUpdateSel = SMTool._updateSel;
+    const oldUpdateColors = SMTool._updateStateRowColors;
+    const classCalls = [];
+    const menu = { style: { display: 'block' } };
+    const button = { classList: { remove(value) { classCalls.push(value); } } };
+    context.document = {
+        getElementById(id) {
+            if (id === 'btnConnect') return button;
+            if (id === 'ctxMenu') return menu;
+            return null;
+        },
+    };
+    SMTool.gridCanvas = { style: { cursor: 'crosshair' } };
+    let selectionRefreshes = 0;
+    let colorRefreshes = 0;
+    SMTool._updateSel = () => { selectionRefreshes++; };
+    SMTool._updateStateRowColors = () => { colorRefreshes++; };
+    SMData.connectMode = true;
+    SMData.connecting = { nodeId: 701 };
+    SMData._forceRedraw = false;
+
+    assert.equal(SMTool._cancelConnectModeForContextMenu(), true);
+    assert.equal(SMData.connectMode, false);
+    assert.equal(SMData.connecting, null);
+    assert.equal(menu.style.display, 'none');
+    assert.equal(SMTool.gridCanvas.style.cursor, 'default');
+    assert.equal(SMData._forceRedraw, true);
+    assert.ok(SMData._suppressContextMenuUntil >= Date.now());
+    assert.deepEqual(classCalls, ['active']);
+    assert.equal(selectionRefreshes, 1);
+    assert.equal(colorRefreshes, 1);
+    assert.equal(SMTool._cancelConnectModeForContextMenu(), false);
+
+    context.document = oldDocument;
+    SMTool.gridCanvas = oldGrid;
+    SMTool._updateSel = oldUpdateSel;
+    SMTool._updateStateRowColors = oldUpdateColors;
+}
+
+function testConnectorWorldPositionCacheAvoidsRepeatedLayoutReads() {
+    const oldGetEl = SMTool._getEl;
+    const oldCanvasToWorld = SMTool.canvasToWorld;
+    const oldCache = SMTool._connectorLocalCache;
+    let layoutReads = 0;
+    const dot = {
+        getBoundingClientRect() {
+            layoutReads++;
+            return { left: 90, top: 180, width: 20, height: 40 };
+        },
+    };
+    const bar = { querySelector: () => dot };
+    const root = { querySelector: () => bar, getBoundingClientRect: () => ({ left: 0, top: 0, width: 1, height: 1 }) };
+    SMTool._getEl = () => root;
+    SMTool.canvasToWorld = (x, y) => ({ x, y });
+    SMTool._connectorLocalCache = {};
+    const node = { id: 901, nodeType: 'spine', currentAnim: 'idle', x: 10, y: 20, _customScale: 1 };
+
+    assert.equal(JSON.stringify(SMTool._getStateConnectorPos(node, 'idle', 'output')), JSON.stringify({ x: 100, y: 200 }));
+    node.x = 40;
+    node.y = 50;
+    assert.equal(JSON.stringify(SMTool._getStateConnectorPos(node, 'idle', 'output')), JSON.stringify({ x: 130, y: 230 }));
+    assert.equal(layoutReads, 1);
+    SMTool._invalidateConnectorLayout(node);
+    SMTool._getStateConnectorPos(node, 'idle', 'output');
+    assert.equal(layoutReads, 2);
+
+    // 层级节点行布局会在后台刷新，输入/分层输出都必须实时测量，不能命中旧缓存。
+    const layerRoot = {
+        querySelector(selector) {
+            if (selector.indexOf('.layer-dot') === 0) return dot;
+            return bar;
+        },
+        getBoundingClientRect: root.getBoundingClientRect,
+    };
+    SMTool._getEl = () => layerRoot;
+    SMTool._connectorLocalCache = {};
+    layoutReads = 0;
+    const layerNode = { id: 902, nodeType: 'layer', x: 10, y: 20, _customScale: 1 };
+    SMTool._getStateConnectorPos(layerNode, 'layer_1', 'output');
+    SMTool._getStateConnectorPos(layerNode, 'layer_1', 'output');
+    assert.equal(layoutReads, 2);
+
+    SMTool._getEl = oldGetEl;
+    SMTool.canvasToWorld = oldCanvasToWorld;
+    SMTool._connectorLocalCache = oldCache;
+}
+
+function testControlPointHitTestOnlyScansVisibleActiveConnection() {
+    const oldGetPos = SMTool._getStateConnectorPos;
+    const oldWorldToCanvas = SMTool.worldToCanvas;
+    SMData.nodes = new Map();
+    SMData.connections = [];
+    for (let i = 0; i < 100; i++) {
+        SMData.nodes.set(i * 2 + 1, { id: i * 2 + 1 });
+        SMData.nodes.set(i * 2 + 2, { id: i * 2 + 2 });
+        SMData.connections.push({ id: 1000 + i, fromNode: i * 2 + 1, toNode: i * 2 + 2, cp1x: 10, cp1y: 0, cp2x: -10, cp2y: 0 });
+    }
+    let endpointReads = 0;
+    SMTool._getStateConnectorPos = (node, state, type) => {
+        endpointReads++;
+        return type === 'output' ? { x: 0, y: 0 } : { x: 100, y: 0 };
+    };
+    SMTool.worldToCanvas = (x, y) => ({ x, y });
+    SMData.view.zoom = 1;
+    SMData.selectedConnection = 1099;
+    SMData.draggingCP = null;
+    SMTool._findCP(10, 0, 24);
+    assert.equal(endpointReads, 2);
+
+    endpointReads = 0;
+    SMData.selectedConnection = null;
+    assert.equal(SMTool._findCP(10, 0, 24), null);
+    assert.equal(endpointReads, 0);
+
+    SMTool._getStateConnectorPos = oldGetPos;
+    SMTool.worldToCanvas = oldWorldToCanvas;
+}
+
+function testFlowGraphSignatureIgnoresNodePositionButTracksRealDataChanges() {
+    SMData.nodes = new Map([
+        [1, { id: 1, nodeType: 'spine', currentAnim: 'idle', name: 'A', x: 10, y: 20 }],
+        [2, { id: 2, nodeType: 'spine', currentAnim: 'walk', name: 'B', x: 30, y: 40 }],
+    ]);
+    SMData.connections = [{ id: 1, fromNode: 1, fromState: 'idle', toNode: 2, toState: 'walk', condition: '', _mixDuration: 0 }];
+    const beforeMove = SMTool._flowGraphSignature();
+    SMData.nodes.get(1).x = 9999;
+    SMData.nodes.get(1).y = -8888;
+    assert.equal(SMTool._flowGraphSignature(), beforeMove);
+    SMData.connections[0].condition = 'speed > 1';
+    assert.notEqual(SMTool._flowGraphSignature(), beforeMove);
+}
+
+function testDragSnapUsesCachedNodeSizesWithoutLayoutReads() {
+    const appSource = fs.readFileSync(path.join(root, 'js/app.js'), 'utf8');
+    const interactionSource = fs.readFileSync(path.join(root, 'js/interaction.js'), 'utf8');
+    const rectStart = appSource.indexOf('SMTool._getNodeWorldRect = function');
+    const rectEnd = appSource.indexOf('SMTool._scheduleNodeRectCacheWarmup = function', rectStart);
+    const rectSource = appSource.slice(rectStart, rectEnd);
+    assert.match(rectSource, /SMTool\._nodeWorldSizeCache/);
+    assert.match(rectSource, /options && options\.avoidLayout/);
+    assert.match(appSource, /拖拽和流程播放期间绝不执行测量/);
+    assert.match(interactionSource, /_getNodeWorldRect\(draggedNodesM\[i\], \{ avoidLayout: true \}\)/);
+    assert.match(interactionSource, /_getNodeWorldRect\(n, \{ avoidLayout: true \}\)/);
+}
+
+function testFlowListsRenderPriorityItemsBeforeIdleHydration() {
+    const uiSource = fs.readFileSync(path.join(root, 'js/ui-dom.js'), 'utf8');
+    const appSource = fs.readFileSync(path.join(root, 'js/app.js'), 'utf8');
+    const cssSource = fs.readFileSync(path.join(root, 'css/styles.css'), 'utf8');
+    assert.match(uiSource, /\[LOCK-PERF-1\] 实时核心与大列表展示必须永久解耦/);
+    assert.match(uiSource, /仅用户明确说出「解锁 LOCK-PERF-1」/);
+    assert.match(appSource, /\[LOCK-PERF-1\] 首屏先响应/);
+    assert.match(appSource, /\[LOCK-PERF-1\] 获取节点在世界空间中的矩形/);
+    assert.match(uiSource, /initialCount = Math\.min\(paths\.length/);
+    assert.match(uiSource, /activePathIdx >= initialCount/);
+    assert.match(uiSource, /_queueFullPathHydration\(80\)/);
+    assert.match(uiSource, /batchCount < 1/);
+    assert.match(uiSource, /initialThreeCount = Math\.min\(chainTasks\.length/);
+    assert.match(uiSource, /_queueThreeHydration\(80\)/);
+    assert.match(uiSource, /SMData\._fullPlayback && SMData\._fullPlayback\.isPlaying/);
+    assert.match(cssSource, /\.flp-full-list\s*\{[\s\S]*?display:\s*flex;[\s\S]*?flex-direction:\s*column;/);
+}
+
+function testThreeFlowConditionEditMapsDirectlyToCanvasConnection() {
+    const oldDocument = context.document;
+    const oldPushUndo = SMTool.pushUndo;
+    const oldPassiveKey = SMTool._flowPanelPassiveKey;
+    const uiSource = fs.readFileSync(path.join(root, 'js/ui-dom.js'), 'utf8');
+    const interactionSource = fs.readFileSync(path.join(root, 'js/interaction.js'), 'utf8');
+    const cssSource = fs.readFileSync(path.join(root, 'css/styles.css'), 'utf8');
+    const fields = [0, 1].map(() => {
+        const classes = new Set(['flp-condition', 'editing']);
+        return {
+            contentEditable: 'true',
+            textContent: '',
+            title: '',
+            classList: {
+                remove(name) { classes.delete(name); },
+                toggle(name, enabled) { if (enabled) classes.add(name); else classes.delete(name); },
+                contains(name) { return classes.has(name); },
+            },
+            classes,
+        };
+    });
+    context.document = { querySelectorAll: () => fields };
+    let undoCount = 0;
+    SMTool.pushUndo = () => { undoCount++; };
+    SMTool._flowPanelPassiveKey = () => 'condition-key';
+    SMData.connections = [{ id: 77, condition: 'old', _hideLabel: true }];
+    SMData._forceRedraw = false;
+
+    assert.equal(SMTool._commitThreeFlowCondition(77, '  speed > 2  '), 'speed > 2');
+    assert.equal(SMData.connections[0].condition, 'speed > 2');
+    assert.equal(SMData.connections[0]._hideLabel, false);
+    assert.equal(SMData._forceRedraw, true);
+    assert.equal(SMData._lastPassiveFlowPanelKey, 'condition-key');
+    assert.equal(undoCount, 1);
+    for (const field of fields) {
+        assert.equal(field.textContent, '条件：speed > 2');
+        assert.equal(field.contentEditable, 'false');
+        assert.equal(field.classes.has('flp-condition'), true);
+        assert.equal(field.classes.has('flp-condition-empty'), false);
+    }
+    SMTool._commitThreeFlowCondition(77, 'speed > 2');
+    assert.equal(undoCount, 1, 'unchanged condition must not add an undo snapshot');
+
+    assert.match(uiSource, /data-flow-condition-conn=/);
+    assert.match(interactionSource, /addEventListener\('dblclick'/);
+    assert.match(interactionSource, /var onBlur = function \(\) \{ finish\(false\); \}/);
+    assert.match(interactionSource, /keyEvent\.key === 'Enter'/);
+    assert.match(cssSource, /\[data-flow-condition-conn\]\.editing/);
+
+    context.document = oldDocument;
+    SMTool.pushUndo = oldPushUndo;
+    SMTool._flowPanelPassiveKey = oldPassiveKey;
+}
+
+function testLiveViewportGestureUpdatesRealViewBeforeHeavyCanvasWork() {
+    const oldDocument = context.document;
+    const oldInnerWidth = context.innerWidth;
+    const oldInnerHeight = context.innerHeight;
+    const oldView = SMData.view;
+    const oldProxy = SMData._viewProxy;
+    const oldRAF = context.requestAnimationFrame;
+    const oldSetTimeout = context.setTimeout;
+    const oldClearTimeout = context.clearTimeout;
+    const oldFns = {
+        nodes: SMTool._updateNodeScreenPositionsCore,
+        labels: SMTool._updateFloatLabels,
+        dots: SMTool._scheduleConnectorDotScaleRefresh,
+    };
+    const bodyClasses = new Set();
+    const zoomLabel = { textContent: '' };
+    const zoomSlider = { value: '100' };
+    const zoomReset = { style: {} };
+    const app = { style: {} };
+    const floatLabels = { style: {} };
+    const connectionControls = { style: {} };
+    context.document = {
+        body: {
+            classList: {
+                add(name) { bodyClasses.add(name); },
+                remove(name) { bodyClasses.delete(name); },
+            },
+        },
+        getElementById(id) {
+            if (id === 'zoomLabel') return zoomLabel;
+            if (id === 'zoomSlider') return zoomSlider;
+            if (id === 'zoomResetBtn') return zoomReset;
+            if (id === 'app') return app;
+            if (id === 'floatLabels') return floatLabels;
+            if (id === 'connectionControlLayer') return connectionControls;
+            return null;
+        },
+    };
+    const rafQueue = [];
+    let timerCreates = 0;
+    context.requestAnimationFrame = (fn) => { rafQueue.push(fn); return rafQueue.length; };
+    context.setTimeout = () => { timerCreates++; return timerCreates; };
+    context.clearTimeout = () => {};
+    context.innerWidth = 1000;
+    context.innerHeight = 700;
+    SMData.view = { x: 0, y: 0, zoom: 1 };
+    SMData._viewProxy = null;
+    SMData._forceRedraw = false;
+    SMTool._viewProxyApplyQueued = false;
+    SMTool._pendingViewProxyApply = null;
+    SMTool._pendingViewProxyZoomUI = false;
+
+    SMTool._onWheel({ deltaY: -100, clientX: 700, clientY: 400 });
+    SMTool._onWheel({ deltaY: -100, clientX: 700, clientY: 400 });
+    SMTool._onWheel({ deltaY: -100, clientX: 700, clientY: 400 });
+    assert.equal(SMData.view.zoom, 1, 'heavy real-view data must stay frozen during interaction');
+    assert.ok(SMData._viewProxy.target.zoom > 1);
+    assert.equal(rafQueue.length, 1, 'many wheel events in one display frame must queue one compositor write');
+    assert.equal(timerCreates, 1, 'a wheel burst must keep one commit timer instead of recreating it per event');
+    assert.equal(app.style.transform, undefined, 'wheel handlers must only accumulate data before RAF');
+    rafQueue.shift()(16);
+    assert.match(app.style.transform, /^matrix\(/);
+    assert.equal(bodyClasses.has('view-proxy-active'), true);
+
+    const calls = [];
+    SMTool._updateNodeScreenPositionsCore = () => calls.push('nodes');
+    SMTool._updateFloatLabels = () => calls.push('labels');
+    SMTool._scheduleConnectorDotScaleRefresh = () => calls.push('dots');
+    SMTool._commitViewProxy();
+    assert.ok(SMData.view.zoom > 1, 'commit must publish the final real view once');
+    assert.equal(SMData._viewProxy.active, false);
+    assert.equal(app.style.transform, '');
+    assert.equal(bodyClasses.has('view-proxy-active'), false);
+    assert.deepEqual(calls, ['nodes']);
+    assert.equal(rafQueue.length, 1, 'post-commit labels must still settle on the next display frame');
+    rafQueue.shift()(32);
+    assert.deepEqual(calls, ['nodes', 'labels', 'dots']);
+
+    // 已到边界后继续滚轮必须完全不进入缩放代理热路径。这个断言直接覆盖
+    // 用户在 3% 极限继续滚动时浮窗仍被抢帧的回归场景。
+    const timersBeforeBoundaryInput = timerCreates;
+    SMData.view = { x: 12, y: -8, zoom: 0.03 };
+    SMData._viewProxy = null;
+    app.style.transform = '';
+    for (let i = 0; i < 100; i++) {
+        assert.equal(SMTool._onWheel({ deltaY: 100, clientX: 700, clientY: 400 }), false);
+    }
+    assert.equal(SMData._viewProxy, null, 'minimum-boundary input must create no view proxy');
+    assert.equal(rafQueue.length, 0, 'minimum-boundary input must queue no RAF work');
+    assert.equal(timerCreates, timersBeforeBoundaryInput, 'minimum-boundary input must create no timer');
+    assert.equal(app.style.transform, '', 'minimum-boundary input must write no CSS transform');
+
+    SMData.view = { x: 12, y: -8, zoom: 5 };
+    for (let i = 0; i < 100; i++) {
+        assert.equal(SMTool._onWheel({ deltaY: -100, clientX: 700, clientY: 400 }), false);
+    }
+    assert.equal(SMData._viewProxy, null, 'maximum-boundary input must create no view proxy');
+    assert.equal(rafQueue.length, 0, 'maximum-boundary input must queue no RAF work');
+    assert.equal(timerCreates, timersBeforeBoundaryInput, 'maximum-boundary input must create no timer');
+
+    context.document = oldDocument;
+    context.requestAnimationFrame = oldRAF;
+    context.setTimeout = oldSetTimeout;
+    context.clearTimeout = oldClearTimeout;
+    context.innerWidth = oldInnerWidth;
+    context.innerHeight = oldInnerHeight;
+    SMData.view = oldView;
+    SMData._viewProxy = oldProxy;
+    SMTool._viewProxyApplyQueued = false;
+    SMTool._pendingViewProxyApply = null;
+    SMTool._pendingViewProxyZoomUI = false;
+    Object.assign(SMTool, {
+        _updateNodeScreenPositionsCore: oldFns.nodes,
+        _updateFloatLabels: oldFns.labels,
+        _scheduleConnectorDotScaleRefresh: oldFns.dots,
+    });
+}
+
 const tests = [
     testTrackDurationUsesRealOverlapAndLongestParallelTrack,
     testNativeQueueMixStartsBeforePreviousAnimationEnds,
@@ -1296,8 +1964,24 @@ const tests = [
     testTrackNodesUseConnectionMixOnEveryActiveTrack,
     testTrackSourceKeepsRealMixingFromForNormalAndTrackTargets,
     testPreviewPrimesCompletedTrackSourceBeforeTransition,
+    testNormalToTrackFadesInTargetTracksWithoutSourceEntries,
+    testPreviewAlsoPrimesNormalSourceBeforeTrackTransition,
+    testTrackGlobalLoopToggleRebuildsRealSequences,
+    testPreviewConsumesExactSourceFrameDelta,
+    testZoomPreviewSyncDefersOnlyCanvasPoseWork,
+    testPreviewClockCarriesLongCompositeFrameRemainder,
+    testSinglePreviewRestartAlsoRewindsCanvasNode,
     testLayerEyeOnlyUpdatesItsOwnThumbnail,
     testClosedFullFlowCarriesClosingEdgeMixBackToSource,
+    testDirectSuccessorFocusAndRevisionAreImmediate,
+    testRightClickCancelsConnectingWithoutOpeningContextMenu,
+    testConnectorWorldPositionCacheAvoidsRepeatedLayoutReads,
+    testControlPointHitTestOnlyScansVisibleActiveConnection,
+    testFlowGraphSignatureIgnoresNodePositionButTracksRealDataChanges,
+    testDragSnapUsesCachedNodeSizesWithoutLayoutReads,
+    testFlowListsRenderPriorityItemsBeforeIdleHydration,
+    testThreeFlowConditionEditMapsDirectlyToCanvasConnection,
+    testLiveViewportGestureUpdatesRealViewBeforeHeavyCanvasWork,
 ];
 
 for (const test of tests) {

@@ -6,6 +6,12 @@
 
 var SMTool = window.SMTool || {};
 
+SMTool._invalidateConnectorLayout = function (node) {
+    if (!node) return;
+    node._connectorLayoutRevision = (node._connectorLayoutRevision || 0) + 1;
+    SMData._forceRedraw = true;
+};
+
 // ---- 网格背景 ----
 SMTool._renderGrid = function () {
     var ctx = SMTool.gridCtx;
@@ -70,6 +76,8 @@ SMTool._renderConnections = function () {
     var dragging = SMData.draggingCP;
     SMData._labelRects = [];  // 重置标签区域列表
     var mixControls = [];
+    var canvasW = SMTool.connCanvas.width;
+    var canvasH = SMTool.connCanvas.height;
 
     for (var i = 0; i < SMData.connections.length; i++) {
         var conn = SMData.connections[i];
@@ -92,6 +100,15 @@ SMTool._renderConnections = function () {
 
         var cp1s = SMTool.worldToCanvas(fp.x + cp1x, fp.y + cp1y);
         var cp2s = SMTool.worldToCanvas(tp.x + cp2x, tp.y + cp2y);
+
+        // 视口外连线不参与绘制和控件布局；控制点包围盒在视口外时曲线也不可能穿过视口。
+        var cullMargin = 140;
+        var curveMinX = Math.min(fs.x, ts.x, cp1s.x, cp2s.x);
+        var curveMaxX = Math.max(fs.x, ts.x, cp1s.x, cp2s.x);
+        var curveMinY = Math.min(fs.y, ts.y, cp1s.y, cp2s.y);
+        var curveMaxY = Math.max(fs.y, ts.y, cp1s.y, cp2s.y);
+        if (curveMaxX < -cullMargin || curveMinX > canvasW + cullMargin ||
+            curveMaxY < -cullMargin || curveMinY > canvasH + cullMargin) continue;
 
         // 连线颜色
         var connColor = conn.color || _connColor(i);
@@ -135,7 +152,7 @@ SMTool._renderConnections = function () {
         ctx.stroke();
         ctx.globalAlpha = 1;
 
-        // 方向箭头
+        // 方向箭头始终展示，缩放/拖拽期间也不改变视觉交互方式。
         if (!inFocus) ctx.globalAlpha = 0.25;
         SMTool._drawBezierArrows(ctx, fs.x, fs.y, cp1s.x, cp1s.y, cp2s.x, cp2s.y, ts.x, ts.y, inFocus ? connColor : '#666', isActive, z);
         ctx.globalAlpha = 1;
@@ -284,7 +301,14 @@ SMTool._renderConnections = function () {
         }  // closes if (!isEntryExitConn)
     }
     ctx.globalAlpha = 1;
-    SMTool._syncConnectionMixControls(mixControls);
+    // 连续视口操作时，Canvas 连线仍逐帧更新；输入控件 DOM 限制为约 30fps，
+    // 防止大量混合框样式写入挤占浮窗的下一帧。
+    var hotView = SMData._viewGesture && SMData._viewGesture.active;
+    var mixSyncNow = performance.now();
+    if (!hotView || mixSyncNow - (SMTool._lastMixControlSyncAt || 0) >= 34) {
+        SMTool._lastMixControlSyncAt = mixSyncNow;
+        SMTool._syncConnectionMixControls(mixControls);
+    }
 
     // 正在连线时的预览
     if (SMData.connecting) {
@@ -367,6 +391,8 @@ SMTool._adjustConnectionMixDuration = function (connId, delta) {
 SMTool._syncConnectionMixControls = function (descriptors) {
     var layer = document.getElementById('connectionControlLayer');
     if (!layer) return;
+    layer.style.visibility = '';
+    layer.style.pointerEvents = '';
     if (!SMTool._connectionMixElements) SMTool._connectionMixElements = {};
     var elementMap = SMTool._connectionMixElements;
     var keep = {};
@@ -402,16 +428,27 @@ SMTool._syncConnectionMixControls = function (descriptors) {
             layer.appendChild(el);
             elementMap[d.connId] = el;
         }
-        el.style.left = d.x + 'px';
-        el.style.top = d.y + 'px';
-        el.style.width = Math.max(1, d.w) + 'px';
-        el.style.height = Math.max(1, d.h) + 'px';
-        el.style.fontSize = d.fontSize + 'px';
-        el.style.borderColor = d.color || '';
-        el.style.borderRadius = Math.max(2, d.radius || 0) + 'px';
-        el.classList.toggle('is-dimmed', !!d.dimmed);
-        el.classList.toggle('is-compact', !!d.compact);
-        var input = el.querySelector('input');
+        // 仅写入真正变化的样式；位置使用 transform，避免 left/top 触发布局级联。
+        var geometrySignature = [
+            Math.round(d.x * 10) / 10, Math.round(d.y * 10) / 10,
+            Math.round(d.w * 10) / 10, Math.round(d.h * 10) / 10,
+            d.fontSize, d.color || '', d.radius || 0, d.dimmed ? 1 : 0, d.compact ? 1 : 0
+        ].join('|');
+        if (el._geometrySignature !== geometrySignature) {
+            el._geometrySignature = geometrySignature;
+            el.style.left = '0px';
+            el.style.top = '0px';
+            el.style.transform = 'translate3d(' + d.x + 'px,' + d.y + 'px,0)';
+            el.style.width = Math.max(1, d.w) + 'px';
+            el.style.height = Math.max(1, d.h) + 'px';
+            el.style.fontSize = d.fontSize + 'px';
+            el.style.borderColor = d.color || '';
+            el.style.borderRadius = Math.max(2, d.radius || 0) + 'px';
+            el.classList.toggle('is-dimmed', !!d.dimmed);
+            el.classList.toggle('is-compact', !!d.compact);
+        }
+        var input = el._mixInput || el.querySelector('input');
+        el._mixInput = input;
         if (input && document.activeElement !== input) {
             input.value = d.value.toFixed(1);
         }
@@ -457,83 +494,61 @@ SMTool._renderSnapLines = function () {
     }
 };
 // ---- 获取状态连接点位置 ----
+// 首次从 DOM 测量端点相对节点的世界坐标，后续拖拽/缩放/平移直接用模型坐标计算。
+// 大量连线时可消除每帧数百次 getBoundingClientRect() 引发的强制同步布局。
 SMTool._getStateConnectorPos = function (node, stateName, type) {
     var el = SMTool._getEl(node.id);
     if (!el) return null;
-
-    // 入口节点左右端点均可连接
-    if (node.nodeType === 'entry') {
-        var dotE2 = el.querySelector('.anim-bar .conn-dot.' + (type === 'output' ? 'output' : 'input'));
-        if (dotE2) {
-            var rE2 = dotE2.getBoundingClientRect();
-            return SMTool.canvasToWorld(rE2.left + rE2.width / 2, rE2.top + rE2.height / 2);
-        }
-        return null;
-    }
-    if (node.nodeType === 'exit') {
-        if (type === 'output') return null;
-        var dotX = el.querySelector('.anim-bar .conn-dot.input');
-        if (dotX) {
-            var rX = dotX.getBoundingClientRect();
-            return SMTool.canvasToWorld(rX.left + rX.width / 2, rX.top + rX.height / 2);
-        }
-        return null;
+    if (!SMTool._connectorLocalCache) SMTool._connectorLocalCache = {};
+    var cacheKey = node.id + '|' + String(stateName || '') + '|' + type;
+    var nodeScale = node._customScale !== undefined ? node._customScale : 1;
+    var layoutRevision = node._connectorLayoutRevision || 0;
+    var cached = SMTool._connectorLocalCache[cacheKey];
+    // 层级节点的输入和分层输出都跟随动态行布局；层列表内容/高度可在后台刷新，
+    // 不能复用旧的局部坐标。这里只实时测量少量 layer 端点，普通动画端点仍走缓存。
+    var dynamicLayerConnector = node.nodeType === 'layer';
+    var stableDuringViewGesture = SMData._viewGesture && SMData._viewGesture.active;
+    if ((!dynamicLayerConnector || stableDuringViewGesture) && cached && cached.root === el &&
+        cached.scale === nodeScale && cached.revision === layoutRevision) {
+        return { x: node.x + cached.dx, y: node.y + cached.dy };
     }
 
-    // ★ 层级节点：output 端点按层号定位
-    if (node.nodeType === 'layer') {
-        if (type === 'output') {
-            var layerNum = 0;
-            if (typeof stateName === 'string' && stateName.indexOf('layer_') === 0) {
-                layerNum = parseInt(stateName.replace('layer_', '')) || 0;
-            }
-            if (layerNum > 0) {
-                var dotL = el.querySelector('.layer-dot-' + layerNum);
-                if (dotL) {
-                    var rL = dotL.getBoundingClientRect();
-                    return SMTool.canvasToWorld(rL.left + rL.width / 2, rL.top + rL.height / 2);
-                }
-            }
-            // 回退：找第一个 layer-dot
-            var dotF = el.querySelector('.layer-dot');
-            if (dotF) {
-                var rF = dotF.getBoundingClientRect();
-                return SMTool.canvasToWorld(rF.left + rF.width / 2, rF.top + rF.height / 2);
-            }
-        }
-        if (type === 'input') {
-            var dotI = el.querySelector('.anim-bar .conn-dot.input');
-            if (dotI) {
-                var rI = dotI.getBoundingClientRect();
-                return SMTool.canvasToWorld(rI.left + rI.width / 2, rI.top + rI.height / 2);
-            }
-        }
-        return null;
+    function measure(target, edge) {
+        if (!target) return null;
+        var rect = target.getBoundingClientRect();
+        var sx = rect.left + rect.width / 2;
+        var sy = rect.top + rect.height / 2;
+        if (edge === 'left') sx = rect.left;
+        if (edge === 'right') sx = rect.right;
+        var world = SMTool.canvasToWorld(sx, sy);
+        SMTool._connectorLocalCache[cacheKey] = {
+            root: el,
+            scale: nodeScale,
+            revision: layoutRevision,
+            dx: world.x - node.x,
+            dy: world.y - node.y
+        };
+        return world;
     }
 
-    // ★ 延时器/隐藏器节点：左右端点均可连接
-    if (node.nodeType === 'delayer' || node.nodeType === 'progDelayer' || node.nodeType === 'hider') {
-        var dotD = el.querySelector('.anim-bar .conn-dot.' + (type === 'output' ? 'output' : 'input'));
-        if (dotD) {
-            var rD = dotD.getBoundingClientRect();
-            return SMTool.canvasToWorld(rD.left + rD.width / 2, rD.top + rD.height / 2);
+    var dot = null;
+    if (node.nodeType === 'exit' && type === 'output') return null;
+    if (node.nodeType === 'layer' && type === 'output') {
+        var layerNum = 0;
+        if (typeof stateName === 'string' && stateName.indexOf('layer_') === 0) {
+            layerNum = parseInt(stateName.replace('layer_', '')) || 0;
         }
-        return null;
+        if (layerNum > 0) dot = el.querySelector('.layer-dot-' + layerNum);
+        if (!dot) dot = el.querySelector('.layer-dot');
+        return measure(dot);
     }
 
-    // 在新布局中，连接点在 anim-bar 上
     var bar = el.querySelector('.anim-bar');
-    var dot = bar ? bar.querySelector('.conn-dot.' + (type === 'output' ? 'output' : 'input')) : null;
-    if (dot) {
-        var r = dot.getBoundingClientRect();
-        return SMTool.canvasToWorld(r.left + r.width / 2, r.top + r.height / 2);
-    }
-    // 回退：使用节点边缘
-    var rect = el.getBoundingClientRect();
-    return SMTool.canvasToWorld(
-        type === 'output' ? rect.right : rect.left,
-        rect.top + rect.height / 2
-    );
+    dot = bar ? bar.querySelector('.conn-dot.' + (type === 'output' ? 'output' : 'input')) : null;
+    if (dot) return measure(dot);
+
+    // 少数无端点的旧工程节点沿用节点边缘回退。
+    return measure(el, type === 'output' ? 'right' : 'left');
 };
 
 // ---- 在贝塞尔曲线上绘制方向箭头 ----
@@ -584,8 +599,12 @@ SMTool._defaultCPOffsets = function (fp, tp) {
 // ---- 查找指定屏幕位置附近的控制点 ----
 SMTool._findCP = function (sx, sy, radius) {
     radius = (radius || 12) * SMData.view.zoom;  // 随缩放调整命中半径
+    // 控制柄只为当前选中/正在拖拽的连线显示，因此无需扫描全部连线。
+    var activeConnId = SMData.draggingCP ? SMData.draggingCP.connId : SMData.selectedConnection;
+    if (activeConnId === null || activeConnId === undefined) return null;
     for (var i = 0; i < SMData.connections.length; i++) {
         var c = SMData.connections[i];
+        if (c.id !== activeConnId) continue;
         var fn = SMData.nodes.get(c.fromNode);
         var tn = SMData.nodes.get(c.toNode);
         if (!fn || !tn) continue;

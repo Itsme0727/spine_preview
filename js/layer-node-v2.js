@@ -193,6 +193,7 @@ SMTool._createLayerEl = function (node) {
 SMTool._updateLayerEl = function (node) {
     var el = SMTool._getEl(node.id);
     if (!el || node.nodeType !== 'layer') return;
+    if (typeof SMTool._invalidateConnectorLayout === 'function') SMTool._invalidateConnectorLayout(node);
     var ld = SMTool._layerData(node);
 
     // 更新内容框
@@ -326,6 +327,7 @@ SMTool._onLayerDot = function (nid, layerNum, dotType) {
                 sx: wp.x, sy: wp.y,
                 mx: cx, my: cy
             };
+            if (typeof SMTool._focusDirectSuccessors === 'function') SMTool._focusDirectSuccessors(nid);
             SMTool._updateSel();
             return;
         }
@@ -333,6 +335,7 @@ SMTool._onLayerDot = function (nid, layerNum, dotType) {
 
     // 回退：无 DOM 信息时仅记录节点
     SMData.connecting = { nodeId: nid, stateName: 'layer_' + layerNum, dotType: dotType };
+    if (typeof SMTool._focusDirectSuccessors === 'function') SMTool._focusDirectSuccessors(nid);
     SMTool._updateSel();
 };
 
@@ -1412,6 +1415,7 @@ SMTool._showLayerPreview = function (layerNode, playbackOwner) {
     pp.state = null;
     pp._readyToRender = true;
     pp._lastTime = performance.now();
+    pp._previewTimeCarry = 0;
     pp.visible = true;
 
     var title = document.getElementById('appTitle');
@@ -1464,6 +1468,7 @@ SMTool._showLayerPreview = function (layerNode, playbackOwner) {
         SMTool._renderLayerPreview(null, pp, initialNow);
         pp._flowFrozen = initialFrozen;
         pp._lastTime = performance.now();
+        pp._previewTimeCarry = 0;
     }
     // 每次选择新的并行节点/流程步骤都按新的运行时层数据立即重建列表。
     if (typeof SMTool._syncLayerListPreviewMode === 'function') SMTool._syncLayerListPreviewMode(true, true);
@@ -2110,6 +2115,7 @@ SMTool._restartLayerPreviewCycle = function (pp, now) {
         pp._startupDelayFrames = 0;
         pp._needsLayerReinit = false;
         pp._lastTime = now || performance.now();
+        pp._previewTimeCarry = 0;
 
         // 冻结状态下同步画两次，直接嵌套层也在同一原子批次显示第 0 帧。
         var wasFrozen = !!pp._flowFrozen;
@@ -2118,6 +2124,7 @@ SMTool._restartLayerPreviewCycle = function (pp, now) {
         SMTool._renderLayerPreview(null, pp, pp._lastTime);
         pp._flowFrozen = wasFrozen;
         pp._lastTime = now || performance.now();
+        pp._previewTimeCarry = 0;
     } finally {
         pp._parallelRestarting = false;
     }
@@ -2564,11 +2571,14 @@ SMTool._renderLayerPreview = function (layerNode, pp, now) {
     if (pp._startupDelayFrames > 0) {
         pp._startupDelayFrames--;
         pp._lastTime = now;
+        pp._previewTimeCarry = 0;
         return;
     }
 
-    var dt = Math.min((now - (pp._lastTime || now)) / 1000, 0.1);
-    pp._lastTime = now;
+    var dt = (typeof SMTool._consumePreviewFrameDelta === 'function')
+        ? SMTool._consumePreviewFrameDelta(pp, now)
+        : Math.min((now - (pp._lastTime || now)) / 1000, 0.1);
+    if (typeof SMTool._consumePreviewFrameDelta !== 'function') pp._lastTime = now;
     var frozen = pp._flowFrozen;
 
     // ★★ 每层独立渲染（含内联嵌套子树），互不干扰
