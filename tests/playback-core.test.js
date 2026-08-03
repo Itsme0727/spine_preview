@@ -1630,6 +1630,85 @@ function testFlowGraphSignatureIgnoresNodePositionButTracksRealDataChanges() {
     assert.notEqual(SMTool._flowGraphSignature(), beforeMove);
 }
 
+function testFullFlowBranchesUseEachTargetNodesRealAnimation() {
+    SMData.nodes = new Map([
+        [1, { id: 1, nodeType: 'spine', name: 'A', currentAnim: 'A' }],
+        [2, { id: 2, nodeType: 'spine', name: 'B', currentAnim: 'shared-preview' }],
+        [3, { id: 3, nodeType: 'spine', name: 'C', currentAnim: 'shared-preview' }],
+        [4, { id: 4, nodeType: 'spine', name: 'D', currentAnim: 'shared-preview' }],
+        [5, { id: 5, nodeType: 'spine', name: 'F', currentAnim: 'shared-preview' }],
+    ]);
+    SMData.connections = [2, 3, 4, 5].map((targetId, index) => ({
+        id: index + 1,
+        fromNode: 1,
+        fromState: 'A',
+        toNode: targetId,
+        toState: ['B', 'C', 'D', 'F'][index],
+    }));
+    const paths = [2, 3, 4, 5].map((targetId) => ({
+        nodes: [{ id: 1, anim: 'A' }, { id: targetId, anim: 'B' }],
+        conns: [targetId - 1],
+    }));
+
+    SMTool._normalizeFullFlowPathSteps(paths);
+    assert.deepEqual(paths.map((flowPath) => flowPath.nodes.map((step) => `${step.id}:${step.anim}`).join('>')), [
+        '1:A>2:B',
+        '1:A>3:C',
+        '1:A>4:D',
+        '1:A>5:F',
+    ]);
+
+    SMData.connections[1].toState = 'C_changed';
+    SMTool._normalizeFullFlowPathSteps(paths);
+    assert.equal(paths[1].nodes[1].anim, 'C_changed', 'cached paths must refresh from their own incoming connection');
+
+    SMData.connections[1].toState = 'C';
+    const enumerated = SMTool._enumerateSimpleFullFlowPaths(1);
+    assert.equal(JSON.stringify(enumerated.map((flowPath) => flowPath.nodes[1].id)), JSON.stringify([2, 3, 4, 5]));
+    assert.equal(JSON.stringify(enumerated.map((flowPath) => flowPath.nodes[1].anim)), JSON.stringify(['B', 'C', 'D', 'F']));
+
+    const appSource = fs.readFileSync(path.join(root, 'js/app.js'), 'utf8');
+    const uiSource = fs.readFileSync(path.join(root, 'js/ui-dom.js'), 'utf8');
+    assert.match(appSource, /var simplePaths = SMTool\._enumerateSimpleFullFlowPaths\(sourceId\)/);
+    assert.match(appSource, /return SMTool\._normalizeFullFlowPathSteps\(SMData\._fullPathTopologyCache\.get\(cacheKey\)\)/);
+    assert.match(appSource, /SMTool\._normalizeFullFlowPathSteps\(paths\);[\s\S]{0,120}SMData\._fullPathTopologyCache\.set/);
+    assert.match(uiSource, /_connectionById\[indexedConnection\.id\] = indexedConnection/);
+    assert.match(uiSource, /_renderTransitionEditor\(_pathTransitionConnection\(path, si\)\)/);
+    assert.match(uiSource, /var incomingStepConnection = si > 0 \? _pathTransitionConnection\(path, si - 1\) : null/);
+    assert.match(uiSource, /_disp\(renderedStepAnim, SMData\.nodes\.get\(sn\.id\)\)/);
+}
+
+function testPreviewAnimationChangeDoesNotCollapseEnumeratedConnectionStates() {
+    SMData.nodes = new Map([
+        [1, { id: 1, nodeType: 'spine', name: 'hoverborad', currentAnim: 'hoverborad' }],
+        [2, { id: 2, nodeType: 'spine', name: 'shared-target', currentAnim: 'preview-only' }],
+    ]);
+    SMData.connections = ['B', 'C', 'D', 'F'].map((toState, index) => ({
+        id: index + 1,
+        fromNode: 1,
+        fromState: 'hoverborad',
+        toNode: 2,
+        toState,
+    }));
+
+    const before = SMData.connections.map((connection) => connection.toState);
+    SMData.nodes.get(2).currentAnim = 'F';
+    SMTool._syncFlowPathAnim(2, 'F');
+    assert.deepEqual(
+        SMData.connections.map((connection) => connection.toState),
+        before,
+        'changing the node preview must preserve every authored connection state'
+    );
+
+    const enumerated = SMTool._enumerateSimpleFullFlowPaths(1);
+    assert.equal(
+        JSON.stringify(enumerated.map((flowPath) => flowPath.nodes[1].anim)),
+        JSON.stringify(['B', 'C', 'D', 'F']),
+        'parallel connections to the same node must remain independent enum paths'
+    );
+    assert.equal(new Set(enumerated.map((flowPath) => SMTool._fullPathStableKey(flowPath))).size, 4);
+}
+
 function testDragSnapUsesCachedNodeSizesWithoutLayoutReads() {
     const appSource = fs.readFileSync(path.join(root, 'js/app.js'), 'utf8');
     const interactionSource = fs.readFileSync(path.join(root, 'js/interaction.js'), 'utf8');
@@ -1756,6 +1835,8 @@ const tests = [
     testConnectorWorldPositionCacheAvoidsRepeatedLayoutReads,
     testControlPointHitTestOnlyScansVisibleActiveConnection,
     testFlowGraphSignatureIgnoresNodePositionButTracksRealDataChanges,
+    testFullFlowBranchesUseEachTargetNodesRealAnimation,
+    testPreviewAnimationChangeDoesNotCollapseEnumeratedConnectionStates,
     testDragSnapUsesCachedNodeSizesWithoutLayoutReads,
     testFlowListsRenderPriorityItemsBeforeIdleHydration,
     testThreeFlowConditionEditMapsDirectlyToCanvasConnection,

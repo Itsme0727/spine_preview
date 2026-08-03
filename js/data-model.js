@@ -594,6 +594,131 @@ SMTool._fullPathStableKey = function (path) {
     return nodePart.join('>') + '|' + connPart.join(',');
 };
 
+// [LOCK-FULL-FLOW-PATH-1] Every non-source step belongs to one concrete connection.
+// Its toState is the authored flow state and must win over the target node's current
+// preview selection. This prevents every branch from borrowing the first branch state.
+SMTool._fullFlowNodeAnim = function (node, connectionAnim, hasConcreteConnection) {
+    if (hasConcreteConnection && connectionAnim) return connectionAnim;
+    if (!node) return connectionAnim || '';
+    if (node.nodeType === 'entry') return 'entry';
+    if (node.nodeType === 'exit') return 'exit';
+    if (node.nodeType === 'layer') return node.name || connectionAnim || '并行播放';
+    if (node.currentAnim) return node.currentAnim;
+    if (node.tracks && node.tracks[0] && node.tracks[0].animName) return node.tracks[0].animName;
+    if (node.animations && node.animations[0] && node.animations[0].name) return node.animations[0].name;
+    return node.name || connectionAnim || '';
+};
+
+SMTool._normalizeFullFlowPathSteps = function (paths) {
+    var connectionById = {};
+    for (var ci = 0; ci < SMData.connections.length; ci++) connectionById[SMData.connections[ci].id] = SMData.connections[ci];
+    function normalizeSteps(steps, connectionIds) {
+        if (!steps) return;
+        for (var si = 0; si < steps.length; si++) {
+            var step = steps[si];
+            if (!step) continue;
+            var incoming = null;
+            if (step._incomingConnId !== undefined && step._incomingConnId !== null) {
+                incoming = connectionById[step._incomingConnId] || null;
+            }
+            if (!incoming && si > 0 && connectionIds && connectionIds.length > 0) {
+                var directCandidate = connectionById[connectionIds[si - 1]] || null;
+                if (directCandidate && directCandidate.fromNode === steps[si - 1].id && directCandidate.toNode === step.id) {
+                    incoming = directCandidate;
+                } else {
+                    for (var cii = 0; cii < connectionIds.length; cii++) {
+                        var pathConnection = connectionById[connectionIds[cii]];
+                        if (pathConnection && pathConnection.fromNode === steps[si - 1].id && pathConnection.toNode === step.id) {
+                            incoming = pathConnection;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (incoming) step._incomingConnId = incoming.id;
+            step.anim = SMTool._fullFlowNodeAnim(
+                SMData.nodes.get(step.id),
+                incoming && incoming.toState ? incoming.toState : step.anim,
+                !!incoming
+            );
+            if (step._branches) {
+                for (var bi = 0; bi < step._branches.length; bi++) {
+                    var branch = step._branches[bi];
+                    normalizeSteps(branch && branch.nodes, branch && branch.conns);
+                }
+            }
+        }
+    }
+    for (var pi = 0; pi < (paths || []).length; pi++) {
+        var path = paths[pi];
+        normalizeSteps(path && path.nodes, path && path.conns);
+    }
+    return paths || [];
+};
+
+// Ordinary flow graphs do not need the parallel-layer hub expansion in app.js.
+// Keeping this enumerator pure makes branch identity testable: A->B/C/D/F must
+// produce four independent paths whose second node ids are B, C, D and F.
+SMTool._enumerateSimpleFullFlowPaths = function (sourceId) {
+    var sourceNode = SMData.nodes.get(sourceId);
+    if (!sourceNode) return [];
+
+    // A reachable parallel node needs the existing hub-aware enumerator.
+    var scanQueue = [sourceId];
+    var scanned = new Set();
+    while (scanQueue.length > 0) {
+        var scanId = scanQueue.shift();
+        if (scanned.has(scanId)) continue;
+        scanned.add(scanId);
+        var scanNode = SMData.nodes.get(scanId);
+        if (scanNode && scanNode.nodeType === 'layer') return null;
+        for (var sci = 0; sci < SMData.connections.length; sci++) {
+            if (SMData.connections[sci].fromNode === scanId) scanQueue.push(SMData.connections[sci].toNode);
+        }
+    }
+
+    var paths = [];
+    function dfs(currentId, nodePath, connPath, visited) {
+        var outgoing = [];
+        for (var ci = 0; ci < SMData.connections.length; ci++) {
+            if (SMData.connections[ci].fromNode === currentId) outgoing.push(SMData.connections[ci]);
+        }
+        if (outgoing.length === 0) {
+            paths.push({ nodes: nodePath.slice(), conns: connPath.slice() });
+            return;
+        }
+        for (var oi = 0; oi < outgoing.length; oi++) {
+            var connection = outgoing[oi];
+            var targetNode = SMData.nodes.get(connection.toNode);
+            if (!targetNode) continue;
+            var targetStep = {
+                id: targetNode.id,
+                anim: SMTool._fullFlowNodeAnim(targetNode, connection.toState, true),
+                _incomingConnId: connection.id
+            };
+            if (visited.has(targetNode.id)) {
+                targetStep.cycleClose = true;
+                paths.push({
+                    nodes: nodePath.concat([targetStep]),
+                    conns: connPath.concat([connection.id])
+                });
+                continue;
+            }
+            visited.add(targetNode.id);
+            nodePath.push(targetStep);
+            connPath.push(connection.id);
+            dfs(targetNode.id, nodePath, connPath, visited);
+            connPath.pop();
+            nodePath.pop();
+            visited.delete(targetNode.id);
+        }
+    }
+
+    var visited = new Set([sourceId]);
+    dfs(sourceId, [{ id: sourceId, anim: SMTool._fullFlowNodeAnim(sourceNode, sourceNode.currentAnim) }], [], visited);
+    return SMTool._normalizeFullFlowPathSteps(paths);
+};
+
 SMTool._applyTracksToState = function (node) {
     if (!node.state || !node.skeletonData) return;
 

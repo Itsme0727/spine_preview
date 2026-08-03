@@ -784,9 +784,19 @@ SMTool.init = function () {
         if (!SMData._fullPathTopologyCache) SMData._fullPathTopologyCache = new Map();
         if (SMData._fullPathTopologyCache.has(cacheKey)) {
             SMData._fullPathCacheHits = (SMData._fullPathCacheHits || 0) + 1;
-            return SMData._fullPathTopologyCache.get(cacheKey);
+            return SMTool._normalizeFullFlowPathSteps(SMData._fullPathTopologyCache.get(cacheKey));
         }
         SMData._fullPathCacheMisses = (SMData._fullPathCacheMisses || 0) + 1;
+
+        var simplePaths = SMTool._enumerateSimpleFullFlowPaths(sourceId);
+        if (simplePaths !== null) {
+            SMData._fullPathTopologyCache.set(cacheKey, simplePaths);
+            if (SMData._fullPathTopologyCache.size > 12) {
+                var simpleOldestKey = SMData._fullPathTopologyCache.keys().next().value;
+                SMData._fullPathTopologyCache.delete(simpleOldestKey);
+            }
+            return simplePaths;
+        }
 
         // ★ 辅助：沿唯一下游链追踪分支（遇死胡同/环/layer 节点停止）
         function traceBranchChain(startId, excludeIds) {
@@ -819,7 +829,7 @@ SMTool.init = function () {
                 if (!nextNode) break;
                 var animName = chosen.toState || nextNode.currentAnim ||
                     (nextNode.animations && nextNode.animations.length > 0 ? nextNode.animations[0].name : nextNode.name);
-                nodes.push({ id: chosen.toNode, anim: animName });
+                nodes.push({ id: chosen.toNode, anim: animName, _incomingConnId: chosen.id });
                 conns.push(chosen.id);
                 chainVisited.add(chosen.toNode);
                 currentId = chosen.toNode;
@@ -917,7 +927,7 @@ SMTool.init = function () {
                         var startAnim = (branchStartId === directTargetId ? lconn.toState : '') ||
                             startNode.currentAnim ||
                             (startNode.animations && startNode.animations.length > 0 ? startNode.animations[0].name : startNode.name);
-                        branchNodes.push({ id: branchStartId, anim: startAnim });
+                        branchNodes.push({ id: branchStartId, anim: startAnim, _incomingConnId: lconn.id });
                     }
                     for (var tn = 0; tn < traceResult.nodes.length; tn++) {
                         branchNodes.push(traceResult.nodes[tn]);
@@ -1051,7 +1061,7 @@ SMTool.init = function () {
                         if (closeNode) {
                             var closeAnim = oc.toState || closeNode.currentAnim ||
                                 (closeNode.animations && closeNode.animations.length > 0 ? closeNode.animations[0].name : closeNode.name);
-                            cycleNodes.push({ id: nextId, anim: closeAnim, cycleClose: true });
+                            cycleNodes.push({ id: nextId, anim: closeAnim, cycleClose: true, _incomingConnId: oc.id });
                         }
                         paths.push({ nodes: cycleNodes, conns: cycleConnPath });
                     }
@@ -1062,7 +1072,7 @@ SMTool.init = function () {
                 var animName = oc.toState || nextNode.currentAnim ||
                     (nextNode.animations && nextNode.animations.length > 0 ? nextNode.animations[0].name : nextNode.name);
 
-                nodePath.push({ id: nextId, anim: animName });
+                nodePath.push({ id: nextId, anim: animName, _incomingConnId: oc.id });
                 connPath.push(oc.id);
                 pathVisited.add(nextId);
                 dfs(nextId, nodePath, connPath, pathVisited);
@@ -1083,6 +1093,12 @@ SMTool.init = function () {
 
         // 路径顺序只由拓扑和状态名决定，不受节点画布坐标影响。保留少量最近结果，
         // 后续拖动同一节点时直接复用，不再重新 DFS 整理完整动画流 item。
+        SMTool._normalizeFullFlowPathSteps(paths);
+
+        // ★ 动画流枚举组合排序：按首步分支做 round-robin 交错，确保前 N 条路径
+        //    来自不同的动画分支，避免将所有同一分支路径堆在前列造成"千篇一律"的错觉。
+        SMTool._sortFullFlowPathsRoundRobin(paths);
+
         SMData._fullPathTopologyCache.set(cacheKey, paths);
         if (SMData._fullPathTopologyCache.size > 12) {
             var oldestKey = SMData._fullPathTopologyCache.keys().next().value;
@@ -1090,6 +1106,46 @@ SMTool.init = function () {
         }
 
         return paths;
+    };
+
+    // ★ Round-robin 路径排序：按第一步分支分组后交错排列
+    SMTool._sortFullFlowPathsRoundRobin = function (paths) {
+        if (!paths || paths.length < 2) return;
+        // 按 path.nodes[1].id（首步目标节点 ID）分组
+        var groups = {};  // { firstStepId: [pathIdx, pathIdx, ...] }
+        var groupOrder = [];  // 保持分组出现顺序
+        for (var pi = 0; pi < paths.length; pi++) {
+            var path = paths[pi];
+            var firstStepId = (path.nodes && path.nodes.length >= 2) ? path.nodes[1].id : 0;
+            if (!groups[firstStepId]) {
+                groups[firstStepId] = [];
+                groupOrder.push(firstStepId);
+            }
+            groups[firstStepId].push(pi);
+        }
+        if (groupOrder.length <= 1) return;  // 只有一种分支，无需重排
+
+        // Round-robin 交错取各组的路径索引
+        var sortedIndices = [];
+        var maxGroupLen = 0;
+        for (var gi = 0; gi < groupOrder.length; gi++) {
+            maxGroupLen = Math.max(maxGroupLen, groups[groupOrder[gi]].length);
+        }
+        for (var round = 0; round < maxGroupLen; round++) {
+            for (var gi = 0; gi < groupOrder.length; gi++) {
+                var gIndices = groups[groupOrder[gi]];
+                if (round < gIndices.length) {
+                    sortedIndices.push(gIndices[round]);
+                }
+            }
+        }
+
+        // 原地重排 paths 数组
+        var sorted = sortedIndices.map(function (idx) { return paths[idx]; });
+        paths.length = 0;
+        for (var si = 0; si < sorted.length; si++) {
+            paths.push(sorted[si]);
+        }
     };
 
     // ---- 节点分组 ----

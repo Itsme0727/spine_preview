@@ -5334,13 +5334,44 @@ SMTool._updateFullFlowPanel = function (content, panel) {
     function _pathKey(path) {
         return typeof SMTool._fullPathStableKey === 'function' ? SMTool._fullPathStableKey(path) : '';
     }
+    // ★ 基于动画序列生成默认路径名（如 "hoverboard → idle → walk → run"）
+    //    最多展示前 5 个动画名，超出部分用 "…" 省略
+    function _generateFlowPathName(path) {
+        if (!path || !path.nodes || path.nodes.length === 0) return '动画流';
+        var MAX_NAME_STEPS = 5;
+        var parts = [];
+        var len = Math.min(path.nodes.length, MAX_NAME_STEPS);
+        for (var ni = 0; ni < len; ni++) {
+            var sn = path.nodes[ni];
+            if (!sn) continue;
+            var displayName = _disp(sn.anim, SMData.nodes.get(sn.id));
+            // 跳过重复连续的动画名
+            if (parts.length > 0 && parts[parts.length - 1] === displayName) continue;
+            parts.push(displayName);
+        }
+        if (path.nodes.length > MAX_NAME_STEPS) parts.push('…');
+        return parts.length > 0 ? parts.join(' → ') : '动画流';
+    }
     var _connectionByPair = {};
+    var _connectionById = {};
     for (var connectionIndex = 0; connectionIndex < SMData.connections.length; connectionIndex++) {
         var indexedConnection = SMData.connections[connectionIndex];
         _connectionByPair[indexedConnection.fromNode + '>' + indexedConnection.toNode] = indexedConnection;
+        _connectionById[indexedConnection.id] = indexedConnection;
     }
     function _connectionBetween(fromId, toId) {
         return _connectionByPair[fromId + '>' + toId] || null;
+    }
+    function _pathTransitionConnection(path, stepIndex) {
+        var nextStep = path && path.nodes ? path.nodes[stepIndex + 1] : null;
+        if (!nextStep) return null;
+        var connectionId = nextStep._incomingConnId;
+        if ((connectionId === undefined || connectionId === null) && path.conns) connectionId = path.conns[stepIndex];
+        var exactConnection = _connectionById[connectionId] || null;
+        if (exactConnection && exactConnection.fromNode === path.nodes[stepIndex].id && exactConnection.toNode === nextStep.id) {
+            return exactConnection;
+        }
+        return _connectionBetween(path.nodes[stepIndex].id, nextStep.id);
     }
     function _renderTransitionEditor(connection) {
         if (!connection) return '';
@@ -5600,7 +5631,8 @@ SMTool._updateFullFlowPanel = function (content, panel) {
         var path = paths[pi];
         var isActivePath = (pi === SMData._fullPlayback.activePathIdx);
         var pathKey = _pathKey(path);
-        var defaultPathName = '动画' + (pi + 1);
+        // ★ 默认路径名：基于动画序列生成描述性标题（如 "hoverboard → idle → walk"）
+        var defaultPathName = _generateFlowPathName(path);
         var pathName = SMData._fullPathNames[pathKey] || defaultPathName;
         var itemHtml = '<div class="flp-full-path' + (isActivePath ? ' active' : '') + '" data-path-idx="' + pi + '" style="order:' + pi + '">';
         itemHtml += '<span class="flp-full-path-title" data-path-key="' + encodeURIComponent(pathKey) + '" data-default-title="' + SMTool._esc(defaultPathName) + '" title="双击修改标题">' + SMTool._esc(pathName) + '</span>';
@@ -5609,6 +5641,11 @@ SMTool._updateFullFlowPanel = function (content, panel) {
         itemHtml += '<div class="flp-full-path-row">';
         for (var si = 0; si < path.nodes.length; si++) {
             var sn = path.nodes[si];
+            // Bind the visible state to this path's own incoming edge, never to a
+            // reused node preview state or another path's first transition.
+            var incomingStepConnection = si > 0 ? _pathTransitionConnection(path, si - 1) : null;
+            var renderedStepAnim = incomingStepConnection && incomingStepConnection.toState ?
+                incomingStepConnection.toState : sn.anim;
             if (sn._isLayerHub) {
                 // ★ 层枢纽：先画枢纽色块，再在其后内联画分支矩阵
                 var hubClass = 'flp-full-state layer-hub-state';
@@ -5618,7 +5655,7 @@ SMTool._updateFullFlowPanel = function (content, panel) {
                     else if (si === pb.currentStep) hubClass += ' current';
                     else hubClass += ' upcoming';
                 }
-                itemHtml += '<span class="' + hubClass + '" data-flow-step-idx="' + si + '">📚 ' + SMTool._esc(_disp(sn.anim, SMData.nodes.get(sn.id))) + '</span>';
+                itemHtml += '<span class="' + hubClass + '" data-flow-step-idx="' + si + '" data-flow-node-id="' + sn.id + '" data-flow-incoming-conn="' + (incomingStepConnection ? incomingStepConnection.id : '') + '">📚 ' + SMTool._esc(_disp(renderedStepAnim, SMData.nodes.get(sn.id))) + '</span>';
                 // ★ 内联分支矩阵（紧跟枢纽色块后面）
                 itemHtml += _renderLayerBranchesInline(sn, isActivePath, si);
             } else {
@@ -5630,10 +5667,10 @@ SMTool._updateFullFlowPanel = function (content, panel) {
                     else if (si === pb.currentStep) stateClass += ' current';
                     else stateClass += ' upcoming';
                 }
-                itemHtml += '<span class="' + stateClass + '" data-flow-step-idx="' + si + '">' + SMTool._esc(_disp(sn.anim, SMData.nodes.get(sn.id))) + '</span>';
+                itemHtml += '<span class="' + stateClass + '" data-flow-step-idx="' + si + '" data-flow-node-id="' + sn.id + '" data-flow-incoming-conn="' + (incomingStepConnection ? incomingStepConnection.id : '') + '">' + SMTool._esc(_disp(renderedStepAnim, SMData.nodes.get(sn.id))) + '</span>';
             }
             if (si < path.nodes.length - 1) {
-                itemHtml += _renderTransitionEditor(_connectionBetween(sn.id, path.nodes[si + 1].id));
+                itemHtml += _renderTransitionEditor(_pathTransitionConnection(path, si));
             }
         }
         itemHtml += '</div>'; // end .flp-full-path-row
@@ -6876,17 +6913,13 @@ SMTool._updateFullHighlight = function () {
     SMTool._updateStateRowColors();
 };
 
-// ★ 同步动画流路径中的状态名（节点动画变更时调用）
-SMTool._syncFlowPathAnim = function (nid, newAnim) {
-    // 更新所有指向此节点的连线的 toState
-    var conns = SMData.connections;
-    if (conns) {
-        for (var ci = 0; ci < conns.length; ci++) {
-            if (conns[ci].toNode === nid) {
-                conns[ci].toState = newAnim;
-            }
-        }
-    }
-    // 强制刷新流面板（_findAllFullPaths 会重新计算路径，使用最新的 toState）
-    SMTool._updateFullFlowPanel(document.getElementById('flpContent'), document.getElementById('flowPanel'));
+// ★ 节点预览动画变更后刷新完整动画流。
+// currentAnim 只是节点当前预览状态；连接的 fromState/toState 是用户从具体
+// 状态端口创建的流程数据。绝不能把同一节点的所有入边改成 currentAnim，
+// 否则多条枚举路径会被压扁成完全相同的动画流。
+SMTool._syncFlowPathAnim = function () {
+    if (typeof document === 'undefined' || typeof document.getElementById !== 'function') return;
+    var content = document.getElementById('flpContent');
+    var panel = document.getElementById('flowPanel');
+    if (content && panel) SMTool._updateFullFlowPanel(content, panel);
 };
