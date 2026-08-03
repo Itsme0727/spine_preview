@@ -530,8 +530,6 @@ function testPreviewAttachmentsLayerThumbnailsAndCanvasPerformanceContracts() {
     const uiSource = fs.readFileSync(path.join(root, 'js/ui-dom.js'), 'utf8');
     const layerSource = fs.readFileSync(path.join(root, 'js/layer-node-v2.js'), 'utf8');
     const renderSource = fs.readFileSync(path.join(root, 'js/spine-rendering.js'), 'utf8');
-    const interactionSource = fs.readFileSync(path.join(root, 'js/interaction.js'), 'utf8');
-    const appSource = fs.readFileSync(path.join(root, 'js/app.js'), 'utf8');
     const cssSource = fs.readFileSync(path.join(root, 'css/styles.css'), 'utf8');
 
     assert.match(uiSource, /manualSelection:\s*true/);
@@ -553,56 +551,13 @@ function testPreviewAttachmentsLayerThumbnailsAndCanvasPerformanceContracts() {
     const updatePosBody = uiSource.slice(updatePosStart, updatePosEnd);
     assert.ok(!updatePosBody.includes('SMTool._updateFloatLabels();'),
         'single node positioning must not synchronously traverse every floating label');
-    assert.match(updatePosBody, /SMTool\.worldToDOM\(node\.x, node\.y\)/);
-    assert.match(updatePosBody, /translate3d\(/);
     assert.match(uiSource, /SMTool\._scheduleFloatLabelsUpdate/);
-    assert.match(uiSource, /\[LOCK-PREVIEW-FPS-2\]/);
-    assert.match(renderSource, /SMTool\._beginViewProxy\(\)/);
+    assert.match(renderSource, /SMTool\._updateAllPos\(false\)/);
     assert.match(renderSource, /canvasGestureActive/);
     assert.match(renderSource, /_deferredAnimDt/);
     const loopSource = renderSource.slice(renderSource.indexOf('SMTool._loop = function'), renderSource.indexOf('// ---- 缩放 ----'));
     assert.ok(loopSource.indexOf('SMTool._renderAnimPreview(now);') < loopSource.indexOf('var gl = SMTool._sharedGL;'),
         'floating preview must render before shared canvas and connection work');
-    assert.match(renderSource, /\[LOCK-PREVIEW-FPS-3\]/);
-    assert.match(renderSource, /SMData\._viewProxy && SMData\._viewProxy\.active\) return/);
-    assert.match(renderSource, /app\.style\.transform = 'matrix\('/);
-    assert.match(renderSource, /preserveDrawingBuffer:\s*false/);
-    assert.ok(!renderSource.includes('progressiveMainCanvas'));
-    assert.ok(!renderSource.includes('sharedSpineSnapshot'));
-    assert.ok(!renderSource.includes('_sharedSnapshotCanvas'));
-    assert.ok(!renderSource.includes('_advanceNodeLogicalStateOnce'));
-    const synchronizedClockStart = renderSource.indexOf('SMTool._getSynchronizedPreviewDt = function');
-    const synchronizedClockEnd = renderSource.indexOf('// ---- 渲染预览帧 ----', synchronizedClockStart);
-    const synchronizedClockSource = renderSource.slice(synchronizedClockStart, synchronizedClockEnd);
-    assert.match(synchronizedClockSource, /sourceNode\.state\.update\(safeDt\)/);
-    assert.match(synchronizedClockSource, /sourceNode\.state\.apply\(sourceNode\.skeleton\)/);
-    assert.match(cssSource, /html,\s*\nbody\s*\{[\s\S]*?background:\s*#000/);
-    assert.match(cssSource, /#app\s*\{[\s\S]*?background:\s*#000/);
-    assert.match(interactionSource, /\[LOCK-PREVIEW-FPS-4\]/);
-    assert.match(interactionSource, /SMData\.isPanning && typeof SMTool\._onPanEnd === 'function'/,
-        'mouse-up must finish the live viewport gesture instead of only clearing isPanning');
-    assert.match(appSource, /SMData\._spacePanning = false;[\s\S]{0,400}SMTool\._onPanEnd\(\)/,
-        'space-key pan release must use the same viewport-finish path');
-    assert.match(renderSource, /SMTool\._commitViewProxy = function[\s\S]{0,1800}SMData\._forceRedraw = true/,
-        'the 23:27 proxy must atomically commit the final real view');
-    assert.match(renderSource, /\[LOCK-PREVIEW-FPS-7\]/);
-    assert.match(renderSource, /SMTool\._queueViewProxyApply\(proxy, true\)/);
-    assert.match(renderSource, /\[LOCK-PREVIEW-FPS-8\]/);
-    assert.match(renderSource, /\[LOCK-PREVIEW-FPS-9\]/);
-    assert.match(cssSource, /\[LOCK-PREVIEW-FPS-10\]/);
-    assert.match(renderSource, /\[LOCK-PREVIEW-FPS-11\]/);
-    assert.match(appSource, /\[LOCK-PREVIEW-FPS-12\]/);
-    const wheelListenerStart = appSource.indexOf("window.addEventListener('wheel'");
-    const wheelListenerEnd = appSource.indexOf('// 全局阻止浏览器右键菜单', wheelListenerStart);
-    const wheelListenerSource = appSource.slice(wheelListenerStart, wheelListenerEnd);
-    assert.match(wheelListenerSource, /\{ passive: true \}/);
-    assert.ok(!wheelListenerSource.includes('preventDefault'),
-        'canvas wheel input must not synchronously block browser animation scheduling');
-    assert.match(cssSource, /#animPreviewPanel \.app-canvas-wrap\s*\{[\s\S]*?contain:\s*layout paint;[\s\S]*?isolation:\s*isolate;/);
-    const gridCanvasCss = cssSource.slice(cssSource.indexOf('#gridCanvas'), cssSource.indexOf('#sharedSpineCanvas'));
-    const sharedCanvasCss = cssSource.slice(cssSource.indexOf('#sharedSpineCanvas'), cssSource.indexOf('#boneOverlay'));
-    assert.ok(!gridCanvasCss.includes('will-change'), 'grid canvas must not create a duplicate full-screen transform layer');
-    assert.ok(!sharedCanvasCss.includes('will-change'), 'shared Spine canvas must not create a duplicate full-screen transform layer');
 
     const oldDocument = context.document;
     const classes = new Set(['paused']);
@@ -1342,21 +1297,17 @@ function testTrackGlobalLoopToggleRebuildsRealSequences() {
 
 function testPreviewConsumesExactSourceFrameDelta() {
     const oldFrameId = SMTool._renderFrameId;
-    const oldViewProxy = SMData._viewProxy;
     const updates = [];
-    let poseApplyCount = 0;
-    let worldUpdateCount = 0;
     const source = {
         state: {
             update(dt) { updates.push(dt); },
-            apply() { poseApplyCount++; },
+            apply() {},
         },
-        skeleton: { updateWorldTransform() { worldUpdateCount++; } },
+        skeleton: { updateWorldTransform() {} },
         _lastStateAdvanceFrameId: 77,
         _lastStateAdvanceDt: 0.033,
         _trackMode: false,
     };
-    SMData._viewProxy = null;
     SMTool._renderFrameId = 77;
     assert.equal(SMTool._getSynchronizedPreviewDt({}, source, 0.02), 0.033);
     assert.deepEqual(updates, []);
@@ -1366,60 +1317,7 @@ function testPreviewConsumesExactSourceFrameDelta() {
     assert.deepEqual(updates, [0.02]);
     assert.equal(source._lastStateAdvanceFrameId, 78);
     assert.equal(source._lastStateAdvanceDt, 0.02);
-    assert.equal(source._dirty, true);
-    assert.equal(poseApplyCount, 1, '23:27 synchronization must apply the source pose once');
-    assert.equal(worldUpdateCount, 1, '23:27 synchronization must refresh source bone transforms once');
     SMTool._renderFrameId = oldFrameId;
-    SMData._viewProxy = oldViewProxy;
-}
-
-function testZoomPreviewSyncDefersOnlyCanvasPoseWork() {
-    const oldFrameId = SMTool._renderFrameId;
-    const oldViewProxy = SMData._viewProxy;
-    const updates = [];
-    let poseApplyCount = 0;
-    let worldUpdateCount = 0;
-    const source = {
-        state: {
-            update(dt) { updates.push(dt); },
-            apply() { poseApplyCount++; },
-        },
-        skeleton: { updateWorldTransform() { worldUpdateCount++; } },
-        _trackMode: false,
-    };
-
-    SMData._viewProxy = { active: true };
-    SMTool._renderFrameId = 201;
-    assert.equal(SMTool._getSynchronizedPreviewDt({}, source, 0.016), 0.016);
-    assert.deepEqual(updates, [0.016], 'source AnimationState data must remain synchronized while zooming');
-    assert.equal(poseApplyCount, 0, 'hidden canvas pose must not be applied during zoom composition');
-    assert.equal(worldUpdateCount, 0, 'hidden canvas bones must not be transformed during zoom composition');
-    assert.equal(source._previewPoseDeferred, true);
-    assert.equal(source._dirty, true);
-
-    SMData._viewProxy.active = false;
-    SMTool._renderFrameId = 202;
-    assert.equal(SMTool._getSynchronizedPreviewDt({}, source, 0.016), 0.016);
-    assert.deepEqual(updates, [0.016, 0.016]);
-    assert.equal(poseApplyCount, 1);
-    assert.equal(worldUpdateCount, 1);
-    assert.equal(source._previewPoseDeferred, false);
-
-    SMTool._renderFrameId = oldFrameId;
-    SMData._viewProxy = oldViewProxy;
-}
-
-function testPreviewClockCarriesLongCompositeFrameRemainder() {
-    const pp = { _lastTime: 1000, _previewTimeCarry: 0 };
-    const first = SMTool._consumePreviewFrameDelta(pp, 1250);
-    const second = SMTool._consumePreviewFrameDelta(pp, 1266);
-    const third = SMTool._consumePreviewFrameDelta(pp, 1282);
-    assert.equal(first, 0.1);
-    assert.equal(second, 0.1);
-    assert.ok(Math.abs(third - 0.082) < 0.000001);
-    assert.ok(Math.abs(first + second + third - 0.282) < 0.000001,
-        'a 250ms composite frame must catch up instead of permanently slowing playback');
-    assert.equal(pp._previewTimeCarry, 0);
 }
 
 function testSinglePreviewRestartAlsoRewindsCanvasNode() {
@@ -1817,124 +1715,6 @@ function testThreeFlowConditionEditMapsDirectlyToCanvasConnection() {
     SMTool._flowPanelPassiveKey = oldPassiveKey;
 }
 
-function testLiveViewportGestureUpdatesRealViewBeforeHeavyCanvasWork() {
-    const oldDocument = context.document;
-    const oldInnerWidth = context.innerWidth;
-    const oldInnerHeight = context.innerHeight;
-    const oldView = SMData.view;
-    const oldProxy = SMData._viewProxy;
-    const oldRAF = context.requestAnimationFrame;
-    const oldSetTimeout = context.setTimeout;
-    const oldClearTimeout = context.clearTimeout;
-    const oldFns = {
-        nodes: SMTool._updateNodeScreenPositionsCore,
-        labels: SMTool._updateFloatLabels,
-        dots: SMTool._scheduleConnectorDotScaleRefresh,
-    };
-    const bodyClasses = new Set();
-    const zoomLabel = { textContent: '' };
-    const zoomSlider = { value: '100' };
-    const zoomReset = { style: {} };
-    const app = { style: {} };
-    const floatLabels = { style: {} };
-    const connectionControls = { style: {} };
-    context.document = {
-        body: {
-            classList: {
-                add(name) { bodyClasses.add(name); },
-                remove(name) { bodyClasses.delete(name); },
-            },
-        },
-        getElementById(id) {
-            if (id === 'zoomLabel') return zoomLabel;
-            if (id === 'zoomSlider') return zoomSlider;
-            if (id === 'zoomResetBtn') return zoomReset;
-            if (id === 'app') return app;
-            if (id === 'floatLabels') return floatLabels;
-            if (id === 'connectionControlLayer') return connectionControls;
-            return null;
-        },
-    };
-    const rafQueue = [];
-    let timerCreates = 0;
-    context.requestAnimationFrame = (fn) => { rafQueue.push(fn); return rafQueue.length; };
-    context.setTimeout = () => { timerCreates++; return timerCreates; };
-    context.clearTimeout = () => {};
-    context.innerWidth = 1000;
-    context.innerHeight = 700;
-    SMData.view = { x: 0, y: 0, zoom: 1 };
-    SMData._viewProxy = null;
-    SMData._forceRedraw = false;
-    SMTool._viewProxyApplyQueued = false;
-    SMTool._pendingViewProxyApply = null;
-    SMTool._pendingViewProxyZoomUI = false;
-
-    SMTool._onWheel({ deltaY: -100, clientX: 700, clientY: 400 });
-    SMTool._onWheel({ deltaY: -100, clientX: 700, clientY: 400 });
-    SMTool._onWheel({ deltaY: -100, clientX: 700, clientY: 400 });
-    assert.equal(SMData.view.zoom, 1, 'heavy real-view data must stay frozen during interaction');
-    assert.ok(SMData._viewProxy.target.zoom > 1);
-    assert.equal(rafQueue.length, 1, 'many wheel events in one display frame must queue one compositor write');
-    assert.equal(timerCreates, 1, 'a wheel burst must keep one commit timer instead of recreating it per event');
-    assert.equal(app.style.transform, undefined, 'wheel handlers must only accumulate data before RAF');
-    rafQueue.shift()(16);
-    assert.match(app.style.transform, /^matrix\(/);
-    assert.equal(bodyClasses.has('view-proxy-active'), true);
-
-    const calls = [];
-    SMTool._updateNodeScreenPositionsCore = () => calls.push('nodes');
-    SMTool._updateFloatLabels = () => calls.push('labels');
-    SMTool._scheduleConnectorDotScaleRefresh = () => calls.push('dots');
-    SMTool._commitViewProxy();
-    assert.ok(SMData.view.zoom > 1, 'commit must publish the final real view once');
-    assert.equal(SMData._viewProxy.active, false);
-    assert.equal(app.style.transform, '');
-    assert.equal(bodyClasses.has('view-proxy-active'), false);
-    assert.deepEqual(calls, ['nodes']);
-    assert.equal(rafQueue.length, 1, 'post-commit labels must still settle on the next display frame');
-    rafQueue.shift()(32);
-    assert.deepEqual(calls, ['nodes', 'labels', 'dots']);
-
-    // 已到边界后继续滚轮必须完全不进入缩放代理热路径。这个断言直接覆盖
-    // 用户在 3% 极限继续滚动时浮窗仍被抢帧的回归场景。
-    const timersBeforeBoundaryInput = timerCreates;
-    SMData.view = { x: 12, y: -8, zoom: 0.03 };
-    SMData._viewProxy = null;
-    app.style.transform = '';
-    for (let i = 0; i < 100; i++) {
-        assert.equal(SMTool._onWheel({ deltaY: 100, clientX: 700, clientY: 400 }), false);
-    }
-    assert.equal(SMData._viewProxy, null, 'minimum-boundary input must create no view proxy');
-    assert.equal(rafQueue.length, 0, 'minimum-boundary input must queue no RAF work');
-    assert.equal(timerCreates, timersBeforeBoundaryInput, 'minimum-boundary input must create no timer');
-    assert.equal(app.style.transform, '', 'minimum-boundary input must write no CSS transform');
-
-    SMData.view = { x: 12, y: -8, zoom: 5 };
-    for (let i = 0; i < 100; i++) {
-        assert.equal(SMTool._onWheel({ deltaY: -100, clientX: 700, clientY: 400 }), false);
-    }
-    assert.equal(SMData._viewProxy, null, 'maximum-boundary input must create no view proxy');
-    assert.equal(rafQueue.length, 0, 'maximum-boundary input must queue no RAF work');
-    assert.equal(timerCreates, timersBeforeBoundaryInput, 'maximum-boundary input must create no timer');
-
-    context.document = oldDocument;
-    context.requestAnimationFrame = oldRAF;
-    context.setTimeout = oldSetTimeout;
-    context.clearTimeout = oldClearTimeout;
-    context.innerWidth = oldInnerWidth;
-    context.innerHeight = oldInnerHeight;
-    SMData.view = oldView;
-    SMData._viewProxy = oldProxy;
-    SMTool._viewProxyApplyQueued = false;
-    SMTool._pendingViewProxyApply = null;
-    SMTool._pendingViewProxyZoomUI = false;
-    Object.assign(SMTool, {
-        _updateNodeScreenPositionsCore: oldFns.nodes,
-        _updateFloatLabels: oldFns.labels,
-        _scheduleConnectorDotScaleRefresh: oldFns.dots,
-    });
-}
-
 const tests = [
     testTrackDurationUsesRealOverlapAndLongestParallelTrack,
     testNativeQueueMixStartsBeforePreviousAnimationEnds,
@@ -1968,8 +1748,6 @@ const tests = [
     testPreviewAlsoPrimesNormalSourceBeforeTrackTransition,
     testTrackGlobalLoopToggleRebuildsRealSequences,
     testPreviewConsumesExactSourceFrameDelta,
-    testZoomPreviewSyncDefersOnlyCanvasPoseWork,
-    testPreviewClockCarriesLongCompositeFrameRemainder,
     testSinglePreviewRestartAlsoRewindsCanvasNode,
     testLayerEyeOnlyUpdatesItsOwnThumbnail,
     testClosedFullFlowCarriesClosingEdgeMixBackToSource,
@@ -1981,7 +1759,6 @@ const tests = [
     testDragSnapUsesCachedNodeSizesWithoutLayoutReads,
     testFlowListsRenderPriorityItemsBeforeIdleHydration,
     testThreeFlowConditionEditMapsDirectlyToCanvasConnection,
-    testLiveViewportGestureUpdatesRealViewBeforeHeavyCanvasWork,
 ];
 
 for (const test of tests) {

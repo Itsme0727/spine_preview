@@ -305,17 +305,8 @@ SMTool._ft = 0;
 SMTool._loop = function (now) {
     requestAnimationFrame(function (t) { SMTool._loop(t); });
 
-    var rawLoopDt = SMTool._lt ? Math.max(0, (now - SMTool._lt) / 1000) : 0;
+    var dt = Math.min((now - SMTool._lt) / 1000, 0.1);
     SMTool._lt = now;
-    if (rawLoopDt > 0.5) {
-        SMTool._loopTimeCarry = 0;
-        rawLoopDt = 0.1;
-    }
-    var availableLoopDt = rawLoopDt + Math.max(0, Number(SMTool._loopTimeCarry) || 0);
-    var dt = Math.min(availableLoopDt, 0.1);
-    // [LOCK-PREVIEW-FPS-9] 完整流程与浮窗都不得因一帧缩放合成超过 100ms
-    // 而永久丢失时间；余量在后续帧消化，页面切后台超过 500ms 时才主动丢弃。
-    SMTool._loopTimeCarry = Math.max(0, availableLoopDt - dt);
     SMTool._fc++;
     SMTool._renderFrameId = (SMTool._renderFrameId || 0) + 1;
     // 拖拽/平移/缩放时，非关键动画的骨骼姿态降为约 15fps，
@@ -330,10 +321,6 @@ SMTool._loop = function (now) {
     if (typeof SMTool._tickFullPlayback === 'function') {
         SMTool._tickFullPlayback(dt, now);
     }
-    // 代理已经把网格、连线、节点和主 Spine 作为一张完整画面交给合成器移动。
-    // 交互期间冻结这些非关键层；流程时钟与浮窗已在上方正常推进。
-    if (SMData._viewProxy && SMData._viewProxy.active) return;
-
     var gl = SMTool._sharedGL;
     if (!gl) {
         return;
@@ -575,10 +562,7 @@ SMTool._loop = function (now) {
             if (node._dirty) node._dirty = false;
             poseWasApplied = true;
         }
-        if (poseWasApplied) {
-            node.skeleton.updateWorldTransform(node._physParam);
-            node._previewPoseDeferred = false;
-        }
+        if (poseWasApplied) node.skeleton.updateWorldTransform(node._physParam);
 
         // ★ 新出现附件防飞入：仅在父骨骼于混合期发生明显位移时，渲染期延后淡入。
         if (node._trackMode && node._trackSequence) {
@@ -697,7 +681,6 @@ SMTool._loop = function (now) {
         if (viewChanged && SMTool._allPosScheduled) {
             SMTool._allPosScheduled = false;
             SMTool._allPosQueued = false;
-            SMTool._allPosScheduleToken++;
             SMTool._updateAllPosCore();
         }
 
@@ -710,173 +693,34 @@ SMTool._loop = function (now) {
     if ((SMTool._fc & 3) === 0) SMTool._renderMinimap();
 };
 
-// ---- 视口交互代理 ----
-// 🔒 [LOCK-PREVIEW-FPS-3] 连续缩放/平移期间，不逐节点重写 95+ 个 DOM。
-// 整个 #app（节点、连线、网格、主 Spine 画面）使用同一屏幕矩阵即时合成，
-// 停止操作后才原子提交模型视图。浮窗在 #app 外，不参与该矩阵且优先逐帧渲染。
-SMTool._beginViewProxy = function () {
-    var proxy = SMData._viewProxy;
-    if (proxy && proxy.active) return proxy;
-    var base = {
-        x: Number(SMData.view.x) || 0,
-        y: Number(SMData.view.y) || 0,
-        zoom: Math.max(0.03, Number(SMData.view.zoom) || 1)
-    };
-    proxy = SMData._viewProxy = {
-        active: true,
-        base: base,
-        target: { x: base.x, y: base.y, zoom: base.zoom },
-        timer: 0,
-        timerPending: false,
-        commitAt: 0
-    };
-    return proxy;
-};
-
-SMTool._applyViewProxy = function (proxy) {
-    if (!proxy || !proxy.active) return;
-    var app = document.getElementById('app');
-    if (!app) return;
-    var bz = Math.max(0.03, proxy.base.zoom);
-    var tz = Math.max(0.03, proxy.target.zoom);
-    var ratio = tz / bz;
-    var tx = (proxy.target.x - proxy.base.x) * tz + window.innerWidth * 0.5 * (1 - ratio);
-    var ty = (proxy.target.y - proxy.base.y) * tz + window.innerHeight * 0.5 * (1 - ratio);
-    app.style.transform = 'matrix(' + ratio + ',0,0,' + ratio + ',' + tx + ',' + ty + ')';
-    document.body.classList.add('view-proxy-active');
-};
-
-// 🔒 [LOCK-PREVIEW-FPS-7] 原生 wheel/触控板事件频率可能远高于屏幕刷新率。
-// 每个事件只累计目标视图；CSS scale、缩放 UI 和合成提交每个 RAF 最多执行一次。
-// 禁止重新改成在 _onWheel 内逐事件写 transform，这会让主画布的 GPU 重采样
-// 与浮窗 WebGL 争用同一个合成时隙。
-SMTool._queueViewProxyApply = function (proxy, syncZoomUI) {
-    if (!proxy || !proxy.active) return;
-    SMTool._pendingViewProxyApply = proxy;
-    SMTool._pendingViewProxyZoomUI = SMTool._pendingViewProxyZoomUI || !!syncZoomUI;
-    if (SMTool._viewProxyApplyQueued) return;
-    SMTool._viewProxyApplyQueued = true;
-    requestAnimationFrame(function () {
-        SMTool._viewProxyApplyQueued = false;
-        var pending = SMTool._pendingViewProxyApply;
-        var shouldSyncZoomUI = SMTool._pendingViewProxyZoomUI;
-        SMTool._pendingViewProxyApply = null;
-        SMTool._pendingViewProxyZoomUI = false;
-        if (!pending || !pending.active) return;
-        SMTool._applyViewProxy(pending);
-        if (shouldSyncZoomUI) SMTool._syncZoomUI(pending.target.zoom);
-    });
-};
-
-SMTool._scheduleViewProxyCommit = function (delay) {
-    var proxy = SMData._viewProxy;
-    if (!proxy || !proxy.active) return;
-    var wait = Math.max(0, Number(delay) || 110);
-    proxy.commitAt = performance.now() + wait;
-    // 高频缩放期间只保留一个检查定时器。后续事件只顺延 deadline，避免每次
-    // wheel 都 clearTimeout + setTimeout 制造主线程与 GC 压力。
-    if (proxy.timerPending) return;
-    proxy.timerPending = true;
-    var checkDeadline = function () {
-        proxy.timer = 0;
-        proxy.timerPending = false;
-        if (!proxy.active) return;
-        var remaining = proxy.commitAt - performance.now();
-        if (remaining > 1) {
-            proxy.timerPending = true;
-            proxy.timer = setTimeout(checkDeadline, remaining);
-            return;
-        }
-        SMTool._commitViewProxy();
-    };
-    proxy.timer = setTimeout(checkDeadline, wait);
-};
-
-SMTool._commitViewProxy = function () {
-    var proxy = SMData._viewProxy;
-    if (!proxy || !proxy.active) return;
-    if (proxy.timer) clearTimeout(proxy.timer);
-    proxy.timer = 0;
-    proxy.timerPending = false;
-    proxy.active = false;
-    if (SMTool._pendingViewProxyApply === proxy) SMTool._pendingViewProxyApply = null;
-    SMTool._pendingViewProxyZoomUI = false;
-
-    // 在同一 JS 任务内先提交真实视图与所有节点屏幕矩阵，再移除父层代理。
-    // 浏览器只会呈现提交后的最终状态，不会出现节点与连线分离的中间画面。
-    SMData.view.x = proxy.target.x;
-    SMData.view.y = proxy.target.y;
-    SMData.view.zoom = proxy.target.zoom;
-    var app = document.getElementById('app');
-    var proxyTransform = app ? app.style.transform : '';
-    var floatLabels = document.getElementById('floatLabels');
-    var connectionControls = document.getElementById('connectionControlLayer');
-    // 标题与混合控件先继承旧代理画面，待下一帧主连线完成后再无闪烁地归位。
-    if (floatLabels) floatLabels.style.transform = proxyTransform;
-    if (connectionControls) connectionControls.style.transform = proxyTransform;
-    SMTool._allPosScheduled = false;
-    SMTool._allPosQueued = false;
-    SMTool._allPosScheduleToken++;
-    SMTool._updateNodeScreenPositionsCore();
-    if (app) app.style.transform = '';
-    document.body.classList.remove('view-proxy-active');
-    SMData._forceRedraw = true;
-    SMData._viewInteractingUntil = performance.now() + 40;
-    SMTool._syncZoomUI();
-    requestAnimationFrame(function () {
-        SMTool._updateFloatLabels();
-        if (floatLabels) floatLabels.style.transform = '';
-        if (connectionControls) connectionControls.style.transform = '';
-        SMTool._scheduleConnectorDotScaleRefresh();
-    });
-};
-
 // ---- 缩放 ----
 SMTool._onWheel = function (e) {
-    var deltaY = Number(e && e.deltaY);
-    if (!isFinite(deltaY) || deltaY === 0) return false;
-
-    // 🔒 [LOCK-PREVIEW-FPS-11] 缩放已经到达边界时必须是严格的零工作路径。
-    // 先读取当前目标并完成 clamp，再决定是否创建代理；禁止在 3%/500% 极限
-    // 继续滚轮时创建 viewProxy、RAF、timer 或写入任何 CSS/UI。
-    var activeProxy = SMData._viewProxy;
-    var currentTarget = (activeProxy && activeProxy.active) ? activeProxy.target : SMData.view;
-    var currentZoom = Math.max(0.03, Number(currentTarget && currentTarget.zoom) || 1);
-    var factor = deltaY > 0 ? 0.935 : 1.065;
-    var nextZoom = Math.max(0.03, Math.min(5, currentZoom * factor));
-    if (Math.abs(nextZoom - currentZoom) < 0.0000001) return false;
-
-    var proxy = SMTool._beginViewProxy();
-    var target = proxy.target;
-    var oz = currentZoom;
-    target.zoom = nextZoom;
+    var oz = Math.max(0.03, Number(SMData.view.zoom) || 1);
+    SMData.view.zoom = oz;
+    var factor = e.deltaY > 0 ? 0.935 : 1.065;
+    SMData.view.zoom = Math.max(0.03, Math.min(5, SMData.view.zoom * factor));
     var mx = e.clientX - window.innerWidth / 2;
     var my = e.clientY - window.innerHeight / 2;
-    target.x += mx * (1 / target.zoom - 1 / oz);
-    target.y += my * (1 / target.zoom - 1 / oz);
+    SMData.view.x += mx * (1 / SMData.view.zoom - 1 / oz);
+    SMData.view.y += my * (1 / SMData.view.zoom - 1 / oz);
+    // 高频滚轮事件只记录最新视图，全量 DOM 位置在下一个 rAF 合并更新。
+    // 主循环在绘制连线前会同步消费该更新，因此不会产生端点偏移。
     SMData._viewInteractingUntil = performance.now() + 140;
-    SMTool._queueViewProxyApply(proxy, true);
-    SMTool._scheduleViewProxyCommit(110);
-    return true;
+    SMTool._updateAllPos(false);
+    SMTool._syncZoomUI();
 };
 
 SMTool._onZoomSlider = function (e) {
     var pct = Math.max(0.03, Math.min(2, parseFloat(e.target.value) / 100));
-    var activeProxy = SMData._viewProxy;
-    var currentTarget = (activeProxy && activeProxy.active) ? activeProxy.target : SMData.view;
-    var oz = Math.max(0.03, Number(currentTarget && currentTarget.zoom) || 1);
-    if (Math.abs(pct - oz) < 0.0000001) return false;
-    var proxy = SMTool._beginViewProxy();
-    var target = proxy.target;
-    target.zoom = pct;
+    var oz = Math.max(0.03, Number(SMData.view.zoom) || 1);
+    SMData.view.zoom = pct;
     var cx = window.innerWidth / 2;
     var cy = window.innerHeight / 2;
-    target.x += cx * (1 / target.zoom - 1 / oz);
-    target.y += cy * (1 / target.zoom - 1 / oz);
+    SMData.view.x += cx * (1 / SMData.view.zoom - 1 / oz);
+    SMData.view.y += cy * (1 / SMData.view.zoom - 1 / oz);
     SMData._viewInteractingUntil = performance.now() + 140;
-    SMTool._queueViewProxyApply(proxy, true);
-    SMTool._scheduleViewProxyCommit(110);
-    return true;
+    SMTool._updateAllPos(false);
+    SMTool._syncZoomUI();
 };
 
 // ================================================================
@@ -1241,7 +1085,6 @@ SMTool._initAnimPreview = function (node) {
 
             pp.nodeId = node.id;
             pp._lastTime = performance.now();
-            pp._previewTimeCarry = 0;
 
             // ★ 同步源节点的 PMA 和皮肤设置
             SMTool._syncPreviewPmaAndSkin(pp, node);
@@ -1263,7 +1106,6 @@ SMTool._initAnimPreview = function (node) {
             SMTool._renderAnimPreview(performance.now());
             pp._flowFrozen = wasFlowFrozen;
             pp._lastTime = performance.now();
-            pp._previewTimeCarry = 0;
             // 🔒 [LOCK-D] END
 
             // 更新面板标题
@@ -1298,30 +1140,6 @@ SMTool._initAnimPreview = function (node) {
     }
 };
 
-// 浮窗时钟允许单帧最多推进 100ms，但不会直接丢弃缩放阻塞造成的剩余时间。
-// 剩余量会在后续帧逐步消化，避免一次较长的 GPU 合成帧把动画永久拖慢。
-// 超过 500ms 视为页面切后台/系统挂起，避免回到页面后追赶整段离开时间。
-SMTool._consumePreviewFrameDelta = function (pp, now) {
-    if (!pp) return 0;
-    var current = Number(now) || 0;
-    var previous = Number(pp._lastTime) || 0;
-    if (!previous || !current || current < previous) {
-        pp._lastTime = current;
-        pp._previewTimeCarry = 0;
-        return 0;
-    }
-    var raw = Math.max(0, (current - previous) / 1000);
-    pp._lastTime = current;
-    if (raw > 0.5) {
-        pp._previewTimeCarry = 0;
-        return 0.1;
-    }
-    var available = raw + Math.max(0, Number(pp._previewTimeCarry) || 0);
-    var step = Math.min(available, 0.1);
-    pp._previewTimeCarry = Math.max(0, available - step);
-    return step;
-};
-
 // 独立浮窗以关联画布节点为主时钟。画布节点本帧已经推进时直接复用它的
 // 实际 dt；节点因离屏/无共享画布而未推进时，只在这里推进来源一次，再把
 // 完全相同的 dt 交给浮窗，杜绝两套 performance.now() 时钟逐渐漂移。
@@ -1340,17 +1158,9 @@ SMTool._getSynchronizedPreviewDt = function (pp, sourceNode, fallbackDt) {
             sourceNode, sourceNode.state, sourceNode._trackSequence, sourceNode._spineVer
         );
     }
-    // 🔒 [LOCK-PREVIEW-FPS-8] 缩放代理期间保持源 AnimationState 的逻辑时间同步，
-    // 但不为不可见的画布节点执行 apply + 全骨骼世界变换。浮窗使用自己的骨架
-    // 正常呈现；代理提交后的第一帧再把最新逻辑姿态应用回节点，因此数据不丢、
-    // 同步不漂移，也不会让源节点反向拖慢浮窗。
-    var deferCanvasPose = !!(SMData._viewProxy && SMData._viewProxy.active);
-    if (sourceNode.skeleton && !deferCanvasPose) {
+    if (sourceNode.skeleton) {
         sourceNode.state.apply(sourceNode.skeleton);
         sourceNode.skeleton.updateWorldTransform(sourceNode._physParam);
-        sourceNode._previewPoseDeferred = false;
-    } else if (sourceNode.skeleton) {
-        sourceNode._previewPoseDeferred = true;
     }
     sourceNode._lastStateAdvanceFrameId = frameId;
     sourceNode._lastStateAdvanceDt = safeDt;
@@ -1424,7 +1234,8 @@ SMTool._renderAnimPreview = function (now) {
         if (srcNode && typeof srcNode._playbackSpeed === 'number') previewSpeed = srcNode._playbackSpeed;
     }
 
-    var dt = SMTool._consumePreviewFrameDelta(pp, now);
+    var dt = Math.min((now - (pp._lastTime || now)) / 1000, 0.1);
+    pp._lastTime = now;
 
     var ppTrackSource = pp.nodeId != null ? SMData.nodes.get(pp.nodeId) : null;
     var previewOwner = pp._playbackOwner;
@@ -1739,7 +1550,6 @@ SMTool._destroyAnimPreview = function () {
     pp._boundsSize = null;
     pp._premultipliedAlpha = false;
     pp._lastTime = 0;
-    pp._previewTimeCarry = 0;
     pp._loopRestartGuard = false;
 
     // ★ 清除层级播放高亮状态，防止主画布节点残留冻结/置灰
@@ -1915,7 +1725,6 @@ SMTool._restartAnimPreviewStateAtZero = function (pp, sourceNode) {
     pp.state.apply(pp.skeleton);
     pp.skeleton.updateWorldTransform(pp._physParam);
     pp._lastTime = performance.now();
-    pp._previewTimeCarry = 0;
 
     // 立即覆盖旧画布，且这次同步绘制不允许推进任何时间。
     var wasFrozen = !!pp._flowFrozen;
@@ -1923,7 +1732,6 @@ SMTool._restartAnimPreviewStateAtZero = function (pp, sourceNode) {
     SMTool._renderAnimPreview(pp._lastTime);
     pp._flowFrozen = wasFrozen;
     pp._lastTime = performance.now();
-    pp._previewTimeCarry = 0;
 };
 
 // 完整动画流同骨架节点切步时使用 Spine 原生混合；普通/轨道节点共用一套过渡器。
@@ -1953,7 +1761,6 @@ SMTool._mixAnimPreviewToNode = function (pp, fromNode, toNode, duration) {
         pp._trackSequence = toNode._trackMode ? (toNode._trackSequence || []) : null;
         pp._connectionMixDuration = duration;
         pp._lastTime = performance.now();
-        pp._previewTimeCarry = 0;
         return true;
     } catch (e) {
         return false;
@@ -1986,9 +1793,8 @@ SMTool._syncPreviewPmaAndSkin = function (pp, sourceNode) {
     }
 };
 
-SMTool._syncZoomUI = function (overrideZoom) {
-    var activeZoom = overrideZoom !== undefined ? Number(overrideZoom) : SMData.view.zoom;
-    var pct = activeZoom * 100;
+SMTool._syncZoomUI = function () {
+    var pct = SMData.view.zoom * 100;
     var displayPct = pct < 10 ? pct.toFixed(1).replace(/\.0$/, '') : String(Math.round(pct));
     document.getElementById('zoomLabel').textContent = displayPct + '%';
     var slider = document.getElementById('zoomSlider');
@@ -2003,7 +1809,6 @@ SMTool._syncZoomUI = function (overrideZoom) {
 
 // ---- 适合视图 / 重置视图 ----
 SMTool.fitAll = function () {
-    if (SMData._viewProxy && SMData._viewProxy.active) SMTool._commitViewProxy();
     if (!SMData.nodes.size) return;
     var mx = Infinity, my = Infinity, Mx = -Infinity, My = -Infinity;
     var nodesIter = SMData.nodes.values();
@@ -2025,7 +1830,6 @@ SMTool.fitAll = function () {
 };
 
 SMTool.resetView = function () {
-    if (SMData._viewProxy && SMData._viewProxy.active) SMTool._commitViewProxy();
     SMData.view = { x: 0, y: 0, zoom: 1 };
     // ★ forceSync=true：缩放变化必须同步更新 DOM
     SMTool._updateAllPos(true);
@@ -2034,8 +1838,6 @@ SMTool.resetView = function () {
 
 // ---- 空格键平移 ----
 SMTool._onPanStart = function (e) {
-    // 若滚轮代理尚未提交，先把它变成本次平移的真实起点。
-    if (SMData._viewProxy && SMData._viewProxy.active) SMTool._commitViewProxy();
     SMData.isPanning = true;
     SMData.panStart = { x: e.clientX, y: e.clientY };
     SMData.viewStart = { x: SMData.view.x, y: SMData.view.y };
@@ -2043,21 +1845,18 @@ SMTool._onPanStart = function (e) {
 
 SMTool._onPanMove = function (e) {
     if (!SMData.isPanning) return;
-    var proxy = SMTool._beginViewProxy();
-    proxy.target.x = SMData.viewStart.x + (e.clientX - SMData.panStart.x) / SMData.view.zoom;
-    proxy.target.y = SMData.viewStart.y + (e.clientY - SMData.panStart.y) / SMData.view.zoom;
+    SMData.view.x = SMData.viewStart.x + (e.clientX - SMData.panStart.x) / SMData.view.zoom;
+    SMData.view.y = SMData.viewStart.y + (e.clientY - SMData.panStart.y) / SMData.view.zoom;
     SMData._viewInteractingUntil = performance.now() + 100;
-    SMTool._applyViewProxy(proxy);
+    SMTool._updateAllPos();
 };
 
 SMTool._onPanEnd = function () {
     SMData.isPanning = false;
-    if (SMData._viewProxy && SMData._viewProxy.active) SMTool._commitViewProxy();
 };
 
 // ---- 调整大小 ----
 SMTool.resize = function () {
-    if (SMData._viewProxy && SMData._viewProxy.active) SMTool._commitViewProxy();
     SMTool.gridCanvas.width = window.innerWidth;
     SMTool.gridCanvas.height = window.innerHeight;
     SMTool.connCanvas.width = window.innerWidth;

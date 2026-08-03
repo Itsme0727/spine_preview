@@ -1415,7 +1415,6 @@ SMTool._showLayerPreview = function (layerNode, playbackOwner) {
     pp.state = null;
     pp._readyToRender = true;
     pp._lastTime = performance.now();
-    pp._previewTimeCarry = 0;
     pp.visible = true;
 
     var title = document.getElementById('appTitle');
@@ -1468,7 +1467,6 @@ SMTool._showLayerPreview = function (layerNode, playbackOwner) {
         SMTool._renderLayerPreview(null, pp, initialNow);
         pp._flowFrozen = initialFrozen;
         pp._lastTime = performance.now();
-        pp._previewTimeCarry = 0;
     }
     // 每次选择新的并行节点/流程步骤都按新的运行时层数据立即重建列表。
     if (typeof SMTool._syncLayerListPreviewMode === 'function') SMTool._syncLayerListPreviewMode(true, true);
@@ -2115,7 +2113,6 @@ SMTool._restartLayerPreviewCycle = function (pp, now) {
         pp._startupDelayFrames = 0;
         pp._needsLayerReinit = false;
         pp._lastTime = now || performance.now();
-        pp._previewTimeCarry = 0;
 
         // 冻结状态下同步画两次，直接嵌套层也在同一原子批次显示第 0 帧。
         var wasFrozen = !!pp._flowFrozen;
@@ -2124,7 +2121,6 @@ SMTool._restartLayerPreviewCycle = function (pp, now) {
         SMTool._renderLayerPreview(null, pp, pp._lastTime);
         pp._flowFrozen = wasFrozen;
         pp._lastTime = now || performance.now();
-        pp._previewTimeCarry = 0;
     } finally {
         pp._parallelRestarting = false;
     }
@@ -2571,14 +2567,11 @@ SMTool._renderLayerPreview = function (layerNode, pp, now) {
     if (pp._startupDelayFrames > 0) {
         pp._startupDelayFrames--;
         pp._lastTime = now;
-        pp._previewTimeCarry = 0;
         return;
     }
 
-    var dt = (typeof SMTool._consumePreviewFrameDelta === 'function')
-        ? SMTool._consumePreviewFrameDelta(pp, now)
-        : Math.min((now - (pp._lastTime || now)) / 1000, 0.1);
-    if (typeof SMTool._consumePreviewFrameDelta !== 'function') pp._lastTime = now;
+    var dt = Math.min((now - (pp._lastTime || now)) / 1000, 0.1);
+    pp._lastTime = now;
     var frozen = pp._flowFrozen;
 
     // ★★ 每层独立渲染（含内联嵌套子树），互不干扰

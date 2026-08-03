@@ -485,15 +485,13 @@ SMTool.init = function () {
     window.addEventListener('mousemove', function (e) { SMTool._onMM(e); });
     window.addEventListener('mouseup', function (e) { SMTool._onMU(e); });
 
-    // 🔒 [LOCK-PREVIEW-FPS-12] 画布本身不可滚动，全局滚轮必须使用 passive
-    // 输入路径，不能用 preventDefault 阻塞浏览器的 RAF/合成调度。面板区域一次
-    // closest 即可排除；是否真正缩放由 _onWheel 的边界零工作分支决定。
+    // 滚轮缩放（面板内滚动内容，不缩放画布）
     window.addEventListener('wheel', function (e) {
-        var target = e.target;
-        if (!target || !target.closest) return;
-        if (target.closest('.state-list, .anim-bar, .anim-select, .ip-body, #conditionEditor, #connectionControlLayer, #dataFloatPanel, #animPreviewPanel, #screenshotOverlay, #searchPanel')) return;
-        SMTool._onWheel(e);
-    }, { passive: true });
+        if (!e.target.closest('.state-list') && !e.target.closest('.anim-bar') && !e.target.closest('.anim-select') && !e.target.closest('.ip-body') && !e.target.closest('#conditionEditor') && !e.target.closest('#connectionControlLayer') && !e.target.closest('#dataFloatPanel') && !e.target.closest('#animPreviewPanel') && !e.target.closest('#screenshotOverlay') && !e.target.closest('#searchPanel')) {
+            e.preventDefault();
+            SMTool._onWheel(e);
+        }
+    }, { passive: false });
 
     // 全局阻止浏览器右键菜单
     document.addEventListener('contextmenu', function (e) {
@@ -537,9 +535,7 @@ SMTool.init = function () {
     window.addEventListener('keyup', function (e) {
         if (e.key === ' ' && SMData._spacePanning) {
             SMData._spacePanning = false;
-            // 与鼠标松开共用收尾入口；拖动过程中的节点、连线和黑色背景已实时更新。
-            if (SMData.isPanning && typeof SMTool._onPanEnd === 'function') SMTool._onPanEnd();
-            else SMData.isPanning = false;
+            SMData.isPanning = false;
             document.body.style.cursor = '';
             SMTool.gridCanvas.style.cursor = SMData.connectMode ? 'crosshair' : 'default';
         }

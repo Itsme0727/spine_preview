@@ -301,14 +301,7 @@ SMTool._renderConnections = function () {
         }  // closes if (!isEntryExitConn)
     }
     ctx.globalAlpha = 1;
-    // 连续视口操作时，Canvas 连线仍逐帧更新；输入控件 DOM 限制为约 30fps，
-    // 防止大量混合框样式写入挤占浮窗的下一帧。
-    var hotView = SMData._viewGesture && SMData._viewGesture.active;
-    var mixSyncNow = performance.now();
-    if (!hotView || mixSyncNow - (SMTool._lastMixControlSyncAt || 0) >= 34) {
-        SMTool._lastMixControlSyncAt = mixSyncNow;
-        SMTool._syncConnectionMixControls(mixControls);
-    }
+    SMTool._syncConnectionMixControls(mixControls);
 
     // 正在连线时的预览
     if (SMData.connecting) {
@@ -507,9 +500,7 @@ SMTool._getStateConnectorPos = function (node, stateName, type) {
     // 层级节点的输入和分层输出都跟随动态行布局；层列表内容/高度可在后台刷新，
     // 不能复用旧的局部坐标。这里只实时测量少量 layer 端点，普通动画端点仍走缓存。
     var dynamicLayerConnector = node.nodeType === 'layer';
-    var stableDuringViewGesture = SMData._viewGesture && SMData._viewGesture.active;
-    if ((!dynamicLayerConnector || stableDuringViewGesture) && cached && cached.root === el &&
-        cached.scale === nodeScale && cached.revision === layoutRevision) {
+    if (!dynamicLayerConnector && cached && cached.root === el && cached.scale === nodeScale && cached.revision === layoutRevision) {
         return { x: node.x + cached.dx, y: node.y + cached.dy };
     }
 

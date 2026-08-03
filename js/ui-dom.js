@@ -3242,32 +3242,19 @@ SMTool._updatePos = function (node) {
     var nodeScale = (node._customScale !== undefined ? node._customScale : 1.0);
     var totalScale = z * nodeScale;
     var s = SMTool.worldToDOM(node.x, node.y);
-    // 🔒 [LOCK-PREVIEW-FPS-2] 坐标语义仍是原来的屏幕坐标，只把会触发布局的
-    // left/top 连续写入换成等价的合成层位移。端点 getBoundingClientRect() 与连线
-    // 继续读取相同的最终屏幕位置；禁止改成父层世界矩阵。
-    if (!el._usesGpuScreenPosition) {
-        el._usesGpuScreenPosition = true;
-        el.style.left = '0px';
-        el.style.top = '0px';
-        el.style.willChange = 'transform';
-    }
-    el.style.transform = 'translate3d(' + s.x + 'px,' + s.y + 'px,0) scale(' + totalScale + ')';
+    el.style.left = s.x + 'px';
+    el.style.top = s.y + 'px';
+    el.style.transform = 'scale(' + totalScale + ')';
     el.style.transformOrigin = 'top left';
 
-    // 单节点拖拽只移动它自己的浮动标题，不能为一个节点扫描全部 95+ 标签。
-    if (!SMTool._bulkPosUpdate && SMTool._floatLabels && SMData.view.zoom < 0.25) {
-        var label = SMTool._floatLabels[node.id];
-        if (label && label.style.display !== 'none') {
-            var labelPos = SMTool.worldToCanvas(node.x, node.y);
-            label.style.transform = 'translate3d(' + labelPos.x + 'px,' + (labelPos.y - 30) + 'px,0)';
-        }
-    }
+    // 单节点拖拽时也需要跟随浮动标题，但不能每次 _updatePos
+    // 都立即遍历全部节点；合并到下一帧最多执行一次。
+    if (!SMTool._bulkPosUpdate) SMTool._scheduleFloatLabelsUpdate();
 };
 
 // ★ 优化：rAF 批量合并，避免同一帧内多次全量刷新
 SMTool._allPosScheduled = false;
 SMTool._allPosQueued = false;
-SMTool._allPosScheduleToken = 0;
 SMTool._floatLabelsScheduled = false;
 SMTool._bulkPosUpdate = false;
 
@@ -3280,7 +3267,8 @@ SMTool._scheduleFloatLabelsUpdate = function () {
     });
 };
 
-SMTool._updateNodeScreenPositionsCore = function () {
+// ★ 核心：同步更新所有节点 DOM 位置（缩放/平移时使用，避免连线偏移）
+SMTool._updateAllPosCore = function () {
     SMTool._bulkPosUpdate = true;
     var nodesIter = SMData.nodes.values();
     var result = nodesIter.next();
@@ -3289,47 +3277,6 @@ SMTool._updateNodeScreenPositionsCore = function () {
         result = nodesIter.next();
     }
     SMTool._bulkPosUpdate = false;
-};
-
-// 视口热路径只移动已经存在的浮动标题，不创建元素、不查询子节点、不改文字。
-// 完整标题维护在手势结束后的空闲任务中执行，避免小比例缩放时与浮窗争帧。
-SMTool._updateFloatLabelPositionsCore = function () {
-    if (!SMTool._floatLabels) return;
-    var show = SMData.view.zoom < 0.25;
-    var ids = Object.keys(SMTool._floatLabels);
-    for (var i = 0; i < ids.length; i++) {
-        var id = ids[i];
-        var label = SMTool._floatLabels[id];
-        var node = SMData.nodes.get(parseInt(id));
-        if (!label || !node || !show) {
-            if (label && !show) label.style.display = 'none';
-            continue;
-        }
-        label.style.display = '';
-        var sp = SMTool.worldToCanvas(node.x, node.y);
-        label.style.transform = 'translate3d(' + sp.x + 'px,' + (sp.y - 30) + 'px,0)';
-    }
-};
-
-SMTool._scheduleConnectorDotScaleRefresh = function () {
-    var z = SMData.view.zoom;
-    var dotScale = Math.max(0.25, Math.min(2, 2 - z));
-    var dots = document.querySelectorAll('.spine-node .conn-dot');
-    var token = (SMTool._dotScaleRefreshToken || 0) + 1;
-    SMTool._dotScaleRefreshToken = token;
-    var index = 0;
-    function step() {
-        if (token !== SMTool._dotScaleRefreshToken) return;
-        var end = Math.min(dots.length, index + 24);
-        for (; index < end; index++) dots[index].style.transform = 'scale(' + dotScale + ')';
-        if (index < dots.length) requestAnimationFrame(step);
-    }
-    requestAnimationFrame(step);
-};
-
-// ★ 核心：同步更新所有节点 DOM 位置（缩放/平移时使用，避免连线偏移）
-SMTool._updateAllPosCore = function () {
-    SMTool._updateNodeScreenPositionsCore();
 
     // 连线端口：画布缩小时放大，放大时缩小，但保持最小可见
     var z = SMData.view.zoom;
@@ -3349,7 +3296,6 @@ SMTool._updateAllPos = function (forceSync) {
         // 清除待处理的异步更新（本次同步已覆盖）
         SMTool._allPosScheduled = false;
         SMTool._allPosQueued = false;
-        SMTool._allPosScheduleToken++;
         SMTool._updateAllPosCore();
         return;
     }
@@ -3357,11 +3303,8 @@ SMTool._updateAllPos = function (forceSync) {
     // ★ 如果已经安排了 rAF，标记排队即可
     if (SMTool._allPosScheduled) { SMTool._allPosQueued = true; return; }
     SMTool._allPosScheduled = true;
-    var scheduleToken = ++SMTool._allPosScheduleToken;
 
     requestAnimationFrame(function () {
-        // 主循环可能已经在绘制连线前同步消费了本次更新；旧 rAF 不得再重复全量刷新。
-        if (scheduleToken !== SMTool._allPosScheduleToken) return;
         SMTool._allPosScheduled = false;
         SMTool._allPosQueued = false;
 
@@ -3475,26 +3418,23 @@ SMTool._updateFloatLabels = function () {
                 label.appendChild(stateSpan);
                 container.appendChild(label);
                 SMTool._floatLabels[node.id] = label;
-                label.style.left = '0px';
-                label.style.top = '0px';
-                label.style.willChange = 'transform';
             }
-            if (label.getAttribute('data-nid') !== String(node.id)) label.setAttribute('data-nid', node.id);
-            if (label.style.display === 'none') label.style.display = '';
+            label.setAttribute('data-nid', node.id);
+            label.style.display = '';
 
             var sp = SMTool.worldToCanvas(node.x, node.y);
             var fontSize = 15;
-            label.style.transform = 'translate3d(' + sp.x + 'px,' + (sp.y - fontSize * 2) + 'px,0)';
-            if (label.style.fontSize !== fontSize + 'px') label.style.fontSize = fontSize + 'px';
+            label.style.left = sp.x + 'px';
+            label.style.top = (sp.y - fontSize * 2) + 'px';
+            label.style.fontSize = fontSize + 'px';
 
             // ★ 第一排显示原始英文状态名（不翻译），第二排显示文件名
             var nameSpan2 = label.querySelector('.fl-name');
             var stateSpan2 = label.querySelector('.fl-state');
-            var nextNameText = node._trackMode ? (node._trackName || '轨道动画') : (node.currentAnim || '');
-            if (nameSpan2 && nameSpan2.contentEditable !== 'true' && nameSpan2.textContent !== nextNameText) {
-                nameSpan2.textContent = nextNameText;
+            if (nameSpan2 && nameSpan2.contentEditable !== 'true') {
+                nameSpan2.textContent = node._trackMode ? (node._trackName || '轨道动画') : (node.currentAnim || '');
             }
-            if (stateSpan2 && stateSpan2.textContent !== (node.sourceFile || '')) {
+            if (stateSpan2) {
                 stateSpan2.textContent = node.sourceFile || '';
             }
             result = nodesIter.next();

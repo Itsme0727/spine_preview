@@ -26,12 +26,6 @@ SMTool._cancelConnectModeForContextMenu = function () {
 
 // ---- 鼠标按下 ----
 SMTool._onMD = function (e) {
-    // 滚轮停止后的极短提交窗口内若立即点击，先原子提交视图，保证命中坐标
-    // 与用户眼中已经缩放后的节点完全一致。
-    if (SMData._viewProxy && SMData._viewProxy.active && !SMData.isPanning &&
-        typeof SMTool._commitViewProxy === 'function') {
-        SMTool._commitViewProxy();
-    }
     // ★ 层拖拽排序激活时，禁止画布级操作
     if (SMData._layerReorderActive) return;
     // 拉线期间右键只负责取消连线。必须在平移和右键菜单逻辑之前消费本次事件。
@@ -834,10 +828,7 @@ SMTool._onMU = function (e) {
         }
     }
 
-    // [LOCK-PREVIEW-FPS-4] [BASELINE-20260802-2327] 平移期间只移动整块 #app 代理；
-    // 松手时统一提交真实 view，禁止在交互热路径逐节点重绘并抢占浮窗动画帧预算。
-    if (SMData.isPanning && typeof SMTool._onPanEnd === 'function') SMTool._onPanEnd();
-    else SMData.isPanning = false;
+    SMData.isPanning = false;
     SMData.draggedNode = null;
     SMData.isMultiDragging = false;
     SMData.multiDragOffsets.clear();
