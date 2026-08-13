@@ -1320,6 +1320,45 @@ function testPreviewConsumesExactSourceFrameDelta() {
     SMTool._renderFrameId = oldFrameId;
 }
 
+// ★ 回归测试：单节点浮窗预览先于主循环推进来源节点并打上本帧标记后，
+// 主画布循环不得再次 state.update —— 否则同一帧被推进两次，动画以 2 倍速播放。
+function testCanvasNodeSkipsSecondAdvanceAfterPreviewSync() {
+    const oldFrameId = SMTool._renderFrameId;
+    const updates = [];
+    const node = {
+        state: { update(dt) { updates.push(dt); } },
+        skeleton: {},
+        _deferredAnimDt: 0,
+    };
+    SMTool._renderFrameId = 99;
+
+    // 场景一：预览同步已在本帧推进过该节点（_lastStateAdvanceFrameId === 当前帧）
+    // → 主循环必须跳过，不能再 update。
+    node._lastStateAdvanceFrameId = 99;
+    node._deferredAnimDt = 0.05;
+    SMTool._advanceCanvasNodeState(node, 0.016, 1.0, true);
+    assert.deepEqual(updates, [], 'preview-led node must not be advanced again');
+    assert.equal(node._deferredAnimDt, 0, 'stale deferred time must be cleared');
+
+    // 场景二：该节点本帧尚未被推进（上一帧的标记）→ 主循环正常推进一次。
+    node._lastStateAdvanceFrameId = 98;
+    SMTool._advanceCanvasNodeState(node, 0.016, 1.0, true);
+    assert.deepEqual(updates, [0.016], 'non-preview-led node advances normally once');
+    assert.equal(node._lastStateAdvanceFrameId, 99);
+    assert.equal(node._lastStateAdvanceDt, 0.016);
+    assert.equal(node._deferredAnimDt, 0);
+
+    // 场景三：poseTick=false 时只累积、不推进（原有合并 4 帧语义不变）。
+    node._lastStateAdvanceFrameId = 98;
+    node._deferredAnimDt = 0;
+    SMTool._advanceCanvasNodeState(node, 0.016, 2.0, false);
+    assert.deepEqual(updates, [0.016], 'deferred accumulation must not update state');
+    assert.equal(node._deferredAnimDt, 0.032);
+    assert.equal(node._lastStateAdvanceFrameId, 98);
+
+    SMTool._renderFrameId = oldFrameId;
+}
+
 function testSinglePreviewRestartAlsoRewindsCanvasNode() {
     const oldRestartNode = SMTool._restartNodePlaybackAtZero;
     const oldApplyPreview = SMTool._applyPreviewTrackSequence;
@@ -1827,6 +1866,7 @@ const tests = [
     testPreviewAlsoPrimesNormalSourceBeforeTrackTransition,
     testTrackGlobalLoopToggleRebuildsRealSequences,
     testPreviewConsumesExactSourceFrameDelta,
+    testCanvasNodeSkipsSecondAdvanceAfterPreviewSync,
     testSinglePreviewRestartAlsoRewindsCanvasNode,
     testLayerEyeOnlyUpdatesItsOwnThumbnail,
     testClosedFullFlowCarriesClosingEdgeMixBackToSource,

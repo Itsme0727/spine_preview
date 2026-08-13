@@ -302,6 +302,27 @@ SMTool._lt = 0;
 SMTool._fc = 0;
 SMTool._ft = 0;
 
+// ★ 主画布每帧推进单个节点动画。
+// 单节点浮窗预览（_getSynchronizedPreviewDt）会先于主循环推进来源节点，并在
+// 节点上打上本帧标记（_lastStateAdvanceFrameId === 当前帧）。若主循环再次
+// state.update，画布动画会以 2 倍速播放。因此本帧已被预览推进过的节点直接
+// 跳过，只清空残留时间量，保持 1 倍速的播放语义不变。
+SMTool._advanceCanvasNodeState = function (node, dt, spd, poseTick) {
+    if (node._lastStateAdvanceFrameId === SMTool._renderFrameId) {
+        // 预览同步已在本帧推进过该节点，主循环不得重复推进（否则动画加速）。
+        node._deferredAnimDt = 0;
+        return;
+    }
+    node._deferredAnimDt = (node._deferredAnimDt || 0) + dt * spd;
+    if (poseTick) {
+        var appliedStateDt = Math.min(node._deferredAnimDt, 0.1);
+        node.state.update(appliedStateDt);
+        node._lastStateAdvanceFrameId = SMTool._renderFrameId;
+        node._lastStateAdvanceDt = appliedStateDt;
+        node._deferredAnimDt = 0;
+    }
+};
+
 SMTool._loop = function (now) {
     requestAnimationFrame(function (t) { SMTool._loop(t); });
 
@@ -508,14 +529,7 @@ SMTool._loop = function (now) {
         var criticalPoseNode = isSelectedNode || isPlayingNode || isLayerActive || !!node._trackMode;
         var poseTick = !canvasGestureActive || criticalPoseNode ||
             (((SMTool._renderFrameId + (node.id || 0)) & 3) === 0);
-        node._deferredAnimDt = (node._deferredAnimDt || 0) + dt * spd;
-        if (poseTick) {
-            var appliedStateDt = Math.min(node._deferredAnimDt, 0.1);
-            node.state.update(appliedStateDt);
-            node._lastStateAdvanceFrameId = SMTool._renderFrameId;
-            node._lastStateAdvanceDt = appliedStateDt;
-            node._deferredAnimDt = 0;
-        }
+        SMTool._advanceCanvasNodeState(node, dt, spd, poseTick);
 
         // ★ 轨道动画模式：维持 Spine AnimationState 原生队列。
         //    A→B 的 mixDuration、mixingFrom/mixingTo 和多轨道覆盖全部由 Runtime 计算。
