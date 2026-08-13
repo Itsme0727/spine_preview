@@ -1671,7 +1671,7 @@ function testFullFlowBranchesUseEachTargetNodesRealAnimation() {
     const uiSource = fs.readFileSync(path.join(root, 'js/ui-dom.js'), 'utf8');
     assert.match(appSource, /var simplePaths = SMTool\._enumerateSimpleFullFlowPaths\(sourceId\)/);
     assert.match(appSource, /return SMTool\._normalizeFullFlowPathSteps\(SMData\._fullPathTopologyCache\.get\(cacheKey\)\)/);
-    assert.match(appSource, /SMTool\._normalizeFullFlowPathSteps\(paths\);[\s\S]{0,120}SMData\._fullPathTopologyCache\.set/);
+    assert.match(appSource, /SMTool\._normalizeFullFlowPathSteps\(paths\);[\s\S]{0,200}SMTool\._sortFullFlowPathsRoundRobin\(paths\);[\s\S]{0,120}SMData\._fullPathTopologyCache\.set/);
     assert.match(uiSource, /_connectionById\[indexedConnection\.id\] = indexedConnection/);
     assert.match(uiSource, /_renderTransitionEditor\(_pathTransitionConnection\(path, si\)\)/);
     assert.match(uiSource, /var incomingStepConnection = si > 0 \? _pathTransitionConnection\(path, si - 1\) : null/);
